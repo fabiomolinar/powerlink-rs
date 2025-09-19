@@ -1,8 +1,13 @@
 [package]
 name = "powerlink-rs"
 description = "Platform-agnostic core logic for Ethernet POWERLINK Rust implementation."
-# Inherit version, edition, authors, license from workspace
-include = ["/"]
+# Inherit package metadata
+version.workspace = true
+authors.workspace = true
+readme.workspace = true
+license.workspace = true
+repository.workspace = true
+edition.workspace = true
 
 [features]
 # Default is no_std support for embedded targets.
