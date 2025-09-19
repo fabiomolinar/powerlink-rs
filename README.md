@@ -4,6 +4,22 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
 
 **Work in progress**.
 
+## Coverage
+
+- EPSG 301 (Communication Profile Specification):
+  - Chapter 4 (Data Link): 0%
+  - Chapter 5 (Network/Transport Layer): 0%
+  - Chapter 6 (Application Layer): 0%
+  - Chapter 7 (NMT): 0%
+  - Chapter 8 (Diagnostics): 0%
+  - Chapter 9 (Routing): 0%
+- EPSG 302-A (High Availability): 0% (for the future)
+- EPSG 302-B (Multiple ASnd): 0% (for the future)
+- EPSG 302-C (PollResponse Chaining): 0% (for the future)
+- EPSG 302-D (Multiple PReq/PRes): 0% (for the future)
+- EPSG 302-E (Dynamic Node Allocation): 0% (for the future)
+- EPSG 311 (Device Description): 0% (for the future)
+
 ## Roadmap
 
 - Phase 1: Foundation and Data Link Layer (DLL) Packet Handling:
