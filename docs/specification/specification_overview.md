@@ -27,7 +27,7 @@ An additional companion specification exists related to OPC-UA:
 
 ## Highlights
 
-> What follows are notes taken from the specification itself. All images found in this section were sourced from the original specification.
+> What follows are extracts taken from the specification itself. All images found in this section come from the original specification.
 
 POWERLINK provides mechanisms to achieve the following:
 
@@ -46,6 +46,74 @@ The advantages of POWERLINK result from protecting the POWERLINK RTE network seg
 **Reference model**:
 [Reference Model](reference_model.png)
 
-### Application layer
+### Application layer (2.1.1)
 
 The Application Layer comprises a concept to configure and communicate real-time-data as well as the mechanisms for synchronisation between devices. The functionality the application layer offers to an application is logically divided over different service objects (see SDO) in the application layer. A service object offers a specific functionality and all related services.
+
+Service primitives are the means by which the application and the application layer interact. There are four different primitives:
+
+- a *request* is issued by the application to the application layer to request a service
+- an *indication* is issued by the application layer to the application to report an internal event detected by the application layer or indicate that a service is requested
+- a *response* is issued by the application to the application layer to respond to a previous received indication
+- a *confirmation* is issued by the application layer to the application to report the result of a previously issued request.
+
+A service type defines the primitives that are exchanged between the application layer and the co-operating applications for a particular service of a service object.
+
+- A *Local Service* involves only the local service object. The application issues a request to its local service object that executes the requested service without communicating with (a) peer service object(s).
+- An *Unconfirmed Service* involves one or more peer service objects. The application issues a request to its local service object. This request is transferred to the peer service object(s) that each pass it to their application as an indication. The result is not confirmed back.
+- A *Confirmed Service* can involve only one peer service object. The application issues a request to its local service object. This request is transferred to the peer service object that passes it to the other application as an indication. The other application issues a response that is transferred to the originating service object that passes it as a confirmation to the requesting application.
+- A *Provider Initiated Service* involves only the local service object. The service object (being the service provider) detects an event not solicited by a requested service. This event is then indicated to the application.
+
+Unconfirmed and confirmed services are collectively called *Remote Services*.
+
+### Device Model (2.2)
+
+A device is structured as follows:
+
+- *Communication* – This function unit provides the communication objects and the appropriate functionality to transport data items via the underlying network structure.
+- *Object Dictionary* – The Object Dictionary is a collection of all the data items that have an influence on the behaviour of the application objects, the communication objects and the state machine used on this device.
+- *Application* – The application comprises the functionality of the device with respect to the interaction with the process environment.
+
+Thus the Object Dictionary serves as an interface between the communication and the application. The complete description of a device’s application with respect to the data items in the Object Dictionary is called the device profile.
+
+### The Object Dictionary (2.2.2)
+
+The most important part of a device profile is the Object Dictionary. The Object Dictionary is essentially a grouping of objects accessible via the network in an ordered, pre-defined fashion. Each object within the dictionary is addressed using a **16-bit index**. The Object Dictionary may contain **a maximum of 65536 entries** which are addressed through a 16-bit index.
+
+[Object Dictionary](object_dictionary.png)
+
+- The Static Data Types at indices *0001h through 001Fh* contain type definitions for standard data types like BOOLEAN, INTEGER, floating point, string, etc.
+- Manufacturer Specific Complex Data Types at indices 0040h through 005Fh are structures composed of standard data types but are specific to a particular device.
+- Device Profiles may define additional data types specific to their device type. The static data types defined by the device profile are listed at indices 0060h - 007Fh, the complex data types at indices 0080h - 009Fh.
+- A device may optionally provide the structure of the supported complex data types (indices 0020h - 005Fh and 0080h - 009Fh) at read access to the corresponding index. Sub-index 0 provides the number of entries at this index, and the following sub-indices contain the data type encoded as UNSIGNED16.
+- POWERLINK Specific Static Data Types shall be described at indices 0400h – 041Fh. These entries are included for reference only; they cannot be read or written.
+- POWERLINK Specific Complex Data Types shall be described at indices 0420h – 04FFh
+- The Communication Profile Area at indices 1000h through 1FFFh contains the communication specific parameters for the POWERLINK network. These entries are common to all devices.
+- The standardised device profile area at indices 6000h through 9FFFh contains all data objects common to a class of devices that can be read or written via the network. The device profiles may use entries from 6000h to 9FFFh to describe the device parameters and the device functionality. Within this range up to **8 different devices** can be described. In such a case the devices are denominated *Multiple Device Modules*. 
+  - Multiple Device Modules are composed of up to 8 device profile segments. In this way it is possible to build devices with multiple functionality. The different device profile entries are indexed at increments of 800h.
+  - For Multiple Device Modules the object range 6000h to 9FFFh is sub-divided as follows:
+    - 6000h to 67FFh device 0
+    - 6800h to 6FFFh device 1
+    - 7000h to 77FFh device 2
+    - 7800h to 7FFFh device 3
+    - 8000h to 87FFh device 4
+    - 8800h to 8FFFh device 5
+    - 9000h to 97FFh device 6
+    - 9800h to 9FFFh device 7
+- Space is left in the Object Dictionary at indices 2000h through 5FFFh for truly manufacturer-specific functionality.
+
+A *16-bit index* is used to address all entries within the Object Dictionary. In the case of a simple variable the index references the value of this variable directly. In the case of records and arrays, however, the index addresses the whole data structure. To allow individual elements of structures of data to be accessed via the network *a sub-index is defined*. For single Object Dictionary entries such as an UNSIGNED8, BOOLEAN, INTEGER32 etc. the value for the sub-index is always zero. For complex Object Dictionary entries such as arrays or records with multiple data fields the sub-index references fields within a data-structure pointed to by the main index.
+
+### Communication Model (2.3)
+
+The communication model supports the transmission of isochronous and asynchronous frames. Isochronous frames are supported in POWERLINK Mode only, asynchronous frames in POWERLINK Mode and Basic Ethernet Mode.
+
+The isochronous transmission of frames is supported by the POWERLINK Mode cycle structure. The system is synchronised by SoC frames. Asynchronous frames may be transmitted in the asynchronous slot of POWERLINK Mode cycle upon transmission grant by the POWERLINK MN, or at any time in Basic Ethernet Mode.
+
+With respect to their functionality, three types of communication relationships are distinguished
+
+- Master/Slave relationship
+- Client/Server relationship
+- Producer/Consumer relationship
+
+POWERLINK collects more than one function into one frame (refer 4.6). It is therefore not usually possible to apply a single communication relationship to the complete frame, but only to particulars services inside the frame.
