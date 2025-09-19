@@ -117,3 +117,13 @@ With respect to their functionality, three types of communication relationships 
 - Producer/Consumer relationship
 
 POWERLINK collects more than one function into one frame (refer 4.6). It is therefore not usually possible to apply a single communication relationship to the complete frame, but only to particulars services inside the frame.
+
+### Physical Layer (3)
+
+Autonegotiation is not recommended.
+
+To fit POWERLINK jitter requirements it is recommended to use hubs to build a POWERLINK network. Class 2 Repeaters shall be used in this case. Hubs may be integrated in the POWERLINK interface cards. Hub integration shall be indicated by **D_PHY_HubIntegrated_BOOL**. The number of externally accessible POWERLINK ports provided by a device shall be indicated by **D_PHY_ExtEPLPorts_U8**.
+
+Switches may be used to build a POWERLINK network. The additional latency and jitter of switches has to be considered for system configuration. It has to be considered that **any POWERLINK network constructed with anything but Class 2 Repeater Devices does not conform to the POWERLINK standard as defined in this document**.
+
+The MN uses a timeout after sending a PollRequest Frame to detect transmission errors and node failures. The round trip latency between the MN and a CN shall not exceed the timeout value. The timeout value can be set for every single node.
