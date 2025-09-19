@@ -89,7 +89,7 @@ The most important part of a device profile is the Object Dictionary. The Object
 - POWERLINK Specific Static Data Types shall be described at indices 0400h – 041Fh. These entries are included for reference only; they cannot be read or written.
 - POWERLINK Specific Complex Data Types shall be described at indices 0420h – 04FFh
 - The Communication Profile Area at indices 1000h through 1FFFh contains the communication specific parameters for the POWERLINK network. These entries are common to all devices.
-- The standardised device profile area at indices 6000h through 9FFFh contains all data objects common to a class of devices that can be read or written via the network. The device profiles may use entries from 6000h to 9FFFh to describe the device parameters and the device functionality. Within this range up to **8 different devices** can be described. In such a case the devices are denominated *Multiple Device Modules*. 
+- The standardised device profile area at indices 6000h through 9FFFh contains all data objects common to a class of devices that can be read or written via the network. The device profiles may use entries from 6000h to 9FFFh to describe the device parameters and the device functionality. Within this range up to **8 different devices** can be described. In such a case the devices are denominated *Multiple Device Modules*.
   - Multiple Device Modules are composed of up to 8 device profile segments. In this way it is possible to build devices with multiple functionality. The different device profile entries are indexed at increments of 800h.
   - For Multiple Device Modules the object range 6000h to 9FFFh is sub-divided as follows:
     - 6000h to 67FFh device 0
