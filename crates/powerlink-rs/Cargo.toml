@@ -1,0 +1,15 @@
+[package]
+name = "powerlink-rs"
+description = "Platform-agnostic core logic for Ethernet POWERLINK Rust implementation."
+# Inherit version, edition, authors, license from workspace
+include = ["/"]
+
+[features]
+# Default is no_std support for embedded targets.
+default = []
+
+# Enables features that rely on the standard library (e.g., error handling, filesystem access, large buffers).
+std = []
+
+# If needed later for complex structures in no_std (Phase 3/5: SDO, PDO mappings)
+alloc = [] 

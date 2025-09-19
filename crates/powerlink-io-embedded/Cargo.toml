@@ -1,0 +1,9 @@
+[package]
+name = "powerlink-io-embedded"
+description = "Hardware Abstraction Layer implementation for microcontrollers (no_std)."
+# Inherit package metadata
+include = ["/"]
+
+[dependencies]
+# Note: Explicitly exclude default features if powerlink-core later gains default 'std' feature
+powerlink-rs = { path = "../powerlink-rs", version = "0.1" } 

@@ -1,0 +1,10 @@
+[package]
+name = "powerlink-io-windows"
+description = "Raw Ethernet I/O driver for Windows, adhering to the powerlink-core HAL."
+# Inherit package metadata
+include = ["/"]
+
+[dependencies]
+powerlink-core = { path = "../powerlink-core", version = "0.1", features = ["std"] }
+# Windows raw packet handling often requires specific bindings or wrappers (like WinPcap/Npcap),
+# but we leave placeholders here as direct standard Rust net APIs usually aren't sufficient for raw Ethernet.

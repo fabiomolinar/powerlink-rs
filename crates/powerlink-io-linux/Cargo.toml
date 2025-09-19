@@ -1,0 +1,11 @@
+[package]
+name = "powerlink-io-linux"
+description = "Raw Ethernet I/O driver for Linux, adhering to the powerlink-core HAL."
+# Inherit package metadata
+include = ["/"]
+
+[dependencies]
+powerlink-rs = { path = "../powerlink-rs", version = "0.1", features = ["std"] }
+# Placeholder dependency for raw socket access (e.g., libpcap wrapper, or standard sockets)
+# Could assume standard OS sockets using the standard library:
+# socket2 = { version = "0.5", optional = true } 
