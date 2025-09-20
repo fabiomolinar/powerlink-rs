@@ -1,5 +1,7 @@
 use crate::frame::basic::{EthernetHeader, PowerlinkHeader, MAC_ADDRESS_SIZE};
-use crate::types::{NodeId, UNSIGNED16, UNSIGNED32};
+use crate::types::{
+    NodeId, UNSIGNED16, UNSIGNED32, C_ADR_MN_DEF_NODE_ID,
+};
 
 // --- Start of Cycle (SoC) ---
 
@@ -27,8 +29,8 @@ impl SocFrame {
         let pl_header = PowerlinkHeader {
             frame_type_and_payload_code,
             dll_identity: 0, 
-            source_node_id: crate::types::C_ADR_MN_DEF_NODE_ID, // MN always sends SoC
-            destination_node_id: 0, // Ignored in multicast frames
+            source_node_id: NodeId(C_ADR_MN_DEF_NODE_ID), // MN always sends SoC
+            destination_node_id: NodeId(0), // Ignored in multicast frames
             nmt_control: nmt_command_id.to_be(), // NMT Command ID is mandatory
             frame_specific_data: 0, // Reserved
         };
@@ -79,14 +81,14 @@ impl SoAFrame {
         // Bits 31-24: RequestedServiceID
         // Bits 7-0: RequestedServiceTarget (target node ID)
         let requested_id_u32 = (requested_service as UNSIGNED32) << 24;
-        let requested_target_u32 = target_node_id as UNSIGNED32;
+        let requested_target_u32 = target_node_id.0 as UNSIGNED32;
         let frame_specific_data = (requested_id_u32 | requested_target_u32).to_be(); // Must be Big Endian (network order)
 
         let pl_header = PowerlinkHeader {
             frame_type_and_payload_code,
             dll_identity: 0, 
-            source_node_id: crate::types::C_ADR_MN_DEF_NODE_ID, 
-            destination_node_id: 0, // Ignored in multicast frames
+            source_node_id: NodeId(C_ADR_MN_DEF_NODE_ID), 
+            destination_node_id: NodeId(0), // Ignored in multicast frames
             nmt_control: 0, 
             frame_specific_data,
         };

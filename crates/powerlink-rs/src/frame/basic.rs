@@ -1,4 +1,5 @@
 use crate::types::{MessageType, NodeId, C_DLL_ETHERTYPE_EPL, UNSIGNED16, UNSIGNED32};
+use alloc::vec::Vec;
 
 
 pub const MAC_ADDRESS_SIZE: usize = 6;

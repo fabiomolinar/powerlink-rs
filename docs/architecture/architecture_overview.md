@@ -13,9 +13,10 @@ The project utilizes a Rust **workspace** to achieve clear separation between th
 
 To ensure the implementation can run across diverse targets, including embedded systems, the architecture prioritizes minimal reliance on a full operating system environment.
 
-- **Platform Independence:** The overall project aims for a platform-independent implementation [2], supporting environments like Windows, Linux, macOS, and embedded targets [2].
-- **`no_std` Compatibility:** The core logic within the `powerlink-rs` crate is designed to support `no_std` environments (environments without the Rust standard library) [3].
-- **Feature Flag Strategy:** Cross-platform compilation is managed via feature flags. The platform-specific I/O crates (like `powerlink-io-windows`) explicitly enable the **`std` feature** of the core `powerlink-rs` crate when standard library functionality (such as OS sockets) is required for those platforms [5, 6].
+- **Platform Independence:** The overall project aims for a platform-independent implementation, supporting environments like Windows, Linux, macOS, and embedded targets.
+- **`no_std` Compatibility:** The core logic within the `powerlink-rs` crate is designed to support `no_std` environments (environments without the Rust standard library).
+- **Feature Flag Strategy:** Cross-platform compilation is managed via feature flags. The platform-specific I/O crates (like `powerlink-io-windows`) explicitly enable the **`std` feature** of the core `powerlink-rs` crate when standard library functionality (such as OS sockets) is required for those platforms..
+- **alloc:** At least for now, we are relying on alloc for dynamic memory allocation. This may change on the future.
 
 ## III. Hardware Abstraction Layer (HAL)
 
@@ -30,8 +31,8 @@ The core implementation mirrors the functional layers defined in the EPSG DS 301
 
 | POWERLINK Concept | Role in Architecture |
 | :--- | :--- |
-| **Data Link Layer (DLL) / Frames** | Core modules handle the parsing and serialization of basic frames (e.g., SoC, SoA, PReq, PRes) [4, 8, 9]. Phase 1 focuses heavily on this layer [4]. |
-| **Object Dictionary (OD)** | Module responsible for defining the structure and handling of data objects accessible over POWERLINK communication, using Index and Sub-Index addressing [8]. |
-| **Network Management (NMT)** | Modules implementing the Network Management state machines (MN and CN states, e.g., `NMT_CS_NOT_ACTIVE` to `NMT_CS_OPERATIONAL`) and handling configuration objects [4]. |
-| **Service Data Objects (SDO)** | Modules implementing non-real-time data exchange (client/server model) [10]. SDO services are implemented using sequenced commands over asynchronous frames (ASnd) or UDP/IP [11, 12]. |
-| **Process Data Objects (PDO)** | Modules handling real-time, cyclic data exchange (Producer/Consumer model) carried within PReq and PRes frames [8, 13]. |
+| **Data Link Layer (DLL) / Frames** | Core modules handle the parsing and serialization of basic frames (e.g., SoC, SoA, PReq, PRes). Phase 1 focuses heavily on this layer. |
+| **Object Dictionary (OD)** | Module responsible for defining the structure and handling of data objects accessible over POWERLINK communication, using Index and Sub-Index addressing. |
+| **Network Management (NMT)** | Modules implementing the Network Management state machines (MN and CN states, e.g., `NMT_CS_NOT_ACTIVE` to `NMT_CS_OPERATIONAL`) and handling configuration objects. |
+| **Service Data Objects (SDO)** | Modules implementing non-real-time data exchange (client/server model). SDO services are implemented using sequenced commands over asynchronous frames (ASnd) or UDP/IP. |
+| **Process Data Objects (PDO)** | Modules handling real-time, cyclic data exchange (Producer/Consumer model) carried within PReq and PRes frames. |

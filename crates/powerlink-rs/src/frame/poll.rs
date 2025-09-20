@@ -1,5 +1,6 @@
 use crate::frame::basic::{EthernetHeader, PowerlinkHeader};
 use crate::types::{NodeId, UNSIGNED32, C_ADR_MN_DEF_NODE_ID};
+use alloc::vec::Vec;
 
 
 // --- Poll Request (PReq) ---
@@ -23,7 +24,7 @@ impl PReqFrame {
         // PReq frames are unicast. Destination MAC derived from Node ID (e.g., 00-00-00-00-00-CN_ID)
         // This is a simplification; actual derivation depends on configuration or network rules.
         let mut dest_mac: [u8; 6] = [0x00; 6];
-        dest_mac[16] = target_node_id; 
+        dest_mac[5] = target_node_id.try_into().unwrap(); 
         let eth_header = EthernetHeader::new(dest_mac, source_mac);
 
         // Octet 0: DLL_FrameType: ID 0x3 (PReq).
@@ -36,7 +37,7 @@ impl PReqFrame {
         let pl_header = PowerlinkHeader {
             frame_type_and_payload_code,
             dll_identity: 0, // Carries FF (Frame Flow) and RS (RequestToSend) flags
-            source_node_id: C_ADR_MN_DEF_NODE_ID, 
+            source_node_id: NodeId(C_ADR_MN_DEF_NODE_ID), 
             destination_node_id: target_node_id, 
             nmt_control: 0, // Used for Cycle Counter
             frame_specific_data: time_stamp.to_be(), 
@@ -91,7 +92,7 @@ impl PResFrame {
             // DLL_Identity (Octet 1) carries NMT State and Flags (RD, PR).
             dll_identity: 0, 
             source_node_id, 
-            destination_node_id: 0, // Ignored in multicast frames
+            destination_node_id: NodeId(0), // Ignored in multicast frames
             nmt_control: 0, // Used for Cycle Counter
             frame_specific_data: time_stamp.to_be(),
         };

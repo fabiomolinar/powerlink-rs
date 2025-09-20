@@ -15,6 +15,3 @@ default = []
 
 # Enables features that rely on the standard library (e.g., error handling, filesystem access, large buffers).
 std = []
-
-# If needed later for complex structures in no_std (Phase 3/5: SDO, PDO mappings)
-alloc = [] 

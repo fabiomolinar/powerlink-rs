@@ -1,8 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+#![allow(unused_imports)]
 
-// If the 'alloc' feature is enabled, import the crate necessary for dynamic allocation (e.g., Vec<u8> in frames)
-// This is necessary since frame payloads use Vec<u8>.
-#[cfg(feature = "alloc")]
+// 'alloc' is used for dynamic allocation (e.g., Vec<u8> in frames)
 extern crate alloc;
 
 // --- Foundation Modules ---

@@ -1,7 +1,5 @@
 /// Define a portable Error type compatible with both no_std and std environments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "std", derive(thiserror::Error))]
-#[cfg_attr(feature = "std", error("POWERLINK HAL Error: {0}"))]
 pub enum PowerlinkError {
     /// The frame size exceeds the maximum physical or configured MTU.
     FrameTooLarge,
