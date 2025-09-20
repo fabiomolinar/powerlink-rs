@@ -127,3 +127,70 @@ To fit POWERLINK jitter requirements it is recommended to use hubs to build a PO
 Switches may be used to build a POWERLINK network. The additional latency and jitter of switches has to be considered for system configuration. It has to be considered that **any POWERLINK network constructed with anything but Class 2 Repeater Devices does not conform to the POWERLINK standard as defined in this document**.
 
 The MN uses a timeout after sending a PollRequest Frame to detect transmission errors and node failures. The round trip latency between the MN and a CN shall not exceed the timeout value. The timeout value can be set for every single node.
+
+### Data Link Layer (4)
+
+Two operating modes are defined for POWERLINK networks:
+
+1. POWERLINK mode
+  - In POWERLINK Mode network traffic follows the set of rules given in this standard for Real-time Ethernet communication. Network access is managed by a master, the POWERLINK Managing Node (MN). *A node can only be granted the right to send data on the network via the MN*. The central access rules preclude collisions, **the network is therefore deterministic in POWERLINK Mode**.
+  - In POWERLINK Mode most communication transactions are via POWERLINK-specific messages. An asynchronous slot is available for non-POWERLINK frames. UDP/IP is the preferred data exchange mechanism in the asynchronous slot; however, it is possible to use any protocol.
+2. Basic Ethernet mode
+  - In Basic Ethernet Mode network communication follows the rules of Legacy Ethernet (IEEE802.3). Network access is via CSMA/CD. Collisions occur, and network traffic is nondeterministic. Any protocol on top of Ethernet may be used in Basic Ethernet mode, the preferred mechanisms for data exchange between nodes being UDP/IP and TCP/IP.
+
+#### Powerlink Mode (4.2)
+
+Controlled Nodes shall be only allowed to send when requested to by the MN. The Controlled Nodes shall be accessed cyclically by the MN. Unicast data shall be sent from the MN to each configured CN (frame: PReq), which shall then publish its data via multicast to all other nodes (frame: PRes). 
+
+Optionally, the MN may send a multicast Pres frame in the isochrononous phase (see Fig. 19). With this frame the MN may publish its own data to all other nodes.
+All available nodes in the network shall be configured on the MN. **Only one active MN is permitted in a POWERLINK network**.
+
+The ability of a node to perform MN functions shall be indicated by the device description entry *D_DLL_FeatureMN_BOOL*.
+The ability of a node to perform CN functions shall be indicated by the device description entry *D_DLL_FeatureCN_BOOL*.
+
+CNs may be accessed every cycle *or every nth cycle* (multiplexed nodes, n > 1).
+
+`PReq` can only be received by the specifically addressed CN. However, **`PRes` frames shall be sent by the CN as multicast messages**, allowing all other CNs to monitor the data being sent.
+
+The ability of a CN to perform isochronous communication shall be indicated by a feature flag in the object dictionary entry *NMT_FeatureFlags_U32* (1F82h) and the device description entry *D_NMT_Isochronous_BOOL*.
+
+The MN shall cyclically poll each async-only CN during the asynchronous phase with a StatusRequest – a special form of the SoA frame. The CN shall respond with a StatusResponse, special form of Asynchronous Send frame. The poll interval shall be at least C_NMT_STATREQ_CYCLE. 
+
+Async-only CNs shall request the right to transmit asynchronous data from the MN, if required. Async-only CNs shall actively communicate during the asynchronous phase only. Nevertheless, they may listen to the multicast network traffic, transmitted by the MN and the isochronous CNs.
+
+#### Services (4.2.3)
+
+POWERLINK provides three services:
+- Isochronous Data Transfer: One pair of messages per node shall be delivered every cycle, or every nth cycle in the case of multiplexed CNs. Additionally, there may be one multicast PRes message from the MN per cycle. Isochronous data transfer is typically used for the exchange of time critical data (real-time data).
+- Asynchronous Data Transfer: **There may be one asynchronous message per cycle**. The right to send shall be assigned to a requesting node by the MN via the SoA message. Asynchronous data transfer is used for the exchange of non time-critical data.
+- Synchronisation of all nodes: At the beginning of each isochronous phase, the MN transmits the multicast SoC message very precisely to synchronise all nodes in the network.
+
+#### Powerlink Cycle
+
+Isochronous cycle:
+[Powerlink Cycle](powerlink_cycle.png)
+
+**All data transfers shall be unconfirmed**, i.e. there is no confirmation that sent data has been received. To maintain deterministic behavior, protecting the isochronous data (PReq and PRes) is neither necessary nor desired. Asynchronous data may be protected by higher protocol layers.
+
+`PReq` shall be an Ethernet *unicast* frame. It is received by the target node only. `PRes` shall be sent as an Ethernet *multicast* frame.
+
+**Both the PReq and the PRes frames may transfer application data**.
+
+Support of PRes transmission by the MN is optional. The ability of an MN to transmit PRes shall be indicated by the device description entry *D_DLL_MNFeaturePResTx_BOOL*. If the feature is provided, transmission shall be enabled by *NMT_NodeAssignment_AU32[C_ADR_MN_DEF_NODE_ID ].Bit 12*.
+
+The isochronous phase shall be calculated from start of SoC to start of SoA.
+
+The order in which CNs are polled may be implementation specific or controlled by object *NMT_IsochrSlotAssign_AU8* if supported by the MN. An implementation should pack the performed PReq / PRes packages to the begin of the isochronous phase. *It should provide means to rearrange the poll order*, **to avoid location of the nodes having the worst SoC latency time value** (*D_NMT_CNSoC2PReq_U32*) at the slot following SoC.
+
+**Multiplexed timeslots:** POWERLINK supports CN communication classes, that determine the cycles in which nodes are to be addressed.
+
+- Continuous: Continuous data shall be exchanged in every POWERLINK cycle.
+- Multiplexed: Multiplexed data to and from one CN shall not be exchanged in every POWERLINK cycle. The accesses to the multiplexed CNs shall be dispersed to the multiplexed cycle that consists of a number of POWERLINK cycles. 
+
+**The apportionment of the isochronous phase to continuous and multiplexed slots shall be fixed by configuration** (*NMT_MultiplCycleAssign_AU8*, *NMT_IsochrSlotAssign_AU8*).
+
+In case of MN cycle loss, the multiplexed access sequence shall be continued on a per time base, after the cycle loss error phase is over. E.g. CNs shall be skipped to maintain time equidistance of access to nodes not affected by the cycle loss.
+
+The ability of an MN enabled node to perform control of multiplexed isochronous operation shall be indicated by the device description entry *D_DLL_MNFeatureMultiplex_BOOL*. The ability of a CN enabled node to be isochronously accessed in a multiplexed way shall be indicated by the device description entry *D_DLL_CNFeatureMultiplex_BOOL*.
+
+> Parei na pagina 43, secao 4.2.4.1.2.
