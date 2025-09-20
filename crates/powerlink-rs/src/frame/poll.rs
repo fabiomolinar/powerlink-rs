@@ -104,3 +104,57 @@ impl PResFrame {
         frame
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{MessageType, C_DLL_MULTICAST_PRES};
+    use alloc::vec;
+
+
+    #[test]
+    fn test_preqframe_new_constructor() {
+        let source_mac = [0xAA; 6];
+        let target_node = NodeId(55);
+        let payload = vec![0x01, 0x02, 0x03];
+        let frame = PReqFrame::new(source_mac, target_node, payload.clone());
+        
+        // Simplified dest MAC check
+        let expected_dest_mac = [0x00, 0x00, 0x00, 0x00, 0x00, 55];
+        assert_eq!(frame.eth_header.destination_mac, expected_dest_mac);
+        assert_eq!(frame.eth_header.source_mac, source_mac);
+        
+        assert_eq!(frame.pl_header.get_message_type(), Some(MessageType::PReq));
+        assert_eq!(frame.pl_header.source_node_id, NodeId(C_ADR_MN_DEF_NODE_ID));
+        assert_eq!(frame.pl_header.destination_node_id, target_node);
+        
+        assert_eq!(frame.rpdo_payload, payload);
+    }
+    
+    #[test]
+    fn test_presframe_new_and_ready_flag() {
+        let source_mac = [0xBB; 6];
+        let source_node = NodeId(10);
+        let payload = vec![0xA, 0xB, 0xC, 0xD];
+        let mut frame = PResFrame::new(source_mac, source_node, payload.clone());
+        
+        // Check initial state from new()
+        assert_eq!(frame.eth_header.destination_mac, C_DLL_MULTICAST_PRES);
+        assert_eq!(frame.pl_header.get_message_type(), Some(MessageType::PRes));
+        assert_eq!(frame.pl_header.source_node_id, source_node);
+        assert_eq!(frame.tpdo_payload, payload);
+        
+        // Test ready flag logic
+        // Should be false (0) by default from new()
+        assert_eq!(frame.pl_header.dll_identity & 0x80, 0);
+
+        // Set ready to true
+        frame.set_ready_flag(true);
+        assert_eq!(frame.pl_header.dll_identity & 0x80, 0x80);
+        
+        // Set ready to false again
+        frame.set_ready_flag(false);
+        assert_eq!(frame.pl_header.dll_identity & 0x80, 0);
+    }
+}

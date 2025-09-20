@@ -113,3 +113,33 @@ impl From<NodeId> for u8 {
         node_id.0
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::convert::TryFrom;
+
+    #[test]
+    fn test_nodeid_valid_ranges() {
+        assert_eq!(NodeId::try_from(1), Ok(NodeId(1)));
+        assert_eq!(NodeId::try_from(239), Ok(NodeId(C_ADR_MAX_CN_NODE_ID)));
+        assert_eq!(NodeId::try_from(240), Ok(NodeId(C_ADR_MN_DEF_NODE_ID)));
+        assert_eq!(NodeId::try_from(254), Ok(NodeId(C_ADR_ASYNC_MGMT_NODE_ID)));
+        assert_eq!(NodeId::try_from(255), Ok(NodeId(C_ADR_BROADCAST_NODE_ID)));
+    }
+
+    #[test]
+    fn test_nodeid_invalid_range() {
+        assert_eq!(NodeId::try_from(0), Err(NodeIdError::InvalidRange(0)));
+        assert_eq!(NodeId::try_from(241), Err(NodeIdError::InvalidRange(241)));
+        assert_eq!(NodeId::try_from(253), Err(NodeIdError::InvalidRange(253)));
+    }
+
+    #[test]
+    fn test_nodeid_into_u8() {
+        let node_id = NodeId(123);
+        let value: u8 = node_id.into();
+        assert_eq!(value, 123);
+    }
+}

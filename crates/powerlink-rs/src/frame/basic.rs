@@ -94,3 +94,83 @@ pub struct PowerlinkFrame {
     /// Raw payload bytes (PDO or SDO/NMT data), padded to minimum frame size if necessary.
     pub payload: Vec<u8>, 
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ethernet_header_is_powerlink() {
+        let mut header = EthernetHeader::new([0; 6], [0; 6]);
+        assert!(header.is_powerlink());
+
+        header.ether_type = 0x0800; // IP packet
+        assert!(!header.is_powerlink());
+    }
+    
+    #[test]
+    fn test_ethernet_header_new() {
+        let dest_mac = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x01];
+        let src_mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        let header = EthernetHeader::new(dest_mac, src_mac);
+        
+        assert_eq!(header.destination_mac, dest_mac);
+        assert_eq!(header.source_mac, src_mac);
+        assert_eq!(header.ether_type, C_DLL_ETHERTYPE_EPL.to_be());
+    }
+
+    #[test]
+    fn test_powerlink_header_get_message_type() {
+        let mut header = PowerlinkHeader {
+            frame_type_and_payload_code: 0x1A, // SoC with payload code 10
+            dll_identity: 0,
+            source_node_id: NodeId(0),
+            destination_node_id: NodeId(0),
+            nmt_control: 0,
+            frame_specific_data: 0,
+        };
+
+        assert_eq!(header.get_message_type(), Some(MessageType::Soc));
+
+        header.frame_type_and_payload_code = 0x3F; // PReq
+        assert_eq!(header.get_message_type(), Some(MessageType::PReq));
+        
+        header.frame_type_and_payload_code = 0x40; // PRes
+        assert_eq!(header.get_message_type(), Some(MessageType::PRes));
+
+        header.frame_type_and_payload_code = 0x51; // SoA
+        assert_eq!(header.get_message_type(), Some(MessageType::SoA));
+        
+        header.frame_type_and_payload_code = 0x62; // ASnd
+        assert_eq!(header.get_message_type(), Some(MessageType::ASnd));
+        
+        header.frame_type_and_payload_code = 0x20; // Reserved message type
+        assert_eq!(header.get_message_type(), None);
+    }
+    
+    #[test]
+    fn test_powerlink_header_get_payload_code() {
+        let header = PowerlinkHeader {
+            frame_type_and_payload_code: 0x1A, // Message type 1, payload code 10 (0xA)
+            dll_identity: 0,
+            source_node_id: NodeId(0),
+            destination_node_id: NodeId(0),
+            nmt_control: 0,
+            frame_specific_data: 0,
+        };
+        assert_eq!(header.get_payload_code(), 10);
+        
+        let header_zero = PowerlinkHeader {
+            frame_type_and_payload_code: 0x30, // Message type 3, payload code 0
+            ..header
+        };
+        assert_eq!(header_zero.get_payload_code(), 0);
+        
+        let header_max = PowerlinkHeader {
+            frame_type_and_payload_code: 0xFF, // Message type 15, payload code 15
+            ..header
+        };
+        assert_eq!(header_max.get_payload_code(), 15);
+    }
+}

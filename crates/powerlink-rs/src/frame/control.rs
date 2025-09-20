@@ -96,3 +96,59 @@ impl SoAFrame {
         SoAFrame { eth_header, pl_header }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{C_DLL_MULTICAST_SOC, C_DLL_MULTICAST_SOA};
+
+    #[test]
+    fn test_socframe_new_constructor() {
+        let source_mac = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+        let nmt_command: u16 = 0x0020; // Example: NMTResetNode
+        let frame = SocFrame::new(source_mac, nmt_command);
+
+        // Check Ethernet header
+        assert_eq!(frame.eth_header.destination_mac, C_DLL_MULTICAST_SOC);
+        assert_eq!(frame.eth_header.source_mac, source_mac);
+
+        // Check POWERLINK header
+        assert_eq!(frame.pl_header.get_message_type(), Some(crate::types::MessageType::Soc));
+        assert_eq!(frame.pl_header.get_payload_code(), 0);
+        assert_eq!(frame.pl_header.source_node_id, NodeId(C_ADR_MN_DEF_NODE_ID));
+        assert_eq!(frame.pl_header.destination_node_id, NodeId(0));
+        
+        // Copy packed fields to local variables before asserting.
+        let nmt_control = frame.pl_header.nmt_control;
+        let frame_specific_data = frame.pl_header.frame_specific_data;
+        assert_eq!(nmt_control, nmt_command.to_be());
+        assert_eq!(frame_specific_data, 0);
+    }
+    
+    #[test]
+    fn test_soaframe_new_constructor_builds_correct_header() {
+        let source_mac = [0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54];
+        let target_node = NodeId(42);
+        let service = RequestedServiceId::StatusRequest; // ID 0x02
+        
+        let frame = SoAFrame::new(source_mac, target_node, service);
+
+        // Check Ethernet header
+        assert_eq!(frame.eth_header.destination_mac, C_DLL_MULTICAST_SOA);
+        assert_eq!(frame.eth_header.source_mac, source_mac);
+
+        // Check POWERLINK header
+        assert_eq!(frame.pl_header.get_message_type(), Some(crate::types::MessageType::SoA));
+        assert_eq!(frame.pl_header.source_node_id, NodeId(C_ADR_MN_DEF_NODE_ID));
+
+        // The most important check: verify the frame_specific_data encoding.
+        // RequestedServiceID (0x02) in bits 31-24, TargetNodeID (42 = 0x2A) in bits 7-0.
+        // Expected value in host order: 0x0200002A
+        let expected_data = (0x0200002A as u32).to_be();
+        
+        // FIX: Copy the packed field to a local variable before asserting.
+        let frame_specific_data = frame.pl_header.frame_specific_data;
+        assert_eq!(frame_specific_data, expected_data);
+    }
+}
