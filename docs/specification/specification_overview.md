@@ -44,7 +44,7 @@ The POWERLINK communication profile is based on CANopen communication profiles D
 The advantages of POWERLINK result from protecting the POWERLINK RTE network segment from regular office and factory networks. POWERLINK provides a private Class-C IP segment solution with fixed IP addresses.
 
 **Reference model**:
-[Reference Model](reference_model.png)
+![Reference Model](reference_model.png)
 
 ### Application layer (2.1.1)
 
@@ -80,7 +80,7 @@ Thus the Object Dictionary serves as an interface between the communication and 
 
 The most important part of a device profile is the Object Dictionary. The Object Dictionary is essentially a grouping of objects accessible via the network in an ordered, pre-defined fashion. Each object within the dictionary is addressed using a **16-bit index**. The Object Dictionary may contain **a maximum of 65536 entries** which are addressed through a 16-bit index.
 
-[Object Dictionary](object_dictionary.png)
+![Object Dictionary](object_dictionary.png)
 
 - The Static Data Types at indices *0001h through 001Fh* contain type definitions for standard data types like BOOLEAN, INTEGER, floating point, string, etc.
 - Manufacturer Specific Complex Data Types at indices 0040h through 005Fh are structures composed of standard data types but are specific to a particular device.
@@ -165,7 +165,7 @@ POWERLINK provides three services:
 - Asynchronous Data Transfer: **There may be one asynchronous message per cycle**. The right to send shall be assigned to a requesting node by the MN via the SoA message. Asynchronous data transfer is used for the exchange of non time-critical data.
 - Synchronisation of all nodes: At the beginning of each isochronous phase, the MN transmits the multicast SoC message very precisely to synchronise all nodes in the network.
 
-#### Powerlink Cycle
+#### Powerlink Cycle (4.2.4)
 
 Isochronous cycle:
 [Powerlink Cycle](powerlink_cycle.png)
@@ -193,4 +193,160 @@ In case of MN cycle loss, the multiplexed access sequence shall be continued on 
 
 The ability of an MN enabled node to perform control of multiplexed isochronous operation shall be indicated by the device description entry *D_DLL_MNFeatureMultiplex_BOOL*. The ability of a CN enabled node to be isochronously accessed in a multiplexed way shall be indicated by the device description entry *D_DLL_CNFeatureMultiplex_BOOL*.
 
-> Parei na pagina 43, secao 4.2.4.1.2.
+In the asynchronous phase of the cycle, access to the POWERLINK network may be granted to one CN or to the MN for the transfer of a single asynchronous message only. There shall be two types of asynchronous frames available:
+
+- The POWERLINK `ASnd` frame shall use the POWERLINK addressing scheme and shall be sent via unicast or broadcast to any other node.
+- A Legacy Ethernet message may be sent.
+
+If no asynchronous message transmission request is pending at the MN scheduling queues (4.2.4.1.2.1), the MN shall issue a `SoA` without assignment of the right to send to any node. No `ASnd` frame will follow to the SoA frame in this case. The MN shall start the asynchronous phase with the SoA. The SoA shall be used to identify CNs, request status information of a CN, to poll async-only CNs and to grant the asynchronous transmit right to one CN.
+
+The asynchronous phase shall be calculated from the start of SoA to the end of the asynchronous response. This definition is valid from the network’s point view. It may be different from the node’s application point of view. Due to the `AsyncSend` addressing scheme, the asynchronous phase may be terminated by the end of `SoA` on those nodes not being addressed, whereas it ends at the end of the asynchronous response on the addressed nodes.
+
+Asynchronous frames may be counted by the device. If implemented, received frames shall be indicated by `DIA_NMTTelegrCount_REC.AsyncRx_U32` and transmitted frames by `DIA_NMTTelegrCount_REC.AsyncTx_U32`.
+
+**The MN handles scheduling of all asynchronous data transfers**.
+
+**If a CN wants to send an asynchronous frame, it shall inform the MN via the `PRes` or the `StatusResponse` frame**. *The asynchronous scheduler of the MN shall determine in which cycle the right to send the asynchronous frame will be granted*. It shall guarantee that no send request will be delayed for an indefinite amount of time, even if network load is high.
+
+The MN shall select a node from all queued send requests (including its own). It shall send a SoA frame with a Requested Service Target identifying which node is allowed to send an asynchronous frame.
+
+The MN shall manage the dispatching of the asynchronous phase using different queues:
+
+- *Generic* transmit requests from the MN.
+- *IdentRequest* frames from the MN to identify CNs
+- *StatusRequest* frames to poll CNs
+- *Transmit* requests from the CNs
+
+*An `RS` value of 0 (000b) shall indicate that the queues are empty and an `RS` value of 7 (111b) shall indicate that 7 or more packages are queued*. **The algorithm that is used to assign the asynchronous phase when there are multiple requests pending shall be manufacturer-specific**.
+
+##### CN Cycle State Machine (4.2.4.5)
+
+The cycle state machine of the CN (DLL_CS) handles communication within a POWERLINK Cycle. The DLL_CS tracks the order of the frames received within a cycle and reacts as described below. The expected order of frame reception is dependant on the `NMT_CS` state (see 4.2.4.5.4 )
+
+If an error in the communication is detected by the `DLL_CS`, an error event to DLL Error Handling will be generated. The `DLL_CS` will attempt to uphold communication regardless of any errors.
+
+- States: 
+  - `DLL_CS_NON_CYCLIC`: This state means that the isochronous communication isn’t started yet or the connection was lost. It depends on the current state of the NMT_CS, which events are processed and which will be ignored.
+  - `DLL_CS_WAIT_SOC`: The state machine waits in this state after receiving the SoA frame until the beginning of the next cycle (triggered by a SoC frame from the MN). Ethernet frames of any type may be received between the SoA and the SoC frames (asynchronous phase).
+  - `DLL_CS_WAIT_PREQ`:  After the beginning of the cycle, the state machine waits in this state for a PReq frame. After PReq reception the CN shall respond with a PRes Frame. The CN may receive and process PRes Frames from other CN whilst in this state.
+  - `DLL_CS_WAIT_SOA`: After reception of a PReq frame the state machine waits for the reception of a SoA frame. Reception of a SoA frame confirms the end of the isochronous phase. The CN may receive and process PRes Frames from other nodes whilst in this state.
+- Events:
+  - `DLL_CE_SOC`: This Event signifies that a POWERLINK SoC frame was received from the MN. It marks the beginning of a new cycle and simultaneously the beginning of the isochronous phase of the cycle.
+  - `DLL_CE_PREQ`:  This Event signifies that a POWERLINK PReq frame was received from the MN.
+  - `DLL_CE_PRES`:  The CN may be configured to process the PRes frames of other CN’s (cross traffic). Every time a PRes frame is received, a DLL_CE_PRES event is generated
+  - `DLL_CE_SOA`: This event signifies that a SoA frame was received from the MN. It marks the end of the isochronous phase of the cycle and the beginning of the asynchronous phase.
+  - `DLL_CE_ASND`:  This event signifies that an ASnd frame or a non POWERLINK frame has been received. Since the frame types during the asynchronous phase are not limited to POWERLINK types, this event is generated on reception of all legal Ethernet frames.
+  - `DLL_CE_SOC_TIMEOUT`:  This event signifies that a SoC frame of the MN was lost. It occurs, when the SoC timeout supervision detects a missed SoC frame.
+
+> **The state of the NMT_CS represents the network state and is used as a qualifier for certain transitions of the DLL_CS**. 
+
+##### MN Cycle State Machine (4.2.4.6)
+
+The DLL_MS generates the flow of the frames during a POWERLINK cycle and monitors the reaction of the CNs. **The flow order is NMT_MS state dependent** (see 4.2.4.6.4 ).
+
+Usually the CNs are synchronised by the reception of the SoC. 
+
+> **This means the most significant parameter for the synchronisation of the POWERLINK network is the timing accuracy of the event `DLL_ME_SOC_TRIG`**.
+
+- States
+  - DLL_MS_NON_CYCLIC: This state means that the cyclic communication is not started yet or was stopped by the NMT_MS state machine (NMT state NMT_MS_PRE_OPERATIONAL_1). The state machine waits here until the NMT state changes to NMT_MS_PRE_OPERATIONAL_2. It depends on the current NMT state, which events will be processed and which will be ignored.
+  - DLL_MS_WAIT_SOC_TRIG: If the communication of the cycle is finished, the state machine remains in this state until the next cycle begins with a DLL_ME_SOC_TRIG.
+  - DLL_MS_WAIT_PRES: After the sending of the PReq frame the state machine waits in this state for a response. The waiting time is limited by a timeout.
+  - DLL_MS_WAIT_ASND:
+    - If a SoA with an Invite is sent, the state machine waits in this state until the asynchronous phase ends with the event DLL_ME_SOC_TRIG.
+    - In DLL_MS_NON_CYCLIC the event DLL_ME_SOA_TRIG shall be generated instead of DLL_ME_SOC_TRIG.
+    - If a ASnd is expected and the timeout NMT_MNCycleTiming_REC.AsyncSlotTimeout_U32 occurs, the error DLL_MEV_SOA_TIMEOUT shall be generated.
+  - DLL_MS_WAIT_SOA:  If a SoA with an Invite is sent that is not to be answered, the MN waits in this state until the timeout of the async phase elapsed or any Ethernet frame was received before the next reduced POWERLINK cycle starts. 
+- Events: 
+  - Notes: 
+    - The DLL_MS is triggered by events which are generated by an event handler. The DLL_MS has an interface to: 
+      - the hardware 
+      - the NMT state machine
+    - The event handler should serialize the events (it’s possible that a timeout occurs simultaneously with an Ethernet frame receiving). The implementation of the interface to the hardware is out of the scope of this specification.
+  - DLL_ME_PRES: This event signifies that a PRes frame was received.
+  - DLL_ME_PRES_TIMEOUT: This event is produced when the PRes frame was not (or not completely) received within a preconfigured time.
+  - DLL_ME_ASND: This event means that an ASnd frame or an non POWERLINK frame was received.
+  - DLL_ME_ASND_TIMEOUT: This event is produced when the ASnd frame was not (or not completely) received within a preconfigured time.
+  - DLL_ME_SOC_TRIG: This event triggers emission of the SoC frame and starts a new POWERLINK cycle. The timing accuracy determines the synchronisation accuracy of the POWERLINK network.
+  - DLL_ME_SOA_TRIG: This event means that a new reduced POWERLINK cycle shall start. The event can either be generated cyclically or directly after the reception of a requested ASnd message to continue the reduced POWERLINK cycle as fast as possible.
+
+> **The state of the NMT_MS represents the network state and is used as a condition in some transitions of the DLL_MS.**.
+
+#### Recognizing Active Nodes (4.2.5)
+
+The MN shall be configured with a list of all nodes on the network.
+
+All configured nodes shall be marked as inactive when the MN boots. Configured but inactive CNs shall be periodically accessed by an IdentRequest, a special form of the SoA frame. When a CN receives an IdentRequest addressed to itself, it shall return an IdentResponse, a special form of an ASnd frame, in the same asynchronous phase.
+
+The CN shall be marked as active if the MN receives an IdentResponse from the CN. An active CN may take part in the isochronous data transfer, e.g. it may be accessed via a PReq.
+
+#### Basic Ethernet Mode (4.3)
+
+Network communication behaves according to the rules of the Legacy Ethernet (IEEE 802.3). The network medium is accessed according to CSMA/CD. The network communication is collision-prone and non-deterministic. In the Basic Ethernet Mode any protocol on top of Legacy Ethernet can be used. Data between the nodes are preferentially exchanged via UDP/IP and TCP/IP. 
+
+> **POWERLINK nodes shouldn’t operate in Basic Ethernet Mode**, *when the node is part of a automation system*. *Basic Ethernet Mode is provided for point to point configurations, to be used for node setup and service purpose only*.
+
+#### MAC Addressing (4.4)
+
+A POWERLINK node must support unicast, multicast and broadcast Ethernet MAC addressing in accordance with IEEE802.3. The high-order bit of the MAC address is 0 for ordinary addresses (unicast) and it shall be unique. For group addresses the high-order bit of the MAC address is 1. The address consisting of all 1 bits is reserved for broadcast. The following MAC-multicast addresses shall be used:
+
+|                                                             | MAC Multicast Address |
+| ----------------------------------------------------------- | --------------------- |
+| Start of Cycle (SoC)                                        | C_DLL_MULTICAST_SOC   |
+| PollResponse (PRes)                                         | C_DLL_MULTICAST_PRES  | 
+| Start of Asynchronous (SoA)                                 | C_DLL_MULTICAST_SOA   |
+| AsynchronousSend (ASnd)                                     | C_DLL_MULTICAST_ASND  |
+| Active Managing Node Indication (AMNI) used by EPSG DS302-A | C_DLL_MULTICAST_AMNI  |
+
+#### POWERLINK Addressing
+
+Each POWERLINK node (MN, CN and Router) has a unique Node ID within a POWERLINK segment. 
+
+> **The number 240 is permanently assigned to the MN**. POWERLINK Node IDs 1-239 may used for the CNs.
+
+POWERLINK node IDs:
+
+| Number      | Constant               | Description                                           | Access Options                                 |
+| ----------- | ---------------------- | ----------------------------------------------------- | ---------------------------------------------- |
+| 0           | C_ADR_INVALID          | Invalid                                               | No                                             |
+| 1 ... 239   |                        | Regular POWERLINK CNs                                 | No / mandatory / optional / isoch / async only |
+| 240         | C_ADR_MN_DEF_NODE_ID   | POWERLINK MN                                          | mandatory isoch                                |
+| 241 ... 250 |                        | Reserved (used by EPSG DS302-A)                       | no                                             |
+| 251         | C_ADR_SELF_ADR_NODE_ID | Pseudo node ID to be used by a node to address itself | no                                             |
+| 252         | C_ADR_DUMMY_NODE_ID    | Dummy node                                            | no                                             |
+| 253         | C_ADR_DIAG_DEF_NODE_ID | Diagnostic device                                     | optional / isoch / async only                  |
+| 254         | C_ADR_RT1_DEF_NODE_ID  | POWERLINK to legacy ethernet router                   | no / mandatory / optional / isoch              |
+| 255         | C_ADR_BROADCAST        | broadcast                                             | no                                             |
+
+#### Frame Structures (4.6)
+
+POWERLINK is a protocol residing on top of the standard 802.3 MAC layer. POWERLINK messages shall be encapsulated in Ethernet II frames. 
+
+> *The Ethernet Type (Ethertype) field shall be set to 88ABh (C_DLL_ETHERTYPE_EPL)*.
+
+The length of the frame shall be restricted to the configured size. Otherwise the cycle time could not be guaranteed. Ethernet frames shall not be shorter than the specified minimum of 64 octets.
+
+POWERLINK Basic Frame:
+
+The POWERLINK Basic Frame format shall contain 5 fields:
+
+- Reserved (1 bit)
+- MessageType (7 bits)
+- Destination node address (1 octet), POWERLINK addressing scheme (See 4.5)
+- Source node address (1 octet), POWERLINK addressing scheme (See 4.5)
+- Payload (n octets)
+
+The POWERLINK Basic Frame format shall be encapsulated by the Ethernet II wrapper consisting of 14 octets of leading Ethernet header (Destination and Source MAC addresses, EtherType) and 4 octets of terminating CRC32 checksum.
+
+![Frame Structure](frame_structure.png)
+
+| Field | Abbr. | Description | Value |
+| - | - | - | - |
+| Destination MAC addr. | dmac | MAC Address of the addressed node.          | see 4.4             |
+| Source MAC addr.      | smac | MAC address of the transmitting node.       | see 4.4             |
+| EtherType             | etyp | Ethernet message type.                      | C_DLL_ETHERTYPE_EPL |
+| MessageType           | mtyp | POWERLINK message type identification.      | see table below     |
+| Destination           | dest | POWERLINK Node ID of the addressed node.    | see 4.5             |
+| Source                | src  | POWERLINK Node ID of the transmitting node. | see 4.5             |
+| Data                  | data | Data depending on the message type.         | refer below         |
+| CRC 32                | crc  | CRC32 checksum                              |                     |
