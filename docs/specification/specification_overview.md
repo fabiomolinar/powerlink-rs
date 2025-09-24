@@ -348,6 +348,6 @@ The POWERLINK Basic Frame format shall be encapsulated by the Ethernet II wrappe
 | EtherType             | etyp | Ethernet message type.                      | C_DLL_ETHERTYPE_EPL |
 | MessageType           | mtyp | POWERLINK message type identification.      | see table below     |
 | Destination           | dest | POWERLINK Node ID of the addressed node.    | see 4.5             |
-| Source                | src  | POWERLINK Node ID of the transmitting node. | see 4.5             | 
+| Source                | src  | POWERLINK Node ID of the transmitting node. | see 4.5             |
 | Data                  | data | Data depending on the message type.         | refer below         |
 | CRC 32                | crc  | CRC32 checksum                              |                     |
