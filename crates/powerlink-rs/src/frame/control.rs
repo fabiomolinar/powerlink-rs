@@ -1,6 +1,9 @@
-use crate::frame::basic::{EthernetHeader, PowerlinkHeader, MAC_ADDRESS_SIZE};
+use crate::frame::basic::{
+    EthernetHeader, PowerlinkHeader, MAC_ADDRESS_SIZE, MacAddress
+};
 use crate::types::{
-    NodeId, UNSIGNED16, UNSIGNED32, C_ADR_MN_DEF_NODE_ID,
+    NodeId, UNSIGNED16, UNSIGNED32, C_ADR_MN_DEF_NODE_ID, 
+    C_DLL_MULTICAST_SOA, C_DLL_MULTICAST_SOC
 };
 
 // --- Start of Cycle (SoC) ---
@@ -19,8 +22,8 @@ impl SocFrame {
     pub fn new(source_mac: [u8; 6], nmt_command_id: UNSIGNED16) -> Self {
         // SoC Destination MAC is always the specific SoC multicast address.
         let eth_header = EthernetHeader::new(
-            crate::types::C_DLL_MULTICAST_SOC, 
-            source_mac
+            MacAddress(C_DLL_MULTICAST_SOC), 
+            MacAddress(source_mac)
         );
         
         // Octet 0: DLL_FrameType: ID 0x1 (Soc), Payload Length Code 0.
@@ -70,8 +73,8 @@ impl SoAFrame {
         
         // SoA Destination MAC is always the specific SoA multicast address.
         let eth_header = EthernetHeader::new(
-            crate::types::C_DLL_MULTICAST_SOA, 
-            source_mac
+            MacAddress(C_DLL_MULTICAST_SOA), 
+            MacAddress(source_mac)
         );
 
         // Octet 0: DLL_FrameType: ID 0x5 (SoA), Payload Length Code 0.
@@ -102,6 +105,7 @@ impl SoAFrame {
 mod tests {
     use super::*;
     use crate::types::{C_DLL_MULTICAST_SOC, C_DLL_MULTICAST_SOA};
+    
 
     #[test]
     fn test_socframe_new_constructor() {
@@ -110,8 +114,8 @@ mod tests {
         let frame = SocFrame::new(source_mac, nmt_command);
 
         // Check Ethernet header
-        assert_eq!(frame.eth_header.destination_mac, C_DLL_MULTICAST_SOC);
-        assert_eq!(frame.eth_header.source_mac, source_mac);
+        assert_eq!(frame.eth_header.destination_mac.0, C_DLL_MULTICAST_SOC);
+        assert_eq!(frame.eth_header.source_mac.0, source_mac);
 
         // Check POWERLINK header
         assert_eq!(frame.pl_header.get_message_type(), Some(crate::types::MessageType::Soc));
@@ -135,8 +139,8 @@ mod tests {
         let frame = SoAFrame::new(source_mac, target_node, service);
 
         // Check Ethernet header
-        assert_eq!(frame.eth_header.destination_mac, C_DLL_MULTICAST_SOA);
-        assert_eq!(frame.eth_header.source_mac, source_mac);
+        assert_eq!(frame.eth_header.destination_mac.0, C_DLL_MULTICAST_SOA);
+        assert_eq!(frame.eth_header.source_mac.0, source_mac);
 
         // Check POWERLINK header
         assert_eq!(frame.pl_header.get_message_type(), Some(crate::types::MessageType::SoA));

@@ -1,5 +1,10 @@
-use crate::frame::basic::{EthernetHeader, PowerlinkHeader};
-use crate::types::{NodeId, UNSIGNED32, C_ADR_MN_DEF_NODE_ID};
+use crate::frame::basic::{
+    EthernetHeader, PowerlinkHeader, MacAddress
+};
+use crate::types::{
+    NodeId, UNSIGNED32, C_ADR_MN_DEF_NODE_ID, 
+    C_DLL_MULTICAST_PRES
+};
 use alloc::vec::Vec;
 
 
@@ -25,7 +30,10 @@ impl PReqFrame {
         // This is a simplification; actual derivation depends on configuration or network rules.
         let mut dest_mac: [u8; 6] = [0x00; 6];
         dest_mac[5] = target_node_id.try_into().unwrap(); 
-        let eth_header = EthernetHeader::new(dest_mac, source_mac);
+        let eth_header = EthernetHeader::new(
+            MacAddress(dest_mac),
+            MacAddress(source_mac)
+        );
 
         // Octet 0: DLL_FrameType: ID 0x3 (PReq).
         // Payload Code (PL) set to 0 for maximum size expected, or configured limit.
@@ -77,8 +85,8 @@ impl PResFrame {
         
         // PRes frames use the specific PRes multicast address.
         let eth_header = EthernetHeader::new(
-            crate::types::C_DLL_MULTICAST_PRES, 
-            source_mac
+            MacAddress(C_DLL_MULTICAST_PRES), 
+            MacAddress(source_mac)
         );
         
         // Octet 0: DLL_FrameType: ID 0x4 (PRes).
@@ -122,8 +130,8 @@ mod tests {
         
         // Simplified dest MAC check
         let expected_dest_mac = [0x00, 0x00, 0x00, 0x00, 0x00, 55];
-        assert_eq!(frame.eth_header.destination_mac, expected_dest_mac);
-        assert_eq!(frame.eth_header.source_mac, source_mac);
+        assert_eq!(frame.eth_header.destination_mac.0, expected_dest_mac);
+        assert_eq!(frame.eth_header.source_mac.0, source_mac);
         
         assert_eq!(frame.pl_header.get_message_type(), Some(MessageType::PReq));
         assert_eq!(frame.pl_header.source_node_id, NodeId(C_ADR_MN_DEF_NODE_ID));
@@ -140,7 +148,7 @@ mod tests {
         let mut frame = PResFrame::new(source_mac, source_node, payload.clone());
         
         // Check initial state from new()
-        assert_eq!(frame.eth_header.destination_mac, C_DLL_MULTICAST_PRES);
+        assert_eq!(frame.eth_header.destination_mac.0, C_DLL_MULTICAST_PRES);
         assert_eq!(frame.pl_header.get_message_type(), Some(MessageType::PRes));
         assert_eq!(frame.pl_header.source_node_id, source_node);
         assert_eq!(frame.tpdo_payload, payload);
