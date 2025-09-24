@@ -1,5 +1,6 @@
 use crate::types::{MessageType, NodeId, C_DLL_ETHERTYPE_EPL, UNSIGNED16, UNSIGNED32};
 use alloc::vec::Vec;
+use core::fmt;
 
 
 pub const MAC_ADDRESS_SIZE: usize = 6;
@@ -9,12 +10,46 @@ pub const EPL_HEADER_SIZE: usize = 10;
 /// Total size of mandatory Ethernet II frame header plus POWERLINK header.
 pub const TOTAL_HEADER_SIZE: usize = ETHERNET_HEADER_SIZE + EPL_HEADER_SIZE;
 
+/// A 6-byte IEEE 802 MAC address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MacAddress(pub [u8; MAC_ADDRESS_SIZE]);
+
+impl MacAddress {
+    /// Creates a new `MacAddress` from a 6-byte array.
+    pub const fn new(bytes: [u8; MAC_ADDRESS_SIZE]) -> Self {
+        MacAddress(bytes)
+    }
+
+    /// Checks if the address is a multicast address.
+    pub fn is_multicast(&self) -> bool {
+        // The first bit of the first octet is 1 for multicast addresses.
+        (self.0[0] & 0x01) != 0
+    }
+
+    /// Checks if the address is the broadcast address (FF:FF:FF:FF:FF:FF).
+    pub fn is_broadcast(&self) -> bool {
+        self.0 == [0xFF; 6]
+    }
+}
+
+impl fmt::Display for MacAddress {
+    /// Formats the MAC address as "XX:XX:XX:XX:XX:XX".
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5]
+        )
+    }
+}
+
 /// Represents a standard 14-byte Ethernet Header (Layer 2).
 /// Structure: Destination MAC (6), Source MAC (6), EtherType (2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EthernetHeader {
-    pub destination_mac: [u8; MAC_ADDRESS_SIZE],
-    pub source_mac: [u8; MAC_ADDRESS_SIZE],
+    // UPDATED: Use the new MacAddress type
+    pub destination_mac: MacAddress,
+    pub source_mac: MacAddress,
     // Stored network byte order (big-endian) but often processed as host order in Rust.
     pub ether_type: UNSIGNED16, 
 }
@@ -22,13 +57,12 @@ pub struct EthernetHeader {
 impl EthernetHeader {
     /// Checks if the EtherType matches the required POWERLINK value (0x88AB).
     pub fn is_powerlink(&self) -> bool {
-        // Assume `ether_type` is stored in the correct endianness or check both if ambiguity exists.
-        // For Rust network programming, this usually means checking against the BE representation.
         self.ether_type.to_be() == C_DLL_ETHERTYPE_EPL
     }
 
     /// Creates a new header destined for a specific unicast or multicast MAC address.
-    pub fn new(dest: [u8; MAC_ADDRESS_SIZE], src: [u8; MAC_ADDRESS_SIZE]) -> Self {
+    // UPDATED: The constructor now takes MacAddress types
+    pub fn new(dest: MacAddress, src: MacAddress) -> Self {
         Self {
             destination_mac: dest,
             source_mac: src,
@@ -102,7 +136,8 @@ mod tests {
 
     #[test]
     fn test_ethernet_header_is_powerlink() {
-        let mut header = EthernetHeader::new([0; 6], [0; 6]);
+        // UPDATED: Use MacAddress::new() for clarity
+        let mut header = EthernetHeader::new(MacAddress::new([0; 6]), MacAddress::new([0; 6]));
         assert!(header.is_powerlink());
 
         header.ether_type = 0x0800; // IP packet
@@ -111,8 +146,9 @@ mod tests {
     
     #[test]
     fn test_ethernet_header_new() {
-        let dest_mac = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x01];
-        let src_mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        // UPDATED: Use the new type for construction
+        let dest_mac = MacAddress::new([0x01, 0x11, 0x1E, 0x00, 0x00, 0x01]);
+        let src_mac = MacAddress::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
         let header = EthernetHeader::new(dest_mac, src_mac);
         
         assert_eq!(header.destination_mac, dest_mac);
