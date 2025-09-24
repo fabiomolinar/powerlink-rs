@@ -118,7 +118,7 @@ impl PowerlinkHeader {
         self.frame_type_and_payload_code & 0x0F
     }
     
-    // Methods for serialization and deserialization would be added here in subsequent commits/phases.
+    // Methods for serialization and deserialization to be added here in subsequent commits/phases.
 }
 
 /// Represents a complete DLL frame, combining Ethernet framing and POWERLINK protocol header/payload.
