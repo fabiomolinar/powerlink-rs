@@ -52,6 +52,7 @@ pub struct EthernetHeader {
     pub source_mac: MacAddress,
     // Stored network byte order (big-endian) but often processed as host order in Rust.
     pub ether_type: UNSIGNED16, 
+    // CRC is not included here as it's typically handled by other layers or hardware.
 }
 
 impl EthernetHeader {
