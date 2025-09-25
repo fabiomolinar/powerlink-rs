@@ -2,6 +2,7 @@ use crate::types::{MessageType, NodeId, C_DLL_ETHERTYPE_EPL, UNSIGNED16, UNSIGNE
 use alloc::vec::Vec;
 use core::fmt;
 
+
 // --- Constants and Sizes ---
 
 pub const MAC_ADDRESS_SIZE: usize = 6;
@@ -10,6 +11,60 @@ pub const ETHERNET_HEADER_SIZE: usize = 14;
 pub const EPL_HEADER_SIZE: usize = 10;
 /// Total size of mandatory Ethernet II frame header plus POWERLINK header.
 pub const TOTAL_HEADER_SIZE: usize = ETHERNET_HEADER_SIZE + EPL_HEADER_SIZE;
+
+// --- Priority Flag ---
+
+// A tuple struct is the most concise way to implement the Newtype Pattern
+pub struct RSFlag(u8); 
+
+impl RSFlag {
+    /// Creates a new RSFlag value, ensuring the input is within 0-7.
+    /// If a higher value is provided, it will be clamped to 7.
+    pub fn new(value: u8) -> Self {
+        let clamped_value = value.min(7);
+        RSFlag(clamped_value)       
+    }
+
+    /// Provides safe, read-only access to the underlying u8 value.
+    pub fn get(&self) -> u8 {
+        self.0
+    }
+
+    /// Add 1 to the current RSFlag value, clamping at 7.
+    pub fn inc(&mut self) {
+        if self.0 < 7 {
+            self.0 += 1;
+        }
+    }
+
+    /// Subtract 1 from the current RSFlag value, clamping at 0.
+    pub fn dec(&mut self) {
+        if self.0 > 0 {
+            self.0 -= 1;
+        }
+    }
+
+    /// Sets the RSFlag to a new value, clamping at 7 if necessary.
+    pub fn set(&mut self, value: u8) {
+        self.0 = value.min(7);
+    }
+}
+
+// --- Priority Flag ---
+
+#[allow(non_camel_case_types)]
+#[repr(u8)]
+pub enum PRFlag{
+    PRIO_NMT_REQUEST = 0b111,
+    High3 = 0b110,
+    High2 = 0b101,
+    High1 = 0b100,
+    PRIO_GENERIC_REQUEST = 0b011,
+    Low3 = 0b010,
+    Low2 = 0b001,
+    Low1 = 0b000,
+}
+
 
 // --- MacAddress ---
 
@@ -83,7 +138,6 @@ impl EthernetHeader {
     }
 
     /// Creates a new header destined for a specific unicast or multicast MAC address.
-    // UPDATED: The constructor now takes MacAddress types
     pub fn new(dest: MacAddress, src: MacAddress) -> Self {
         Self {
             destination_mac: dest,
@@ -97,6 +151,7 @@ impl EthernetHeader {
 // --- MessageTypeOctet ---
 
 /// Struct representing the message type octet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MessageTypeOctet {
     pub message_type: MessageType,
 }
@@ -110,7 +165,7 @@ pub struct PowerlinkHeader {
     // Octet 0: Partially reserved and MessageType.
     // Bit 7: Reserved (0)
     // Bits 6 - 0: MessageType (4 bits) + Payload Length Code (4 bits)
-    pub message_type: MessageTypeOctet,
+    pub message_type_octet: MessageTypeOctet,
     
     // Octet 1: Destination.
     pub destination: NodeId,
@@ -121,22 +176,23 @@ pub struct PowerlinkHeader {
 }
 
 impl PowerlinkHeader {
-    /// Extracts the MessageType (Frame ID, bits 7-4 of Octet 0).
-    pub fn get_message_type(&self) -> Option<MessageType> {
-        let id = self.frame_type_and_payload_code >> 4;
-        match id {
-            0x1 => Some(MessageType::Soc),
-            0x3 => Some(MessageType::PReq),
-            0x4 => Some(MessageType::PRes),
-            0x5 => Some(MessageType::SoA),
-            0x6 => Some(MessageType::ASnd),
-            _ => None,
+    /// Creates a new PowerlinkHeader with specified parameters.
+    pub fn new(
+        message_type: MessageType,
+        destination: NodeId,
+        source: NodeId,
+    ) -> Self {
+        let message_type_octet = MessageTypeOctet { message_type };
+        
+        PowerlinkHeader {
+            message_type_octet,
+            destination,
+            source,
         }
     }
-    
-    /// Extracts the Payload Length Code (PL, bits 3-0 of Octet 0).
-    pub fn get_payload_code(&self) -> u8 {
-        self.frame_type_and_payload_code & 0x0F
+    /// Extracts the MessageType (Frame ID, bits 7-4 of Octet 0).
+    pub fn get_message_type(&self) -> MessageType {
+        return self.message_type_octet.message_type;
     }
     
     // Methods for serialization and deserialization to be added here in subsequent commits/phases.
@@ -173,54 +229,22 @@ mod tests {
     #[test]
     fn test_powerlink_header_get_message_type() {
         let mut header = PowerlinkHeader {
-            frame_type_and_payload_code: 0x1A, // SoC with payload code 10
-            dll_identity: 0,
-            source_node_id: NodeId(0),
-            destination_node_id: NodeId(0),
-            nmt_control: 0,
-            frame_specific_data: 0,
+            message_type_octet: MessageTypeOctet { message_type: MessageType::SoC },
+            destination: NodeId(1),
+            source: NodeId(2),
         };
+        assert_eq!(header.get_message_type(), MessageType::SoC);
 
-        assert_eq!(header.get_message_type(), Some(MessageType::Soc));
+        header.message_type_octet = MessageTypeOctet { message_type: MessageType::PReq };
+        assert_eq!(header.get_message_type(), MessageType::PReq);
 
-        header.frame_type_and_payload_code = 0x3F; // PReq
-        assert_eq!(header.get_message_type(), Some(MessageType::PReq));
-        
-        header.frame_type_and_payload_code = 0x40; // PRes
-        assert_eq!(header.get_message_type(), Some(MessageType::PRes));
+        header.message_type_octet = MessageTypeOctet { message_type: MessageType::PRes };
+        assert_eq!(header.get_message_type(), MessageType::PRes);
 
-        header.frame_type_and_payload_code = 0x51; // SoA
-        assert_eq!(header.get_message_type(), Some(MessageType::SoA));
-        
-        header.frame_type_and_payload_code = 0x62; // ASnd
-        assert_eq!(header.get_message_type(), Some(MessageType::ASnd));
-        
-        header.frame_type_and_payload_code = 0x20; // Reserved message type
-        assert_eq!(header.get_message_type(), None);
-    }
-    
-    #[test]
-    fn test_powerlink_header_get_payload_code() {
-        let header = PowerlinkHeader {
-            frame_type_and_payload_code: 0x1A, // Message type 1, payload code 10 (0xA)
-            dll_identity: 0,
-            source_node_id: NodeId(0),
-            destination_node_id: NodeId(0),
-            nmt_control: 0,
-            frame_specific_data: 0,
-        };
-        assert_eq!(header.get_payload_code(), 10);
-        
-        let header_zero = PowerlinkHeader {
-            frame_type_and_payload_code: 0x30, // Message type 3, payload code 0
-            ..header
-        };
-        assert_eq!(header_zero.get_payload_code(), 0);
-        
-        let header_max = PowerlinkHeader {
-            frame_type_and_payload_code: 0xFF, // Message type 15, payload code 15
-            ..header
-        };
-        assert_eq!(header_max.get_payload_code(), 15);
+        header.message_type_octet = MessageTypeOctet { message_type: MessageType::SoA };
+        assert_eq!(header.get_message_type(), MessageType::SoA);
+
+        header.message_type_octet = MessageTypeOctet { message_type: MessageType::ASnd };
+        assert_eq!(header.get_message_type(), MessageType::ASnd);
     }
 }

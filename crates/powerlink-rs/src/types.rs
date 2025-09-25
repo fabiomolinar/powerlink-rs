@@ -18,6 +18,8 @@ pub type UNSIGNED32 = u32;
 /// use of invalid `u8` values where a `NodeId` is required.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub u8);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EPLVersion(pub u8); // Placeholder for future use
 
 // --- Protocol Constants (Appendix 3) ---
 
@@ -25,7 +27,7 @@ pub struct NodeId(pub u8);
 pub const C_DLL_ETHERTYPE_EPL: u16 = 0x88AB;
 
 /// Maximum size of PReq and PRes payload data (1490 Byte)
-pub const C_DLL_ISOCHR_MAX_PAYL: usize = 1490;
+pub const C_DLL_ISOCHR_MAX_PAYL: u16 = 1490;
 
 /// Maximum asynchronous payload in bytes including all headers (exclusive the Ethernet header) (1500 Byte)
 pub const C_DLL_MAX_ASYNC_MTU: usize = 1500;
@@ -59,7 +61,7 @@ pub const C_DLL_MULTICAST_SOC: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x01];
 #[repr(u8)]
 pub enum MessageType {
     // Isochronous frames
-    Soc = 0x01, // Start of Cycle
+    SoC = 0x01, // Start of Cycle
     PReq = 0x03, // Poll Request
     PRes = 0x04, // Poll Response
     // Asynchronous frames

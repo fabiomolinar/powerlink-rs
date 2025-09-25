@@ -9,7 +9,7 @@ The project utilizes a Rust **workspace** to achieve clear separation between th
 1.  **The Core Crate (`powerlink-rs`):** This is defined as the **"Platform-agnostic core logic for Ethernet POWERLINK Rust implementation"**. It contains the fundamental protocol state machines and data structures necessary to implement the standard (e.g., NMT cycle logic, frame parsing/generation). It is set as the default member of the workspace.
 2.  **I/O Driver Crates (`powerlink-io-*`):** These separate crates handle the low-level, raw Ethernet input/output (I/O) for different operating systems and embedded environments. Current planned drivers include `powerlink-io-linux`, `powerlink-io-windows`, and `powerlink-io-embedded`.
 
-## II. Resource Management and Portability (The `no_std` Core)
+## Resource Management and Portability (The `no_std` Core)
 
 To ensure the implementation can run across diverse targets, including embedded systems, the architecture prioritizes minimal reliance on a full operating system environment.
 
@@ -18,14 +18,14 @@ To ensure the implementation can run across diverse targets, including embedded 
 - **Feature Flag Strategy:** Cross-platform compilation is managed via feature flags. The platform-specific I/O crates (like `powerlink-io-windows`) explicitly enable the **`std` feature** of the core `powerlink-rs` crate when standard library functionality (such as OS sockets) is required for those platforms..
 - **alloc:** At least for now, we are relying on alloc for dynamic memory allocation. This may change on the future.
 
-## III. Hardware Abstraction Layer (HAL)
+## Hardware Abstraction Layer (HAL)
 
 To decouple the core protocol logic from the physical network interface, a Hardware Abstraction Layer (HAL) approach is mandated.
 
 - **HAL Trait Definition:** The core `powerlink-rs` crate defines a Rust trait for low-level I/O, abstracting functions such as `send_raw_frame` and `receive_raw_frame`.
 - **Platform Implementation:** The platform-specific crates (e.g., `powerlink-io-windows`) are responsible for implementing this **core HAL**, utilizing platform-native APIs (such as raw sockets or specialized bindings like WinPcap/Npcap on Windows) to handle raw Ethernet packet interaction.
 
-## IV. Internal Protocol Layering and Code Modules
+## Internal Protocol Layering and Code Modules
 
 The core implementation mirrors the functional layers defined in the EPSG DS 301 Communication Profile Specification. The mapping of protocol concepts to Rust modules ensures logical encapsulation of responsibility:
 
@@ -36,3 +36,7 @@ The core implementation mirrors the functional layers defined in the EPSG DS 301
 | **Network Management (NMT)** | Modules implementing the Network Management state machines (MN and CN states, e.g., `NMT_CS_NOT_ACTIVE` to `NMT_CS_OPERATIONAL`) and handling configuration objects. |
 | **Service Data Objects (SDO)** | Modules implementing non-real-time data exchange (client/server model). SDO services are implemented using sequenced commands over asynchronous frames (ASnd) or UDP/IP. |
 | **Process Data Objects (PDO)** | Modules handling real-time, cyclic data exchange (Producer/Consumer model) carried within PReq and PRes frames. |
+
+## Naming Conventions
+
+Although RUST standard doesn't use UPPER CASE to define `enum`s, this crate will be using `#[allow(non_camel_case_types)]` in certain parts of the code to keep the variable names in the code aligned with the variable names in the specification.

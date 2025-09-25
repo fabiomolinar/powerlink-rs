@@ -1,10 +1,12 @@
 use crate::frame::basic::{
-    EthernetHeader, PowerlinkHeader, MacAddress
+    EthernetHeader, PowerlinkHeader, MacAddress, NetTime, RelativeTime
 };
 use crate::types::{
     NodeId, UNSIGNED16, UNSIGNED32, C_ADR_MN_DEF_NODE_ID, 
-    C_DLL_MULTICAST_SOA, C_DLL_MULTICAST_SOC
+    C_DLL_MULTICAST_SOA, C_DLL_MULTICAST_SOC, MessageType,
+    C_ADR_BROADCAST_NODE_ID, EPLVersion
 };
+use crate::nmt::{self, NMTState};
 
 // --- Start of Cycle (SoC) ---
 
@@ -25,27 +27,41 @@ impl SocFrame {
     /// Creates a new SoC frame.
     /// The NMT_Control field (Octets 4-5) typically holds the NMT Command ID for explicit commands.
     pub fn new(
-        dest: MacAddress, source: MacAddress
+        source_mac: MacAddress, mc_flag: bool, ps_flag: bool,
+        net_time: NetTime, relative_time: RelativeTime,
     ) -> Self {
         // SoC Destination MAC is always the specific SoC multicast address.
         let eth_header = EthernetHeader::new(
             MacAddress(C_DLL_MULTICAST_SOC), 
-            MacAddress(source_mac)
+            source_mac
+        );                
+        let pl_header = PowerlinkHeader::new(
+            MessageType::SoC, // MessageType ID for SoC
+            NodeId(C_ADR_BROADCAST_NODE_ID), // Destination Node ID is ignored in multicast frames
+            NodeId(C_ADR_MN_DEF_NODE_ID), // Source Node ID (MN)
         );
+        let mut octet4 : u8 = 0x00;
+        if ps_flag { octet4 |= 0b01000000; }
+        if mc_flag { octet4 |= 0b10000000; }
         
-        // Octet 0: DLL_FrameType: ID 0x1 (Soc), Payload Length Code 0.
-        let frame_type_and_payload_code: u8 = 0x10; 
-        
-        let pl_header = PowerlinkHeader {
-            frame_type_and_payload_code,
-            dll_identity: 0, 
-            source_node_id: NodeId(C_ADR_MN_DEF_NODE_ID), // MN always sends SoC
-            destination_node_id: NodeId(0), // Ignored in multicast frames
-            nmt_control: nmt_command_id.to_be(), // NMT Command ID is mandatory
-            frame_specific_data: 0, // Reserved
-        };
-
-        SocFrame { eth_header, pl_header }
+        SocFrame {
+            eth_header,
+            pl_header,
+            octet3: 0x00, // Reserved
+            octet4,
+            octet5: 0x00, // Reserved
+            net_time,
+            relative_time,
+            octet22_45: [0x00; 24],
+        }
+    }
+    /// Retrieve the MC flag from octet4.
+    pub fn get_mc_flag(&self) -> bool {
+        (self.octet4 & 0b10000000) != 0
+    }
+    /// Retrieve the PS flag from octet4.
+    pub fn get_ps_flag(&self) -> bool {
+        (self.octet4 & 0b01000000) != 0
     }
 }
 
@@ -53,14 +69,15 @@ impl SocFrame {
 
 /// Requested Service IDs (DS 301, Appendix 3.4)
 /// These values are encoded in the SoA's frame_specific_data field.
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RequestedServiceId {
-    IdentRequest = 0x01, 
-    StatusRequest = 0x02, 
-    NmtCommand = 0x04,
-    // ... others follow but these are mandatory for Phase 1/2 functionality
-    Reserved = 0x00, 
+    NO_SERVICE = 0x00,
+    IDENT_REQUEST = 0x01, 
+    STATUS_REQUEST = 0x02, 
+    NMT_REQUEST_INVITE = 0x03,         
+    UNSPECIFIED_INVITE = 0xFF, 
 }
 
 /// Represents a complete SoA frame (MN multicast control message requesting an asynchronous response).
@@ -68,42 +85,46 @@ pub enum RequestedServiceId {
 pub struct SoAFrame {
     pub eth_header: EthernetHeader,
     pub pl_header: PowerlinkHeader,
-    // SoA frames do not carry a payload outside of the minimal padding/CRC.
+    pub nmt_state: NMTState,
+    octet4: u8,
+    octet5: u8,
+    pub req_service_id: RequestedServiceId,
+    pub target_node_id: NodeId,
+    pub epl_version: EPLVersion,
+    octet9_45: [u8; 37], // Reserved/Padding
 }
 
 impl SoAFrame {
     /// Creates a new SoA frame, requesting a specific service from a target Node ID.
-    ///
-    /// `target_node_id`: The CN Node ID being requested (0xFF for broadcast IdentRequest).
-    /// `requested_service`: The service the MN is requesting (e.g., IdentRequest or StatusRequest).
-    pub fn new(source_mac: [u8; 6], target_node_id: NodeId, requested_service: RequestedServiceId) -> Self {
-        
+    pub fn new(
+        source_mac: MacAddress, nmt_state: NMTState, ea_flag: bool,
+        er_flag: bool, requested_service: RequestedServiceId, target_node_id: NodeId,
+        epl_version: EPLVersion,
+    ) -> Self {        
         // SoA Destination MAC is always the specific SoA multicast address.
         let eth_header = EthernetHeader::new(
             MacAddress(C_DLL_MULTICAST_SOA), 
-            MacAddress(source_mac)
+            source_mac
         );
-
-        // Octet 0: DLL_FrameType: ID 0x5 (SoA), Payload Length Code 0.
-        let frame_type_and_payload_code: u8 = 0x50; 
-
-        // Octet 6-9 (frame_specific_data) encodes the request:
-        // Bits 31-24: RequestedServiceID
-        // Bits 7-0: RequestedServiceTarget (target node ID)
-        let requested_id_u32 = (requested_service as UNSIGNED32) << 24;
-        let requested_target_u32 = target_node_id.0 as UNSIGNED32;
-        let frame_specific_data = (requested_id_u32 | requested_target_u32).to_be(); // Must be Big Endian (network order)
-
-        let pl_header = PowerlinkHeader {
-            frame_type_and_payload_code,
-            dll_identity: 0, 
-            source_node_id: NodeId(C_ADR_MN_DEF_NODE_ID), 
-            destination_node_id: NodeId(0), // Ignored in multicast frames
-            nmt_control: 0, 
-            frame_specific_data,
-        };
-
-        SoAFrame { eth_header, pl_header }
+        let pl_header = PowerlinkHeader::new(
+            MessageType::SoA, // MessageType ID for SoC
+            NodeId(C_ADR_BROADCAST_NODE_ID), // Destination Node ID is ignored in multicast frames
+            NodeId(C_ADR_MN_DEF_NODE_ID), // Source Node ID (MN)
+        );
+        let mut octet4 : u8 = 0x00;
+        if er_flag { octet4 |= 0b00000010; }
+        if ea_flag { octet4 |= 0b00000100; }
+        SoAFrame { 
+            eth_header,
+            pl_header,
+            nmt_state,
+            octet4,
+            octet5: 0x00, // Reserved
+            req_service_id: requested_service,
+            target_node_id,
+            epl_version,
+            octet9_45: [0x00; 37],
+         }
     }
 }
 
@@ -116,50 +137,41 @@ mod tests {
 
     #[test]
     fn test_socframe_new_constructor() {
-        let source_mac = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
-        let nmt_command: u16 = 0x0020; // Example: NMTResetNode
-        let frame = SocFrame::new(source_mac, nmt_command);
+        let source_mac = MacAddress([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]);
+        let dummy_time = NetTime{seconds: 0xABCD, nanoseconds: 0xABCD};
+        let dummy_rel_time = RelativeTime{seconds: 0xABCD, nanoseconds: 0xABCD};
+        let frame = SocFrame::new(
+            source_mac, true, false, 
+            dummy_time, dummy_rel_time
+        );
 
         // Check Ethernet header
         assert_eq!(frame.eth_header.destination_mac.0, C_DLL_MULTICAST_SOC);
-        assert_eq!(frame.eth_header.source_mac.0, source_mac);
+        assert_eq!(frame.eth_header.source_mac, source_mac);
 
         // Check POWERLINK header
-        assert_eq!(frame.pl_header.get_message_type(), Some(crate::types::MessageType::Soc));
-        assert_eq!(frame.pl_header.get_payload_code(), 0);
-        assert_eq!(frame.pl_header.source_node_id, NodeId(C_ADR_MN_DEF_NODE_ID));
-        assert_eq!(frame.pl_header.destination_node_id, NodeId(0));
-        
-        // Copy packed fields to local variables before asserting.
-        let nmt_control = frame.pl_header.nmt_control;
-        let frame_specific_data = frame.pl_header.frame_specific_data;
-        assert_eq!(nmt_control, nmt_command.to_be());
-        assert_eq!(frame_specific_data, 0);
+        assert_eq!(frame.pl_header.get_message_type(), MessageType::SoC);
+        assert_eq!(frame.pl_header.source, NodeId(C_ADR_MN_DEF_NODE_ID));
+        assert_eq!(frame.pl_header.destination, NodeId(C_ADR_BROADCAST_NODE_ID));
     }
     
     #[test]
     fn test_soaframe_new_constructor_builds_correct_header() {
-        let source_mac = [0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54];
+        let source_mac = MacAddress([0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54]);
         let target_node = NodeId(42);
-        let service = RequestedServiceId::StatusRequest; // ID 0x02
+        let service = RequestedServiceId::STATUS_REQUEST; // ID 0x02
         
-        let frame = SoAFrame::new(source_mac, target_node, service);
+        let frame = SoAFrame::new(
+            source_mac, NMTState{}, true, false,
+            service, target_node, EPLVersion(1)
+        );
 
         // Check Ethernet header
         assert_eq!(frame.eth_header.destination_mac.0, C_DLL_MULTICAST_SOA);
-        assert_eq!(frame.eth_header.source_mac.0, source_mac);
+        assert_eq!(frame.eth_header.source_mac, source_mac);
 
         // Check POWERLINK header
-        assert_eq!(frame.pl_header.get_message_type(), Some(crate::types::MessageType::SoA));
-        assert_eq!(frame.pl_header.source_node_id, NodeId(C_ADR_MN_DEF_NODE_ID));
-
-        // The most important check: verify the frame_specific_data encoding.
-        // RequestedServiceID (0x02) in bits 31-24, TargetNodeID (42 = 0x2A) in bits 7-0.
-        // Expected value in host order: 0x0200002A
-        let expected_data = (0x0200002A as u32).to_be();
-        
-        // FIX: Copy the packed field to a local variable before asserting.
-        let frame_specific_data = frame.pl_header.frame_specific_data;
-        assert_eq!(frame_specific_data, expected_data);
+        assert_eq!(frame.pl_header.get_message_type(), MessageType::SoA);
+        assert_eq!(frame.pl_header.source, NodeId(C_ADR_MN_DEF_NODE_ID));
     }
 }
