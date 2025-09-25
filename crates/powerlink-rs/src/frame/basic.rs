@@ -2,6 +2,7 @@ use crate::types::{MessageType, NodeId, C_DLL_ETHERTYPE_EPL, UNSIGNED16, UNSIGNE
 use alloc::vec::Vec;
 use core::fmt;
 
+// --- Constants and Sizes ---
 
 pub const MAC_ADDRESS_SIZE: usize = 6;
 pub const ETHERNET_HEADER_SIZE: usize = 14;
@@ -9,6 +10,8 @@ pub const ETHERNET_HEADER_SIZE: usize = 14;
 pub const EPL_HEADER_SIZE: usize = 10;
 /// Total size of mandatory Ethernet II frame header plus POWERLINK header.
 pub const TOTAL_HEADER_SIZE: usize = ETHERNET_HEADER_SIZE + EPL_HEADER_SIZE;
+
+// --- MacAddress ---
 
 /// A 6-byte IEEE 802 MAC address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -43,6 +46,24 @@ impl fmt::Display for MacAddress {
     }
 }
 
+// --- NetTime and RelativeTime ---
+
+/// Represents a 64 bits NetTime value as defined by IEEE 1588.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetTime {
+    pub seconds: UNSIGNED32, // Seconds part (upper 32 bits)
+    pub nanoseconds: UNSIGNED32, // Nanoseconds part (lower 32 bits)
+}
+
+/// Represents a 64 bits RelativeTime value as defined by IEEE 1588.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RelativeTime {
+    pub seconds: UNSIGNED32, // Seconds part (upper 32 bits)
+    pub nanoseconds: UNSIGNED32, // Nanoseconds part (lower 32 bits)
+}
+
+// --- Ethernet Header ---
+
 /// Represents a standard 14-byte Ethernet Header (Layer 2).
 /// Structure: Destination MAC (6), Source MAC (6), EtherType (2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,30 +94,30 @@ impl EthernetHeader {
     }
 }
 
+// --- MessageTypeOctet ---
+
+/// Struct representing the message type octet.
+pub struct MessageTypeOctet {
+    pub message_type: MessageType,
+}
+
+// --- Powerlink Header ---
+
 /// The core 10-byte POWERLINK frame header (DS 301, Table 41).
 #[repr(packed)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PowerlinkHeader {
-    // Octet 0: DLL_FrameType.
-    // Bits 7-4: Message Type ID (e.g., 0x1 for SoC, 0x3 for PReq)
-    // Bits 3-0: Payload Length (PL) indicator (used for negotiation or indicating size)
-    pub frame_type_and_payload_code: u8,
+    // Octet 0: Partially reserved and MessageType.
+    // Bit 7: Reserved (0)
+    // Bits 6 - 0: MessageType (4 bits) + Payload Length Code (4 bits)
+    pub message_type: MessageTypeOctet,
     
-    // Octet 1: DLL_Identity.
-    // Carries flags like MS (Multiplexed Slot) and potentially PR (Priority) in PRes/ASnd.
-    pub dll_identity: u8,
+    // Octet 1: Destination.
+    pub destination: NodeId,
     
-    // Octet 2: DLL_SourceNodeID.
-    pub source_node_id: NodeId,
+    // Octet 2: Source.
+    pub source: NodeId,
     
-    // Octet 3: DLL_DestinationNodeID.
-    pub destination_node_id: NodeId,
-
-    // Octet 4-5: NMT_Control (Cycle Counter in PReq/PRes, NMT Command ID in SoC/SoA).
-    pub nmt_control: UNSIGNED16, 
-    
-    // Octet 6-9: Frame specific data (e.g., Time Stamps in Isochronous frames, Service IDs in Asynchronous).
-    pub frame_specific_data: UNSIGNED32,
 }
 
 impl PowerlinkHeader {
@@ -121,15 +142,7 @@ impl PowerlinkHeader {
     // Methods for serialization and deserialization to be added here in subsequent commits/phases.
 }
 
-/// Represents a complete DLL frame, combining Ethernet framing and POWERLINK protocol header/payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PowerlinkFrame {
-    pub ethernet_header: EthernetHeader,
-    pub powerlink_header: PowerlinkHeader,
-    /// Raw payload bytes (PDO or SDO/NMT data), padded to minimum frame size if necessary.
-    pub payload: Vec<u8>, 
-}
-
+// --- Unit Tests ---
 
 #[cfg(test)]
 mod tests {

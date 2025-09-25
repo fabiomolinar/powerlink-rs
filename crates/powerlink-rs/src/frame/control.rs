@@ -1,5 +1,5 @@
 use crate::frame::basic::{
-    EthernetHeader, PowerlinkHeader, MAC_ADDRESS_SIZE, MacAddress
+    EthernetHeader, PowerlinkHeader, MacAddress
 };
 use crate::types::{
     NodeId, UNSIGNED16, UNSIGNED32, C_ADR_MN_DEF_NODE_ID, 
@@ -8,18 +8,25 @@ use crate::types::{
 
 // --- Start of Cycle (SoC) ---
 
-/// Represents a complete SoC frame (MN multicast control message).
+/// Represents a complete SoC frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SocFrame {
     pub eth_header: EthernetHeader,
     pub pl_header: PowerlinkHeader,
-    // SoC frames do not carry a payload outside of the minimal padding/CRC.
+    octet3: u8,
+    octet4: u8,
+    octet5: u8,
+    pub net_time: NetTime,
+    pub relative_time: RelativeTime,
+    octet22_45: [u8; 24], // Reserved/Padding
 }
 
 impl SocFrame {
     /// Creates a new SoC frame.
     /// The NMT_Control field (Octets 4-5) typically holds the NMT Command ID for explicit commands.
-    pub fn new(source_mac: [u8; 6], nmt_command_id: UNSIGNED16) -> Self {
+    pub fn new(
+        dest: MacAddress, source: MacAddress
+    ) -> Self {
         // SoC Destination MAC is always the specific SoC multicast address.
         let eth_header = EthernetHeader::new(
             MacAddress(C_DLL_MULTICAST_SOC), 
