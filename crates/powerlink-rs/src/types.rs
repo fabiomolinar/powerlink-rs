@@ -26,8 +26,10 @@ pub type REAL32 = f32;
 /// Alias for REAL64 (64-bit floating point).
 pub type REAL64 = f64;
 /// Alias for a 6-byte MAC Address.
+#[allow(non_camel_case_types)]
 pub type MAC_ADDRESS = [u8; 6];
 /// Alias for a 4-byte IP Address.
+#[allow(non_camel_case_types)]
 pub type IP_ADDRESS = [u8; 4];
 
 
