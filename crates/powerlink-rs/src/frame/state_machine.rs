@@ -8,23 +8,25 @@ use crate::nmt::states::NMTState;
 pub enum DllState {
     /// The isochronous communication is not active.
     #[default]
-    NonCyclic,
+    DLL_CS_NON_CYCLIC,
     /// Waiting for the Start of Cycle (SoC) frame.
-    WaitSoc,
+    DLL_CS_WAIT_SOC,
     /// Waiting for a Poll Request (PReq) frame.
-    WaitPReq,
+    DLL_CS_WAIT_PREQ,
     /// Waiting for the Start of Asynchronous (SoA) frame.
-    WaitSoA,
+    DLL_CS_WAIT_SOA,
 }
 
 /// Events that drive the DLL_CS, corresponding to received frames or timeouts.
 /// (EPSG DS 301, Section 4.2.4.5.3)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DllEvent {
-    SoCReceived,
-    PReqReceived,
-    SoAReceived,
-    SoCTimeout,
+    DLL_CE_SOC,
+    DLL_CE_PREQ,
+    DLL_CE_PRES,
+    DLL_CE_SOA,
+    DLL_CE_ASND,
+    DLL_CE_SOC_TIMEOUT
 }
 
 /// Manages the DLL cycle state for a Controlled Node.
@@ -46,25 +48,25 @@ impl DllStateMachine {
                 let next_state = match (self.state, event) {
                     // A SoC can be received in any state and always resets the cycle to WaitPReq.
                     // This covers (DLL_CT1), (DLL_CT7), and (DLL_CT9).
-                    (_, DllEvent::SoCReceived) => DllState::WaitPReq,
+                    (_, DllEvent::DLL_CE_SOC) => DllState::DLL_CS_WAIT_PREQ,
 
                     // (DLL_CT2) Happy path: PReq is received while waiting for it.
-                    (DllState::WaitPReq, DllEvent::PReqReceived) => DllState::WaitSoA,
+                    (DllState::DLL_CS_WAIT_PREQ, DllEvent::DLL_CE_PREQ) => DllState::DLL_CS_WAIT_SOA,
 
                     // (DLL_CT3) Happy path: SoA is received while waiting for it.
-                    (DllState::WaitSoA, DllEvent::SoAReceived) => DllState::WaitSoc,
+                    (DllState::DLL_CS_WAIT_SOA, DllEvent::DLL_CE_PRES) => DllState::DLL_CS_WAIT_SOC,
                     
                     // --- Handling of Lost Frames ---
                     // (DLL_CT3, part of DLL_CE_PREQ) Lost SoA and SoC: A PReq is received while waiting for the next SoC.
                     // The node processes the PReq and moves on.
-                    (DllState::WaitSoc, DllEvent::PReqReceived) => DllState::WaitSoA,
+                    (DllState::DLL_CS_WAIT_SOC, DllEvent::DLL_CE_PREQ) => DllState::DLL_CS_WAIT_SOA,
 
                     // (DLL_CT8) Lost PReq: An SoA is received while waiting for a PReq.
                     // This is normal for multiplexed or stopped nodes.
-                    (DllState::WaitPReq, DllEvent::SoAReceived) => DllState::WaitSoc,
+                    (DllState::DLL_CS_WAIT_PREQ, DllEvent::DLL_CE_PRES) => DllState::DLL_CS_WAIT_SOC,
                     
                     // A timeout for the SoC frame indicates a loss of communication, resetting the state.
-                    (_, DllEvent::SoCTimeout) => DllState::NonCyclic,
+                    (_, DllEvent::DLL_CE_SOA) => DllState::DLL_CS_NON_CYCLIC,
 
                     // If an unexpected event occurs, remain in the current state.
                     // Error reporting would be triggered here.
@@ -74,7 +76,7 @@ impl DllStateMachine {
             },
             _ => {
                 // In all other NMT states, the Dll state machine is considered non-cyclic.
-                self.state = DllState::NonCyclic;
+                self.state = DllState::DLL_CS_NON_CYCLIC;
             }
         }
     }
@@ -87,7 +89,7 @@ impl DllStateMachine {
 
 impl Default for DllStateMachine {
     fn default() -> Self {
-        Self { state: DllState::NonCyclic }
+        Self { state: DllState::DLL_CS_NON_CYCLIC }
     }
 }
 
@@ -101,23 +103,23 @@ mod tests {
         let operational_state = NMTState::Operational;
 
         // Initial state
-        assert_eq!(sm.current_state(), DllState::NonCyclic);
+        assert_eq!(sm.current_state(), DllState::DLL_CS_NON_CYCLIC);
 
         // A SoC starts the cycle
-        sm.process_event(DllEvent::SoCReceived, operational_state);
-        assert_eq!(sm.current_state(), DllState::WaitPReq);
+        sm.process_event(DllEvent::DLL_CE_SOC, operational_state);
+        assert_eq!(sm.current_state(), DllState::DLL_CS_WAIT_PREQ);
 
         // A PReq is received
-        sm.process_event(DllEvent::PReqReceived, operational_state);
-        assert_eq!(sm.current_state(), DllState::WaitSoA);
+        sm.process_event(DllEvent::DLL_CE_PREQ, operational_state);
+        assert_eq!(sm.current_state(), DllState::DLL_CS_WAIT_SOA);
         
         // An SoA ends the isochronous phase
-        sm.process_event(DllEvent::SoAReceived, operational_state);
-        assert_eq!(sm.current_state(), DllState::WaitSoc);
+        sm.process_event(DllEvent::DLL_CE_PRES, operational_state);
+        assert_eq!(sm.current_state(), DllState::DLL_CS_WAIT_SOC);
         
         // A timeout resets the state machine
-        sm.process_event(DllEvent::SoCTimeout, operational_state);
-        assert_eq!(sm.current_state(), DllState::NonCyclic);
+        sm.process_event(DllEvent::DLL_CE_SOA, operational_state);
+        assert_eq!(sm.current_state(), DllState::DLL_CS_NON_CYCLIC);
     }
 
     #[test]
@@ -126,16 +128,16 @@ mod tests {
         let operational_state = NMTState::Operational;
         
         // Start a cycle
-        sm.process_event(DllEvent::SoCReceived, operational_state);
-        sm.process_event(DllEvent::PReqReceived, operational_state);
-        sm.process_event(DllEvent::SoAReceived, operational_state);
-        assert_eq!(sm.current_state(), DllState::WaitSoc);
+        sm.process_event(DllEvent::DLL_CE_SOC, operational_state);
+        sm.process_event(DllEvent::DLL_CE_PREQ, operational_state);
+        sm.process_event(DllEvent::DLL_CE_PRES, operational_state);
+        assert_eq!(sm.current_state(), DllState::DLL_CS_WAIT_SOC);
 
         // SCENARIO: SoA from previous cycle and SoC from new cycle were lost.
         // The CN receives a PReq for the new cycle while still in WaitSoc.
-        sm.process_event(DllEvent::PReqReceived, operational_state);
+        sm.process_event(DllEvent::DLL_CE_PREQ, operational_state);
         
         // The state machine should recover and move to WaitSoA.
-        assert_eq!(sm.current_state(), DllState::WaitSoA);
+        assert_eq!(sm.current_state(), DllState::DLL_CS_WAIT_SOA);
     }
 }

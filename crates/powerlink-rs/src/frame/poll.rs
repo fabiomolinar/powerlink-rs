@@ -1,3 +1,5 @@
+#![allow(non_camel_case_types)]
+
 use crate::frame::basic::{EthernetHeader, MacAddress};
 use crate::nmt::states::{NMTState};
 use crate::types::{
@@ -30,7 +32,6 @@ impl RSFlag {
 
 /// An enum for the 3-bit PR (Priority) flag.
 /// (EPSG DS 301, Appendix 3.2)
-#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PRFlag{

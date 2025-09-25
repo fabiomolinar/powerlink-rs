@@ -1,3 +1,5 @@
+#![allow(non_camel_case_types)]
+
 use crate::frame::basic::{EthernetHeader, MacAddress};
 use crate::common::{NetTime, RelativeTime};
 use crate::types::{
@@ -61,7 +63,6 @@ impl SocFrame {
 
 /// Requested Service IDs for SoA frames.
 /// (EPSG DS 301, Appendix 3.4)
-#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RequestedServiceId {
@@ -128,7 +129,6 @@ impl SoAFrame {
 
 /// Service IDs for ASnd frames.
 /// (EPSG DS 301, Appendix 3.3)
-#[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ServiceId {
