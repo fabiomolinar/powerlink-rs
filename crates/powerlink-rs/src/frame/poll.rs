@@ -206,7 +206,7 @@ mod tests {
         let frame = PResFrame::new(
             source_mac,
             source_node,
-            NMTState::NotActive,
+            NMTState::NMT_CS_NOT_ACTIVE,
             flags,
             PDOVersion(1),
             payload.clone()

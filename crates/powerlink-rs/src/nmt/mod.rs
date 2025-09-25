@@ -15,7 +15,7 @@ impl NMTStateMachine {
     pub fn new(node_id: NodeId) -> Self {
         // All nodes start in the Initialising state after power on.
         Self {
-            current_state: NMTState::Initialising,
+            current_state: NMTState::NMT_GS_INITIALISING,
             node_id,
         }
     }
@@ -25,29 +25,29 @@ impl NMTStateMachine {
     pub fn process_event(&mut self, event: NmtEvent) {
         let next_state = match (self.current_state, event) {
             // (NMT_GT1/2/8) Initialisation events reset the state.
-            (_, NmtEvent::ResetNode) => NMTState::ResetApplication,
-            (_, NmtEvent::ResetCommunication) => NMTState::ResetCommunication,
-            (_, NmtEvent::ResetConfiguration) => NMTState::ResetConfiguration,
+            (_, NmtEvent::ResetNode) => NMTState::NMT_GS_RESET_APPLICATION,
+            (_, NmtEvent::ResetCommunication) => NMTState::NMT_GS_RESET_COMMUNICATION,
+            (_, NmtEvent::ResetConfiguration) => NMTState::NMT_GS_RESET_CONFIGURATION,
 
             // A CN enters EPL mode upon receiving any POWERLINK frame.
-            (NMTState::NotActive, NmtEvent::EnterEplMode) => NMTState::PreOperational1,
+            (NMTState::NMT_CS_NOT_ACTIVE, NmtEvent::EnterEplMode) => NMTState::NMT_CS_PRE_OPERATIONAL_1,
             // A timeout in NotActive moves to BasicEthernet mode.
-            (NMTState::NotActive, NmtEvent::Timeout) => NMTState::BasicEthernet,
+            (NMTState::NMT_CS_NOT_ACTIVE, NmtEvent::Timeout) => NMTState::NMT_CS_BASIC_ETHERNET,
             
             // A SoC in PreOp1 moves the CN to PreOp2.
-            (NMTState::PreOperational1, NmtEvent::EnterEplMode) => NMTState::PreOperational2,
+            (NMTState::NMT_CS_PRE_OPERATIONAL_1, NmtEvent::EnterEplMode) => NMTState::NMT_CS_PRE_OPERATIONAL_2,
             
             // The MN commands the CN to prepare for operation.
-            (NMTState::PreOperational2, NmtEvent::EnableReadyToOperate) => NMTState::ReadyToOperate,
+            (NMTState::NMT_CS_PRE_OPERATIONAL_2, NmtEvent::EnableReadyToOperate) => NMTState::NMT_CS_READY_TO_OPERATE,
             
             // The MN commands the CN to start operation.
-            (NMTState::ReadyToOperate, NmtEvent::StartNode) => NMTState::Operational,
+            (NMTState::NMT_CS_READY_TO_OPERATE, NmtEvent::StartNode) => NMTState::NMT_CS_OPERATIONAL,
             
             // StopNode command moves the CN to the Stopped state.
-            (NMTState::PreOperational2 | NMTState::ReadyToOperate | NMTState::Operational, NmtEvent::StopNode) => NMTState::Stopped,
+            (NMTState::NMT_CS_PRE_OPERATIONAL_2 | NMTState::NMT_CS_READY_TO_OPERATE | NMTState::NMT_CS_OPERATIONAL, NmtEvent::StopNode) => NMTState::NMT_CS_STOPPED,
             
             // Any major error forces a reset back to PreOperational1.
-            (NMTState::PreOperational2 | NMTState::ReadyToOperate | NMTState::Operational | NMTState::Stopped, NmtEvent::Error) => NMTState::PreOperational1,
+            (NMTState::NMT_CS_PRE_OPERATIONAL_2 | NMTState::NMT_CS_READY_TO_OPERATE | NMTState::NMT_CS_OPERATIONAL | NMTState::NMT_CS_STOPPED, NmtEvent::Error) => NMTState::NMT_CS_PRE_OPERATIONAL_1,
             
             // Stay in the current state if no transition is defined.
             (current, _) => current,

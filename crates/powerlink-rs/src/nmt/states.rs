@@ -1,33 +1,50 @@
-//+ NEW FILE
+#![allow(non_camel_case_types)]
 /// Defines the NMT states for a POWERLINK node, covering both the common
 /// initialisation states and the specific CN states.
 /// (EPSG DS 301, Section 7.1 and Appendix 3.6)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NMTState {
+    // # MN and CN States
+    NMT_GS_OFF,
+    // # Powered
+    NMT_GS_POWERED, // Super state
+    // ## Initializations
+    NMT_GS_INITIALISATION,  // Super state
     /// Common initialisation state after power-on or reset.
-    Initialising,
+    NMT_GS_INITIALISING,
     /// Resets the application-specific parts of the object dictionary.
-    ResetApplication,
+    NMT_GS_RESET_APPLICATION,
     /// Resets the communication-specific parts of the object dictionary.
-    ResetCommunication,
+    NMT_GS_RESET_COMMUNICATION,
     /// Resets the device configuration using the current object dictionary.
-    ResetConfiguration,
-    
+    NMT_GS_RESET_CONFIGURATION,
+    // ## Communicating
+    NMT_GS_COMMUNICATING, // Super state    
     /// CN state: The node is not yet part of the POWERLINK cycle.
     #[default]
-    NotActive,
+    NMT_CS_NOT_ACTIVE,
+    // ### EPL MODE
+    NMT_CS_EPL_MODE, // Super state
     /// CN state: The node can only perform SDO communication.
-    PreOperational1,
+    NMT_CS_PRE_OPERATIONAL_1,
     /// CN state: The node participates in the isochronous cycle, but PDOs are invalid.
-    PreOperational2,
+    NMT_CS_PRE_OPERATIONAL_2,
     /// CN state: The node signals readiness for operation to the MN.
-    ReadyToOperate,
+    NMT_CS_READY_TO_OPERATE,
     /// CN state: The node is fully operational, and PDO data is valid.
-    Operational,
+    NMT_CS_OPERATIONAL,
     /// CN state: The node is in a controlled shutdown state and does not participate in PDO exchange.
-    Stopped,
+    NMT_CS_STOPPED,
     /// CN state: The node operates as a standard Ethernet device.
-    BasicEthernet,
+    NMT_CS_BASIC_ETHERNET,
+    /// MN State
+    NMT_MS_NOT_ACTIVE,
+    NMT_MS_EPL_MODE,
+    NMT_MS_PRE_OPERATIONAL_1,
+    NMT_MS_PRE_OPERATIONAL_2,
+    NMT_MS_READY_TO_OPERATE,
+    NMT_MS_OPERATIONAL,
+    NMT_MS_BASIC_ETHERNET
 }
 
 /// Defines events that can trigger a state transition in the NMT state machine.

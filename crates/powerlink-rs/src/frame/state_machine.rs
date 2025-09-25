@@ -1,4 +1,5 @@
-//+ NEW FILE
+#![allow(non_camel_case_types)]
+
 use crate::nmt::states::NMTState;
 
 /// States for the Data Link Layer Cycle State Machine (DLL_CS) of a CN.
@@ -44,7 +45,7 @@ impl DllStateMachine {
     pub fn process_event(&mut self, event: DllEvent, nmt_state: NMTState) {
         // The DLL_CS is active only in specific NMT states.
         match nmt_state {
-            NMTState::PreOperational2 | NMTState::ReadyToOperate | NMTState::Operational | NMTState::Stopped => {
+            NMTState::NMT_CS_PRE_OPERATIONAL_2 | NMTState::NMT_CS_READY_TO_OPERATE | NMTState::NMT_CS_OPERATIONAL | NMTState::NMT_CS_STOPPED => {
                 let next_state = match (self.state, event) {
                     // A SoC can be received in any state and always resets the cycle to WaitPReq.
                     // This covers (DLL_CT1), (DLL_CT7), and (DLL_CT9).
@@ -100,7 +101,7 @@ mod tests {
     #[test]
     fn test_dll_cn_happy_path_transitions() {
         let mut sm = DllStateMachine::new();
-        let operational_state = NMTState::Operational;
+        let operational_state = NMTState::NMT_CS_OPERATIONAL;
 
         // Initial state
         assert_eq!(sm.current_state(), DllState::DLL_CS_NON_CYCLIC);
@@ -125,7 +126,7 @@ mod tests {
     #[test]
     fn test_dll_cn_lost_frame_recovery() {
         let mut sm = DllStateMachine::new();
-        let operational_state = NMTState::Operational;
+        let operational_state = NMTState::NMT_CS_OPERATIONAL;
         
         // Start a cycle
         sm.process_event(DllEvent::DLL_CE_SOC, operational_state);

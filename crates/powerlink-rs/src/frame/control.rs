@@ -205,7 +205,7 @@ mod tests {
         let flags = SoAFlags { ea: true, er: false };
         
         let frame = SoAFrame::new(
-            source_mac, NMTState::NotActive, flags,
+            source_mac, NMTState::NMT_CS_NOT_ACTIVE, flags,
             service, target_node, EPLVersion(1)
         );
 
