@@ -4,7 +4,7 @@ pub mod basic;
 pub mod control;
 pub mod poll;
 
-pub use basic::{EthernetHeader, PowerlinkHeader};
+pub use basic::{EthernetHeader};
 pub use control::{SocFrame, SoAFrame, RequestedServiceId};
 pub use poll::{PReqFrame, PResFrame};
 

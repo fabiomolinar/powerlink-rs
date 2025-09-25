@@ -7,6 +7,7 @@ extern crate alloc;
 // --- Foundation Modules ---
 pub mod types;
 pub mod hal;
+pub mod common;
 
 // --- Data Link Layer (DLL) implementation (Phase 1 Focus) ---
 pub mod frame;
@@ -20,3 +21,4 @@ pub mod sdo;
 // Export core types and the Network Interface abstraction
 pub use types::{NodeId, UNSIGNED8, UNSIGNED16, UNSIGNED32};
 pub use hal::{NetworkInterface, PowerlinkError};
+pub use common::{NetTime, RelativeTime};
