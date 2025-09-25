@@ -6,19 +6,30 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
 
 ## Coverage
 
-- EPSG 301 (Communication Profile Specification):
-  - Chapter 4 (Data Link): 0%
-  - Chapter 5 (Network/Transport Layer): 0%
-  - Chapter 6 (Application Layer): 0%
-  - Chapter 7 (NMT): 0%
-  - Chapter 8 (Diagnostics): 0%
-  - Chapter 9 (Routing): 0%
-- EPSG 302-A (High Availability): 0% (for the future)
-- EPSG 302-B (Multiple ASnd): 0% (for the future)
-- EPSG 302-C (PollResponse Chaining): 0% (for the future)
-- EPSG 302-D (Multiple PReq/PRes): 0% (for the future)
-- EPSG 302-E (Dynamic Node Allocation): 0% (for the future)
-- EPSG 311 (Device Description): 0% (for the future)
+- **EPSG 301 (Communication Profile Specification):**
+  - **Chapter 4 (Data Link Layer): 25%**
+    - [x] 4.6 Frame Structures (SoC, PReq, PRes, SoA, ASnd)
+    - [ ] 4.2.4 Cycle State Machines (MN and CN)
+    - [ ] 4.7 DLL Error Handling
+    - [ ] Other DLL concepts
+  - **Chapter 5 (Network/Transport Layer): 0%**
+  - **Chapter 6 (Application Layer): 5%**
+    - [x] 6.1 Basic Data Types (`NetTime`, `RelativeTime`)
+    - [ ] 6.2 Object Dictionary Structure
+    - [ ] 6.3 Service Data Objects (SDO)
+    - [ ] 6.4 Process Data Objects (PDO)
+  - **Chapter 7 (NMT): 5%**
+    - [x] Basic NMT data structures (`NMTState`)
+    - [ ] 7.1 NMT State Machines
+    - [ ] 7.3 NMT Services
+  - **Chapter 8 (Diagnostics): 0%**
+  - **Chapter 9 (Routing): 0%**
+- **EPSG 302-A (High Availability)**: 0% (for the future)
+- **EPSG 302-B (Multiple ASnd)**: 0% (for the future)
+- **EPSG 302-C (PollResponse Chaining)**: 0% (for the future)
+- **EPSG 302-D (Multiple PReq/PRes)**: 0% (for the future)
+- **EPSG 302-E (Dynamic Node Allocation)**: 0% (for the future)
+- **EPSG 311 (Device Description)**: 0% (for the future)
 
 ## Roadmap
 

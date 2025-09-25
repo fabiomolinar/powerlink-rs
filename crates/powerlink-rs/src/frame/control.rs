@@ -5,7 +5,7 @@ use crate::types::{
     C_DLL_MULTICAST_SOC, MessageType, C_ADR_BROADCAST_NODE_ID, 
     EPLVersion
 };
-use crate::nmt::{self, NMTState};
+use crate::nmt::states::{NMTState};
 use alloc::vec::Vec;
 
 
@@ -205,7 +205,7 @@ mod tests {
         let flags = SoAFlags { ea: true, er: false };
         
         let frame = SoAFrame::new(
-            source_mac, NMTState{}, flags,
+            source_mac, NMTState::NotActive, flags,
             service, target_node, EPLVersion(1)
         );
 

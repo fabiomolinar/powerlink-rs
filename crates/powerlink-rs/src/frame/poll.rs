@@ -1,5 +1,5 @@
 use crate::frame::basic::{EthernetHeader, MacAddress};
-use crate::nmt::{self, NMTState};
+use crate::nmt::states::{NMTState};
 use crate::types::{
     NodeId, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_PRES, 
     MessageType, C_ADR_BROADCAST_NODE_ID
@@ -205,7 +205,7 @@ mod tests {
         let frame = PResFrame::new(
             source_mac,
             source_node,
-            NMTState{},
+            NMTState::NotActive,
             flags,
             PDOVersion(1),
             payload.clone()
