@@ -17,7 +17,7 @@ pub enum DllMsState {
     /// Waits in this state until the asynchronous phase ends with the event DLL_ME_SOC_TRIG.
     DLL_MS_WAIT_ASND,
     // Wait in this state until the timeout of the async phase elapsed or any Ethernet frame was received. 
-    DLL_MS_WAIT_SOA
+    DLL_MS_WAIT_SOA,
 }
 
 /// Events that drive the DLL_CS, corresponding to received frames or timeouts.
@@ -52,7 +52,7 @@ impl DllMsStateMachine {
     /// The logic follows the state diagram in Figure 30 of the specification.
     pub fn process_event(
         &mut self, event: DllMsEvent, nmt_state: NMTState, response_expected: bool, 
-        async_in: bool, async_out: bool, isochr: bool
+        async_in: bool, async_out: bool, isochr: bool, isochr_out: bool
     ) {
         // The DLL_CS is active only in specific NMT states.
         match nmt_state {
@@ -60,24 +60,27 @@ impl DllMsStateMachine {
                 let next_state = match (self.state, event) {
                     (DllMsState::DLL_MS_WAIT_SOA, DllMsEvent::DLL_ME_SOA_TRIG) => {
                         match (async_in, response_expected, async_out) {
-                            // --- (DLL_MT10) ---
+                            // --- DLL_MT10 ---
                             // Send SoA with Invite
                             (false, false, _) => DllMsState::DLL_MS_WAIT_SOA,
                             // Send SoA with Invite to MN and send ASnd or non POWERLINK frame
                             (true, _, false) => DllMsState::DLL_MS_WAIT_SOA,
                             // Send SoA
                             (true, _, true) => DllMsState::DLL_MS_WAIT_ASND,
-                            // --- (DLL_MT11) ---
+                            // --- DLL_MT11 ---
                             // Send SoA with Invite
                             (false, true, _) => DllMsState::DLL_MS_WAIT_ASND,
                         }
                     },                    
                     (DllMsState::DLL_MS_WAIT_ASND, DllMsEvent::DLL_ME_ASND_TIMEOUT | DllMsEvent::DLL_ME_SOA_TRIG) => {
                         match (async_in, response_expected) {
-                            // --- (DLL_MT12) ---
+                            // --- DLL_MT12 ---
+                            // Send SoA, ASnd if available
                             (true, _) => DllMsState::DLL_MS_WAIT_ASND,
+                            // Send SoA with Invite
                             (false, false) => DllMsState::DLL_MS_WAIT_SOA,
-                            // --- (DLL_MT13) ---
+                            // --- DLL_MT13 ---
+                            // Send SoA with Invite, report error DLL_MEV_ASND_TIMEOUT
                             (false, true) => DllMsState::DLL_MS_WAIT_SOA,
                         }
                     },
@@ -88,8 +91,65 @@ impl DllMsStateMachine {
                 self.state = next_state;
             },
             NMTState::NMT_MS_OPERATIONAL | NMTState::NMT_MS_READY_TO_OPERATE | NMTState::NMT_MS_PRE_OPERATIONAL_2 => {
-                // TODO
+                let next_state = match (self.state, event) {
+                    (DllMsState::DLL_MS_WAIT_SOC_TRIG, DllMsEvent::DLL_ME_SOC_TRIG) => {
+                        match(isochr, async_in) {
+                            // --- DLL_MT1 ---
+                            // Send SoC, PReq
+                            (false, _) => DllMsState::DLL_MS_WAIT_PRES,
+                            // --- DLL_MT6 ---
+                            // Send SoC, PRes [isochr_out != 0] and SoA with Invite
+                            (true, false)  => DllMsState::DLL_MS_WAIT_ASND,
+                            // --- DLL_MT7 ---
+                            // Send SoC, PRes [isochr_out != 0], SoA and ASnd [async_out != 0]
+                            (true, true) => DllMsState::DLL_MS_WAIT_SOC_TRIG
+                        }
+                    },
+                    (DllMsState::DLL_MS_WAIT_PRES, DllMsEvent::DLL_ME_PRES | DllMsEvent::DLL_ME_PRES_TIMEOUT) => {
+                        match(isochr, async_in, isochr_out, async_out) {
+                            // --- DLL_MT2 ---
+                            // Send next PReq
+                            (false, _, _, _) => DllMsState::DLL_MS_WAIT_PRES,
+                            // --- DLL_MT3 ---
+                            // SoA
+                            (true, true, false, _) => DllMsState::DLL_MS_WAIT_SOC_TRIG,
+                            // ASnd
+                            (true, true, _, false) => DllMsState::DLL_MS_WAIT_SOC_TRIG,
+                            // Send PRes
+                            (true, true, _, _) => DllMsState::DLL_MS_WAIT_SOC_TRIG,                            
+                            // --- DLL_MT4 ---
+                            // SoA with Invite
+                            (true, false, false, _)  => DllMsState::DLL_MS_WAIT_ASND,                            
+                            // Send SoC, PRes
+                            (true, false, _, _)  => DllMsState::DLL_MS_WAIT_ASND,
+                        }
+                    },
+                    (DllMsState::DLL_MS_WAIT_ASND, DllMsEvent::DLL_ME_SOC_TRIG) => {
+                        match(isochr, async_in, isochr_out, async_out) {
+                            // --- DLL_MT5 ---
+                            // PRes
+                            (true, true, false, _) => DllMsState::DLL_MS_WAIT_SOC_TRIG,
+                            // SoA and ASnd
+                            (true, true, _, false) => DllMsState::DLL_MS_WAIT_SOC_TRIG,
+                            // Send SoC
+                            (true, true, _, _) => DllMsState::DLL_MS_WAIT_SOC_TRIG,
+                            // --- DLL_MT8 ---
+                            // Send SoC and SoA with invite
+                            (true, false, _, _) => DllMsState::DLL_MS_WAIT_ASND,                           
+                            // --- DLL_MT9 ---
+                            // Send SoC and PReq
+                            (false, _, _, _)  => DllMsState::DLL_MS_WAIT_PRES,                            
+                        }
+                    },
+                    // --- DLL_MT8 ---
+                    // Process the frame
+                    (DllMsState::DLL_MS_WAIT_ASND, DllMsEvent::DLL_ME_ASND) => DllMsState::DLL_MS_WAIT_ASND,
 
+                    // If an unexpected event occurs, remain in the current state.
+                    // Error reporting would be triggered here.
+                    (current, _) => current,                  
+                };
+                self.state = next_state;
             },
             _ => {
                 // In all other NMT states, the Dll state machine is considered non-cyclic.
