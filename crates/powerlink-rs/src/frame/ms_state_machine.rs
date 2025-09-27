@@ -1,6 +1,9 @@
 #![allow(non_camel_case_types)]
 
-use crate::nmt::states::NMTState;
+use core::error;
+
+use crate::{frame::dll_error::DllError, nmt::states::NMTState, NodeId};
+use alloc::vec::Vec;
 
 /// States for the Data Link Layer Cycle State Machine (DLL_MS) of a MN.
 /// (EPSG DS 301, Section 4.2.4.6.2)
@@ -51,8 +54,10 @@ impl DllMsStateMachine {
     /// The logic follows the state diagrams in Figure 31 and 32 of the specification.
     pub fn process_event(
         &mut self, event: DllMsEvent, nmt_state: NMTState, response_expected: bool, 
-        async_in: bool, async_out: bool, isochr: bool, isochr_out: bool
-    ) {
+        async_in: bool, async_out: bool, isochr: bool, isochr_out: bool, source_node_id: NodeId,
+        dest_node_id: NodeId
+    ) -> Option<Vec<DllError>> {
+        let mut errors : Vec<DllError> = Vec::new();
         match nmt_state {
             NMTState::NMT_MS_PRE_OPERATIONAL_1 => {
                 let next_state = match (self.state, event) {
@@ -70,7 +75,10 @@ impl DllMsStateMachine {
                             (true, true, _) => DllMsState::DLL_MS_WAIT_ASND,
                         }
                     },                    
-                    (DllMsState::DLL_MS_WAIT_ASND, DllMsEvent::DLL_ME_ASND_TIMEOUT | DllMsEvent::DLL_ME_SOA_TRIG) => {
+                    (DllMsState::DLL_MS_WAIT_ASND, e @ DllMsEvent::DLL_ME_ASND_TIMEOUT | e @ DllMsEvent::DLL_ME_SOA_TRIG) => {
+                        if e == DllMsEvent::DLL_ME_ASND_TIMEOUT {
+                            errors.push(DllError::E_DLL_MEV_ASND_TIMEOUT);
+                        }
                         match (async_in, response_expected) {
                             // --- DLL_MT12 ---
                             // Send SoA, ASnd if available
@@ -79,7 +87,10 @@ impl DllMsStateMachine {
                             (true, false) => DllMsState::DLL_MS_WAIT_SOA,
                             // --- DLL_MT13 ---
                             // Send SoA with Invite, report error DLL_MEV_ASND_TIMEOUT
-                            (true, true) => DllMsState::DLL_MS_WAIT_ASND,
+                            (true, true) => {
+                                errors.push(DllError::E_DLL_MEV_ASND_TIMEOUT);
+                                DllMsState::DLL_MS_WAIT_ASND
+                            },
                         }
                     },
                     // If an unexpected event occurs, remain in the current state.
@@ -110,8 +121,7 @@ impl DllMsStateMachine {
                     },
                     (DllMsState::DLL_MS_WAIT_PRES, e @ DllMsEvent::DLL_ME_PRES | e @ DllMsEvent::DLL_ME_PRES_TIMEOUT) => {
                         if e == DllMsEvent::DLL_ME_PRES_TIMEOUT {
-                            // TODO:
-                            // Here, error reporting for DLL_MEV_PRES_TIMEOUT would be triggered.
+                            errors.push(DllError::E_DLL_LOSS_PRES_TH { node_id: dest_node_id });
                         }
                         match(isochr, async_in, isochr_out, async_out) {
                             // --- DLL_MT2 --- Send next PReq
@@ -160,6 +170,11 @@ impl DllMsStateMachine {
             _ => {
                 self.state = DllMsState::DLL_MS_NON_CYCLIC;
             }
+        }        
+        if errors.is_empty() {
+            None
+        } else {
+            Some(errors)
         }
     }
 
@@ -190,12 +205,18 @@ mod tests {
 
         // Event: Trigger SoA, expect a response from a CN.
         // isochr and async_out are false. async_in and response_expected are true.
-        sm.process_event(DllMsEvent::DLL_ME_SOA_TRIG, preop1_state, true, true, false, false, false);
+        sm.process_event(
+            DllMsEvent::DLL_ME_SOA_TRIG, preop1_state, true, true, 
+            false, false, false, NodeId(1), NodeId(2)
+        );
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_ASND);
 
         // Event: Timeout waiting for ASnd. The MN should re-issue an SoA invite.
         // Since the next action is to re-invite, response_expected is true.
-        sm.process_event(DllMsEvent::DLL_ME_ASND_TIMEOUT, preop1_state, true, false, false, false, false);
+        sm.process_event(
+            DllMsEvent::DLL_ME_ASND_TIMEOUT, preop1_state, true,
+             false, false, false, false, NodeId(1), NodeId(2)
+        );
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_ASND);
     }
 
@@ -208,22 +229,22 @@ mod tests {
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_NON_CYCLIC);
         
         // (DLL_MT0) NMT signals the start of the cyclic phase.
-        sm.process_event(DllMsEvent::DLL_ME_SOC_TRIG, operational_state, false, false, false, false, false);
+        sm.process_event(DllMsEvent::DLL_ME_SOC_TRIG, operational_state, false, false, false, false, false, NodeId(1), NodeId(2));
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_SOC_TRIG);
 
         // Event: A new cycle begins. MN sends SoC and first PReq.
         // isochr is true, indicating there are isochronous frames to send.
-        sm.process_event(DllMsEvent::DLL_ME_SOC_TRIG, operational_state, false, false, false, true, false);
+        sm.process_event(DllMsEvent::DLL_ME_SOC_TRIG, operational_state, false, false, false, true, false, NodeId(1), NodeId(2));
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_PRES);
 
         // Event: MN receives a PRes, sends the next PReq.
         // isochr is still true.
-        sm.process_event(DllMsEvent::DLL_ME_PRES, operational_state, false, false, false, true, false);
+        sm.process_event(DllMsEvent::DLL_ME_PRES, operational_state, false, false, false, true, false, NodeId(1), NodeId(2));
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_PRES);
         
         // Event: MN receives the last PRes. Isochronous phase is over. No async phase.
         // isochr is now false. async_in is false.
-        sm.process_event(DllMsEvent::DLL_ME_PRES, operational_state, false, false, false, false, false);
+        sm.process_event(DllMsEvent::DLL_ME_PRES, operational_state, false, false, false, false, false, NodeId(1), NodeId(2));
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_SOC_TRIG);
     }
 }
