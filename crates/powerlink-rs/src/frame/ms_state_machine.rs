@@ -54,8 +54,7 @@ impl DllMsStateMachine {
     /// The logic follows the state diagrams in Figure 31 and 32 of the specification.
     pub fn process_event(
         &mut self, event: DllMsEvent, nmt_state: NMTState, response_expected: bool, 
-        async_in: bool, async_out: bool, isochr: bool, isochr_out: bool, source_node_id: NodeId,
-        dest_node_id: NodeId
+        async_in: bool, async_out: bool, isochr: bool, isochr_out: bool, dest_node_id: NodeId
     ) -> Option<Vec<DllError>> {
         let mut errors : Vec<DllError> = Vec::new();
         match nmt_state {
@@ -207,7 +206,7 @@ mod tests {
         // isochr and async_out are false. async_in and response_expected are true.
         sm.process_event(
             DllMsEvent::DLL_ME_SOA_TRIG, preop1_state, true, true, 
-            false, false, false, NodeId(1), NodeId(2)
+            false, false, false, NodeId(1), 
         );
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_ASND);
 
@@ -215,7 +214,7 @@ mod tests {
         // Since the next action is to re-invite, response_expected is true.
         sm.process_event(
             DllMsEvent::DLL_ME_ASND_TIMEOUT, preop1_state, true,
-             false, false, false, false, NodeId(1), NodeId(2)
+             false, false, false, false, NodeId(1), 
         );
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_ASND);
     }
@@ -229,22 +228,22 @@ mod tests {
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_NON_CYCLIC);
         
         // (DLL_MT0) NMT signals the start of the cyclic phase.
-        sm.process_event(DllMsEvent::DLL_ME_SOC_TRIG, operational_state, false, false, false, false, false, NodeId(1), NodeId(2));
+        sm.process_event(DllMsEvent::DLL_ME_SOC_TRIG, operational_state, false, false, false, false, false, NodeId(1),);
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_SOC_TRIG);
 
         // Event: A new cycle begins. MN sends SoC and first PReq.
         // isochr is true, indicating there are isochronous frames to send.
-        sm.process_event(DllMsEvent::DLL_ME_SOC_TRIG, operational_state, false, false, false, true, false, NodeId(1), NodeId(2));
+        sm.process_event(DllMsEvent::DLL_ME_SOC_TRIG, operational_state, false, false, false, true, false, NodeId(1), );
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_PRES);
 
         // Event: MN receives a PRes, sends the next PReq.
         // isochr is still true.
-        sm.process_event(DllMsEvent::DLL_ME_PRES, operational_state, false, false, false, true, false, NodeId(1), NodeId(2));
+        sm.process_event(DllMsEvent::DLL_ME_PRES, operational_state, false, false, false, true, false, NodeId(1), );
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_PRES);
         
         // Event: MN receives the last PRes. Isochronous phase is over. No async phase.
         // isochr is now false. async_in is false.
-        sm.process_event(DllMsEvent::DLL_ME_PRES, operational_state, false, false, false, false, false, NodeId(1), NodeId(2));
+        sm.process_event(DllMsEvent::DLL_ME_PRES, operational_state, false, false, false, false, false, NodeId(1), );
         assert_eq!(sm.current_state(), DllMsState::DLL_MS_WAIT_SOC_TRIG);
     }
 }
