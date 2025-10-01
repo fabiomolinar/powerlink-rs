@@ -2,7 +2,7 @@
 
 use core::error;
 
-use crate::{frame::dll_error::DllError, nmt::states::NMTState, NodeId};
+use crate::{frame::error::DllError, nmt::states::NMTState, NodeId};
 use alloc::vec::Vec;
 
 /// States for the Data Link Layer Cycle State Machine (DLL_MS) of a MN.

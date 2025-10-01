@@ -1,7 +1,7 @@
 #![allow(non_camel_case_types)]
 
 use crate::nmt::states::NMTState;
-use crate::frame::dll_error::DllError;
+use crate::frame::error::DllError;
 use alloc::vec::Vec;
 
 /// States for the Data Link Layer Cycle State Machine (DLL_CS) of a CN.

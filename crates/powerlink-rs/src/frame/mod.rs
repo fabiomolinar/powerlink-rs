@@ -5,7 +5,7 @@ pub mod control;
 pub mod poll;
 pub mod cs_state_machine;
 pub mod ms_state_machine;
-pub mod dll_error;
+pub mod error;
 pub use basic::{EthernetHeader};
 pub use control::{SocFrame, SoAFrame, RequestedServiceId};
 pub use poll::{PReqFrame, PResFrame};
