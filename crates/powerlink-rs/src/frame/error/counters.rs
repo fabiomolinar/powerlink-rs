@@ -5,6 +5,10 @@ use super::traits::{ErrorCounters, ErrorHandler};
 use super::types::{DllError, NmtAction};
 use alloc::collections::BTreeMap;
 
+const MN_CYCLE_SUSPEND_NUM: u32 = 1;
+const CN_SOC_JITTER_RANGE: u32 = 2000; // in nanoseconds
+const CN_LOSS_SOC_TOLERANCE: u32 = 100000; // in nanoseconds
+
 /// Implements the 8:1 threshold counter logic from the specification.
 /// (EPSG DS 301, Section 4.7.4.1)
 #[derive(Debug, Default)]
@@ -53,12 +57,12 @@ impl ThresholdCounter {
 /// These correspond to the object dictionary entries in Section 4.7.8.
 #[derive(Debug)]
 pub struct CnErrorCounters {
+    pub collision: ThresholdCounter,
     pub loss_of_soc: ThresholdCounter,
     pub loss_of_soa: ThresholdCounter,
     pub loss_of_preq: ThresholdCounter,
-    pub crc_errors: ThresholdCounter,
-    pub collision: ThresholdCounter,
     pub soc_jitter: ThresholdCounter,
+    pub crc_errors: ThresholdCounter,
     // Cumulative counters do not reset.
     pub loss_of_link_cumulative: u32,
 }
@@ -146,10 +150,13 @@ pub struct MnErrorCounters {
     pub crc_errors: ThresholdCounter,
     pub collision: ThresholdCounter,
     pub cycle_time_exceeded: ThresholdCounter,
-    // Per-CN counters
-    pub loss_of_pres: BTreeMap<NodeId, ThresholdCounter>,
-    pub late_pres: BTreeMap<NodeId, ThresholdCounter>,
-    pub loss_of_status_response: BTreeMap<NodeId, ThresholdCounter>,
+    // Cumulative counters do not reset.
+    pub loss_of_link_cumulative: u32,    
+    // Per-CN counters    
+    pub cn_late_pres: BTreeMap<NodeId, ThresholdCounter>,
+    pub cn_loss_of_pres: BTreeMap<NodeId, ThresholdCounter>,    
+    pub cn_loss_of_status_response: BTreeMap<NodeId, ThresholdCounter>,
+    // Cumulative counters do not reset.
 }
 
 impl MnErrorCounters {
@@ -157,13 +164,13 @@ impl MnErrorCounters {
     
     // Helper methods to get or insert a counter for a given node.
     fn loss_pres_counter_for(&mut self, node_id: NodeId) -> &mut ThresholdCounter {
-        self.loss_of_pres.entry(node_id).or_insert_with(|| ThresholdCounter::new(15))
+        self.cn_loss_of_pres.entry(node_id).or_insert_with(|| ThresholdCounter::new(15))
     }
     fn late_pres_counter_for(&mut self, node_id: NodeId) -> &mut ThresholdCounter {
-        self.late_pres.entry(node_id).or_insert_with(|| ThresholdCounter::new(15))
+        self.cn_late_pres.entry(node_id).or_insert_with(|| ThresholdCounter::new(15))
     }
     fn loss_status_res_counter_for(&mut self, node_id: NodeId) -> &mut ThresholdCounter {
-        self.loss_of_status_response.entry(node_id).or_insert_with(|| ThresholdCounter::new(15))
+        self.cn_loss_of_status_response.entry(node_id).or_insert_with(|| ThresholdCounter::new(15))
     }
 }
 
@@ -172,9 +179,9 @@ impl ErrorCounters for MnErrorCounters {
         self.crc_errors.decrement();
         self.collision.decrement();
         self.cycle_time_exceeded.decrement();
-        self.loss_of_pres.values_mut().for_each(|c| c.decrement());
-        self.late_pres.values_mut().for_each(|c| c.decrement());
-        self.loss_of_status_response.values_mut().for_each(|c| c.decrement());
+        self.cn_loss_of_pres.values_mut().for_each(|c| c.decrement());
+        self.cn_late_pres.values_mut().for_each(|c| c.decrement());
+        self.cn_loss_of_status_response.values_mut().for_each(|c| c.decrement());
     }
 
     fn handle_error<H: ErrorHandler>(&mut self, error: DllError, handler: &mut H) -> NmtAction {
