@@ -1,4 +1,4 @@
-use crate::types::{MessageType, NodeId, C_DLL_ETHERTYPE_EPL, UNSIGNED16};
+use crate::types::{C_DLL_ETHERTYPE_EPL, UNSIGNED16};
 use core::fmt;
 
 // --- Constants and Sizes ---
