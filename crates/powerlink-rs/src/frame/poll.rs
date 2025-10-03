@@ -1,12 +1,10 @@
-#![allow(non_camel_case_types)]
-
 use crate::frame::basic::{EthernetHeader, MacAddress};
-use crate::nmt::states::{NMTState};
+use crate::nmt::states::{NmtState};
 use crate::types::{
     NodeId, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_PRES, 
     MessageType, C_ADR_BROADCAST_NODE_ID
 };
-use crate::pdo::{self, PDOVersion};
+use crate::pdo::{PDOVersion};
 use alloc::vec::Vec;
 
 // --- Request to Send (RS) Flag ---
@@ -35,11 +33,11 @@ impl RSFlag {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PRFlag{
-    PRIO_NMT_REQUEST = 0b111,
+    PrioNmtRequest = 0b111,
     High3 = 0b110,
     High2 = 0b101,
     High1 = 0b100,
-    PRIO_GENERIC_REQUEST = 0b011,
+    PrioGenericRequest = 0b011,
     Low3 = 0b010,
     Low2 = 0b001,
     Low1 = 0b000,
@@ -106,7 +104,7 @@ pub struct PResFrame {
     pub message_type: MessageType,
     pub destination: NodeId,
     pub source: NodeId,
-    pub nmt_state: NMTState,
+    pub nmt_state: NmtState,
     pub flags: PResFlags,
     pub pdo_version : PDOVersion,
     pub payload_size : u16,
@@ -135,7 +133,7 @@ impl PResFrame {
     pub fn new(
         source_mac: MacAddress,
         source_node_id: NodeId,
-        nmt_state: NMTState,
+        nmt_state: NmtState,
         flags: PResFlags,
         pdo_version: PDOVersion,
         payload: Vec<u8>
@@ -206,7 +204,7 @@ mod tests {
         let frame = PResFrame::new(
             source_mac,
             source_node,
-            NMTState::NMT_CS_NOT_ACTIVE,
+            NmtState::NmtCsNotActive,
             flags,
             PDOVersion(1),
             payload.clone()

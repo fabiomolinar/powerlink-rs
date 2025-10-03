@@ -39,4 +39,4 @@ The core implementation mirrors the functional layers defined in the EPSG DS 301
 
 ## Naming Conventions
 
-Although RUST standard doesn't use UPPER CASE to define `enum`s, this crate will be using `#![allow(non_camel_case_types)]` in certain parts of the code to keep the variable names in the code aligned with the variable names in the specification.
+This crate tries to keep the Rust standard when defining variables and constants names. However, where appropriate, it should document the names to make sure to the naming used on the specification.

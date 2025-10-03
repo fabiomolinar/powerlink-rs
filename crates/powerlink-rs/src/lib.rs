@@ -1,5 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(unused_imports)]
+
 
 // 'alloc' is used for dynamic allocation (e.g., Vec<u8> in frames)
 extern crate alloc;

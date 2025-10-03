@@ -9,31 +9,37 @@ use alloc::collections::BTreeMap;
 /// (EPSG DS 301, Section 4.7.4.1)
 #[derive(Debug, Default)]
 pub struct ThresholdCounter {
-    count: u32,
+    cumulative_cnt: u32,
+    threshold_cnt: u32,
     threshold: u32,
 }
 
 impl ThresholdCounter {
     /// Creates a new counter with a specific threshold.
     pub fn new(threshold: u32) -> Self {
-        Self { count: 0, threshold }
+        Self { 
+            cumulative_cnt: 0,
+            threshold_cnt: 0,
+            threshold,
+         }
     }
 
     /// Increments the counter by 8 when an error occurs[cite: 965].
     pub fn increment(&mut self) {
-        self.count = self.count.saturating_add(8);
+        self.threshold_cnt = self.threshold_cnt.saturating_add(8);
     }
 
     /// Decrements the counter by 1 for each error-free cycle[cite: 965].
     pub fn decrement(&mut self) {
-        self.count = self.count.saturating_sub(1);
+        self.threshold_cnt = self.threshold_cnt.saturating_sub(1);
     }
 
     /// Checks if the threshold has been reached. If so, resets the counter
     /// and returns true[cite: 965].
     pub fn check_and_reset(&mut self) -> bool {
-        if self.threshold > 0 && self.count >= self.threshold {
-            self.count = 0;
+        if self.threshold > 0 && self.threshold_cnt >= self.threshold {
+            self.threshold_cnt = 0;
+            self.cumulative_cnt = self.cumulative_cnt.saturating_add(1);
             true
         } else {
             false
@@ -90,31 +96,31 @@ impl ErrorCounters for CnErrorCounters {
     
     fn handle_error<H: ErrorHandler>(&mut self, error: DllError, handler: &mut H) -> NmtAction {
         let threshold_reached = match error {
-            DllError::E_DLL_LOSS_SOC_TH => {
+            DllError::LossOfSocThreshold => {
                 self.loss_of_soc.increment();
                 self.loss_of_soc.check_and_reset()
             },
-            DllError::E_DLL_LOSS_SOA_TH => {
+            DllError::LossOfSoaThreshold => {
                 self.loss_of_soa.increment();
                 self.loss_of_soa.check_and_reset()
             },
-            DllError::E_DLL_LOSS_PREQ_TH => {
+            DllError::LossOfPreqThreshold => {
                 self.loss_of_preq.increment();
                 self.loss_of_preq.check_and_reset()
             },
-            DllError::E_DLL_CRC_TH => {
+            DllError::CrcThreshold => {
                 self.crc_errors.increment();
                 self.crc_errors.check_and_reset()
             },
-            DllError::E_DLL_COLLISION_TH => {
+            DllError::CollisionThreshold => {
                 self.collision.increment();
                 self.collision.check_and_reset()
             },
-            DllError::E_DLL_JITTER_TH => {
+            DllError::JitterThreshold => {
                 self.soc_jitter.increment();
                 self.soc_jitter.check_and_reset()
             },
-            DllError::E_DLL_LOSS_OF_LINK => {
+            DllError::LossOfLink => {
                 self.loss_of_link_cumulative = self.loss_of_link_cumulative.saturating_add(1);
                 handler.log_error(&error);
                 false // Does not trigger an immediate NMT action.
@@ -173,29 +179,29 @@ impl ErrorCounters for MnErrorCounters {
 
     fn handle_error<H: ErrorHandler>(&mut self, error: DllError, handler: &mut H) -> NmtAction {
         let (threshold_reached, node_id) = match error {
-            DllError::E_DLL_CRC_TH => {
+            DllError::CrcThreshold => {
                 self.crc_errors.increment();
                 (self.crc_errors.check_and_reset(), None)
             },
-            DllError::E_DLL_COLLISION_TH => {
+            DllError::CollisionThreshold => {
                 self.collision.increment();
                 (self.collision.check_and_reset(), None)
             },
-            DllError::E_DLL_CYCLE_EXCEED_TH => {
+            DllError::CycleExceededThreshold => {
                 self.cycle_time_exceeded.increment();
                 (self.cycle_time_exceeded.check_and_reset(), None)
             },
-            DllError::E_DLL_LOSS_PRES_TH { node_id } => {
+            DllError::LossOfPresThreshold { node_id } => {
                 let counter = self.loss_pres_counter_for(node_id);
                 counter.increment();
                 (counter.check_and_reset(), Some(node_id))
             },
-            DllError::E_DLL_LATE_PRES_TH { node_id } => {
+            DllError::LatePresThreshold { node_id } => {
                 let counter = self.late_pres_counter_for(node_id);
                 counter.increment();
                 (counter.check_and_reset(), Some(node_id))
             },
-            DllError::E_DLL_LOSS_STATUSRES_TH { node_id } => {
+            DllError::LossOfStatusResThreshold { node_id } => {
                 let counter = self.loss_status_res_counter_for(node_id);
                 counter.increment();
                 (counter.check_and_reset(), Some(node_id))

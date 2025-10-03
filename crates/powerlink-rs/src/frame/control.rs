@@ -1,5 +1,3 @@
-#![allow(non_camel_case_types)]
-
 use crate::frame::basic::{EthernetHeader, MacAddress};
 use crate::common::{NetTime, RelativeTime};
 use crate::types::{
@@ -7,14 +5,14 @@ use crate::types::{
     C_DLL_MULTICAST_SOC, MessageType, C_ADR_BROADCAST_NODE_ID, 
     EPLVersion
 };
-use crate::nmt::states::{NMTState};
+use crate::nmt::states::{NmtState};
 use alloc::vec::Vec;
 
 
 // --- Start of Cycle (SoC) ---
 
 /// Represents a complete SoC frame.
-/// (EPSG DS 301, Section 4.6.1.1.2)
+/// (Reference: EPSG DS 301, Section 4.6.1.1.2)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SocFrame {
     pub eth_header: EthernetHeader,
@@ -27,7 +25,7 @@ pub struct SocFrame {
 }
 
 /// Flags specific to the SoC frame.
-/// (EPSG DS 301, Table 16)
+/// (Reference: EPSG DS 301, Table 16)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SocFlags {
     pub mc: bool, // Multiplexed Cycle Completed
@@ -45,7 +43,7 @@ impl SocFrame {
         let eth_header = EthernetHeader::new(
             MacAddress(C_DLL_MULTICAST_SOC), 
             source_mac
-        );                
+        );              
         
         SocFrame {
             eth_header,
@@ -62,26 +60,31 @@ impl SocFrame {
 // --- Start of Asynchronous (SoA) ---
 
 /// Requested Service IDs for SoA frames.
-/// (EPSG DS 301, Appendix 3.4)
+/// (Reference: EPSG DS 301, Appendix 3.4)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RequestedServiceId {
-    NO_SERVICE = 0x00,
-    IDENT_REQUEST = 0x01, 
-    STATUS_REQUEST = 0x02, 
-    NMT_REQUEST_INVITE = 0x03,         
-    UNSPECIFIED_INVITE = 0xFF, 
+    /// Corresponds to `NO_SERVICE`.
+    NoService = 0x00,
+    /// Corresponds to `IDENT_REQUEST`.
+    IdentRequest = 0x01, 
+    /// Corresponds to `STATUS_REQUEST`.
+    StatusRequest = 0x02, 
+    /// Corresponds to `NMT_REQUEST_INVITE`.
+    NmtRequestInvite = 0x03,      
+    /// Corresponds to `UNSPECIFIED_INVITE`.
+    UnspecifiedInvite = 0xFF, 
 }
 
 /// Represents a complete SoA frame.
-/// (EPSG DS 301, Section 4.6.1.1.5)
+/// (Reference: EPSG DS 301, Section 4.6.1.1.5)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SoAFrame {
     pub eth_header: EthernetHeader,
     pub message_type: MessageType,
     pub destination: NodeId,
     pub source: NodeId,
-    pub nmt_state: NMTState,
+    pub nmt_state: NmtState,
     pub flags: SoAFlags,
     pub req_service_id: RequestedServiceId,
     pub target_node_id: NodeId,
@@ -89,7 +92,7 @@ pub struct SoAFrame {
 }
 
 /// Flags specific to the SoA frame.
-/// (EPSG DS 301, Table 22)
+/// (Reference: EPSG DS 301, Table 22)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SoAFlags {
     pub ea: bool, // Exception Acknowledge
@@ -100,7 +103,7 @@ impl SoAFrame {
     /// Creates a new SoA frame.
     pub fn new(
         source_mac: MacAddress,
-        nmt_state: NMTState,
+        nmt_state: NmtState,
         flags: SoAFlags,
         requested_service: RequestedServiceId,
         target_node_id: NodeId,
@@ -121,26 +124,31 @@ impl SoAFrame {
             req_service_id: requested_service,
             target_node_id,
             epl_version,
-         }
+           }
     }
 }
 
 // --- Asynchronous Send (ASnd) ---
 
 /// Service IDs for ASnd frames.
-/// (EPSG DS 301, Appendix 3.3)
+/// (Reference: EPSG DS 301, Appendix 3.3)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ServiceId {
-    IDENT_RESPONSE = 0x01,
-    STATUS_RESPONSE = 0x02, 
-    NMT_REQUEST = 0x03, 
-    NMT_COMMAND = 0x04,         
-    SDO = 0x05, 
+    /// Corresponds to `IDENT_RESPONSE`.
+    IdentResponse = 0x01,
+    /// Corresponds to `STATUS_RESPONSE`.
+    StatusResponse = 0x02, 
+    /// Corresponds to `NMT_REQUEST`.
+    NmtRequest = 0x03, 
+    /// Corresponds to `NMT_COMMAND`.
+    NmtCommand = 0x04,      
+    /// Corresponds to `SDO`.
+    Sdo = 0x05, 
 }
 
 /// Represents a complete ASnd frame.
-/// (EPSG DS 301, Section 4.6.1.1.6)
+/// (Reference: EPSG DS 301, Section 4.6.1.1.6)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ASndFrame {
     pub eth_header: EthernetHeader,
@@ -201,11 +209,11 @@ mod tests {
     fn test_soaframe_new_constructor() {
         let source_mac = MacAddress([0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54]);
         let target_node = NodeId(42);
-        let service = RequestedServiceId::STATUS_REQUEST;
+        let service = RequestedServiceId::StatusRequest;
         let flags = SoAFlags { ea: true, er: false };
         
         let frame = SoAFrame::new(
-            source_mac, NMTState::NMT_CS_NOT_ACTIVE, flags,
+            source_mac, NmtState::NmtCsNotActive, flags,
             service, target_node, EPLVersion(1)
         );
 
