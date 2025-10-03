@@ -39,4 +39,4 @@ The core implementation mirrors the functional layers defined in the EPSG DS 301
 
 ## Naming Conventions
 
-This crate tries to keep the Rust standard when defining variables and constants names. However, where appropriate, it should document the names to make sure to the naming used on the specification.
+This crate tries to keep the Rust standard when creating names. However, where appropriate, it should document what are the names defined by the specification.

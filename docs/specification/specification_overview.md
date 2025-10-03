@@ -469,3 +469,73 @@ ServiceID values:
 | NMTCommand/NMT_COMMAND                | Shall be issued by the MN upon an internal request or upon an external request via NMTRequest.          |
 | SDO/SDO                               | May be issued by a CN that received an UnspecifiedInvite via SoA to indicate SDO transmission via ASnd. |
 | Manufacturer specific / MANUF_SVC_IDS | Shall be used for manufacturer specific purposes.                                                       |
+
+#### Error Handling Data Link Layer (4.7)
+
+The following error sources are handled by the MN and the CN. Details are explained in the following sections.
+
+- Physical layer error sources
+  - Loss of link (no link condition – port of Ethernet controller)
+  - Incorrect physical Ethernet operating modes (10 Mbit/s or full duplex)
+  - Transmission Errors detected by CRC errors
+  - Rx buffer overflow
+  - Tx buffer underrun
+- POWERLINK Data Link Layer error symptoms
+  - Loss of frame
+    - SoC-Frame/ SoA-Frame
+    - PReq / PRes Frame
+  - Collisions
+  - Cycle Time exceeded
+  - POWERLINK Address Conflict
+  - Multiple Managing Nodes
+  - Timing Violation (late Response)
+
+### Network/Transport Layer (5)
+
+The Internet Protocol version 4 (IPv4) and its referred transport layer protocols UDP and TCP are the preferred protocols in the asynchronous phase. 
+
+MNs shall support IP communication. CNs that don’t support SDO via UDP/IP do not need an IP stack.
+
+**IP stack requirements**: To communicate via IPv4 in the asynchronous phase, the POWERLINK node shall at least cope with 256 Bytes SDO payload. Hence the size of the asynchronous phase shall be equal or bigger than 256 Bytes SDO payload.
+
+A POWERLINK node shall implement the User Datagram Protocol specified in RFC 768 and shall support at least one UDP socket. In general an IPv4 capable POWERLINK node shall at least process IP datagrams up to 576 bytes (including header and data).
+
+Each IP-capable POWERLINK node possesses an IPv4 address, a subnet mask and default gateway. These attributes are referred to as the IP parameters.
+
+#### IP Addressing (5.1.2)
+
+The private class C Net ID 192.168.100.0 shall be used for a POWERLINK network – see RFC1918. A class C network provides 254 (1-254) IP addresses, which matches the number of valid POWERLINK Node ID’s. Hence the last byte of the IP address (Host ID) has the same value as the POWERLINK Node ID. Hence, a POWERLINK node with an IP address of `192.168.100.<ID>` belongs to the 192.168.100.0 class C network and has an ID of `<ID>`. **Knowing the Node ID of a POWERLINK node, its IP address and vice versa can be determined easily without any communication overhead**. 
+
+**The subnet mask of a POWERLINK node shall be 255.255.255.0. This is the subnet mask of a class C net**.
+
+The Default Gateway preset shall use the IP address 192.168.100.254. The value may be modified to another valid IP address.
+
+#### Address Resolution (5.1.3)
+
+The Address Resolution Protocol (ARP) specified in RFC 826 shall be used to obtain the IP to Ethernet MAC relation of a POWERLINK node. Depending on the POWERLINK node state: 
+
+- NMT_CS_EPL_MODE and NMT_MS_EPL_MODE state: ARP shall be performed in the asynchronous phase. To reduce the traffic in the asynchronus phase, the MN may determine the IP to MAC address relation from the ident process.
+- NMT_CS_BASIC_ETHERNET state: ARP shall be performed like an IEEE802.3 compliant node does, using CSMA/CD.
+
+#### Hostname (5.1.4)
+
+Each IP capable POWERLINK node shall have a hostname. The hostname is of type VISIBLE_STRING32.
+
+The admissible values of type VISIBLE_STRING for the hostname shall be restricted to:
+
+- 0 - 9
+- A - Z
+- a - z
+- -
+
+The data are interpreted as ISO 646-1973(E) 7-bit coded characters.
+
+#### POWERLINK Compliant UDP/IP format
+
+In order to enable the transmission of POWERLINK frames encapsulated in UDP/IP frames, the payload portion of the UDP/IP frame shall be leaded by a slightly modified POWERLINK frame header.
+
+The parameter MessageType defined by Ethernet POWERLINK shall be in conformance to the requirements of 4.6.1.1.1. Destination and Source fields of the original POWERLINK header shall be reserved but shall not be supported, when transmission occurs via UDP/IP.
+
+![UDP/IP framestructure](upd_p_frame_structure.png)
+
+### Application Layer (6)

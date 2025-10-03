@@ -7,10 +7,10 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
 ## Coverage
 
 - **EPSG 301 (Communication Profile Specification):**
-  - **Chapter 4 (Data Link Layer): 25%**
+  - **Chapter 4 (Data Link Layer): 90%**
     - [x] 4.6 Frame Structures (SoC, PReq, PRes, SoA, ASnd)
-    - [ ] 4.2.4 Cycle State Machines (MN and CN)
-    - [ ] 4.7 DLL Error Handling
+    - [x] 4.2.4 Cycle State Machines (MN and CN)
+    - [x] 4.7 DLL Error Handling
     - [ ] Other DLL concepts
   - **Chapter 5 (Network/Transport Layer): 0%**
   - **Chapter 6 (Application Layer): 5%**
