@@ -5,10 +5,6 @@ use super::traits::{ErrorCounters, ErrorHandler};
 use super::types::{DllError, NmtAction};
 use alloc::collections::BTreeMap;
 
-const MN_CYCLE_SUSPEND_NUM: u32 = 1;
-const CN_SOC_JITTER_RANGE: u32 = 2000; // in nanoseconds
-const CN_LOSS_SOC_TOLERANCE: u32 = 100000; // in nanoseconds
-
 /// Implements the 8:1 threshold counter logic from the specification.
 /// (EPSG DS 301, Section 4.7.4.1)
 #[derive(Debug, Default)]
