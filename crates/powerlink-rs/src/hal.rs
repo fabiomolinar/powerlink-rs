@@ -1,3 +1,5 @@
+use crate::types::InvalidMessageTypeError;
+
 /// Define a portable Error type compatible with both no_std and std environments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PowerlinkError {
@@ -10,6 +12,12 @@ pub enum PowerlinkError {
     /// The device is not yet configured or ready to transmit/receive.
     NotReady,
     // Add more low-level protocol errors as needed (e.g., buffer overflow detection).
+}
+
+impl From<InvalidMessageTypeError> for PowerlinkError {
+    fn from(_: InvalidMessageTypeError) -> Self {
+        PowerlinkError::InvalidFrame
+    }
 }
 
 /// Hardware Abstraction Layer (HAL) for raw Ethernet packet transmission.

@@ -3,11 +3,11 @@ use crate::common::{NetTime, RelativeTime};
 use crate::types::{
     NodeId, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_SOA,
     C_DLL_MULTICAST_SOC, MessageType, C_ADR_BROADCAST_NODE_ID,
-    EPLVersion
+    EPLVersion,
 };
 use crate::nmt::states::{NmtState};
 use alloc::vec::Vec;
-use super::codec::Codec;
+use super::codec::{Codec, CodecHelpers};
 use crate::PowerlinkError;
 
 
@@ -91,8 +91,28 @@ impl Codec for SocFrame {
     }
 
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        // Deserialization logic would go here, performing the reverse of serialize.
-        unimplemented!();
+        if buffer.len() < 60 { return Err(PowerlinkError::InvalidFrame); }
+
+        let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
+        let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
+
+        let octet4 = buffer[18];
+        let flags = SocFlags {
+            mc: (octet4 & (1 << 7)) != 0,
+            ps: (octet4 & (1 << 6)) != 0,
+        };
+
+        let net_time = NetTime {
+            seconds: u32::from_le_bytes(buffer[20..24].try_into().unwrap()),
+            nanoseconds: u32::from_le_bytes(buffer[24..28].try_into().unwrap()),
+        };
+
+        let relative_time = RelativeTime {
+            seconds: u32::from_le_bytes(buffer[28..32].try_into().unwrap()),
+            nanoseconds: u32::from_le_bytes(buffer[32..36].try_into().unwrap()),
+        };
+
+        Ok(Self { eth_header, message_type, destination, source, flags, net_time, relative_time })
     }
 }
 
@@ -113,6 +133,20 @@ pub enum RequestedServiceId {
     NmtRequestInvite = 0x03,      
     /// Corresponds to `UNSPECIFIED_INVITE`.
     UnspecifiedInvite = 0xFF, 
+}
+
+impl TryFrom<u8> for RequestedServiceId {
+    type Error = PowerlinkError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x00 => Ok(Self::NoService),
+            0x01 => Ok(Self::IdentRequest),
+            0x02 => Ok(Self::StatusRequest),
+            0x03 => Ok(Self::NmtRequestInvite),
+            0xFF => Ok(Self::UnspecifiedInvite),
+            _ => Err(PowerlinkError::InvalidFrame),
+        }
+    }
 }
 
 /// Represents a complete SoA frame.
@@ -169,11 +203,48 @@ impl SoAFrame {
 
 impl Codec for SoAFrame {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        // Similar implementation to SocFrame...
-        unimplemented!();
+        const SOA_SIZE: usize = 60;
+        if buffer.len() < SOA_SIZE { return Err(PowerlinkError::FrameTooLarge); }
+
+        CodecHelpers::serialize_eth_header(&self.eth_header, buffer);
+
+        buffer[14] = self.message_type as u8;
+        buffer[15] = self.destination.0;
+        buffer[16] = self.source.0;
+        buffer[17] = self.nmt_state as u8;
+
+        let mut octet4 = 0u8;
+        if self.flags.ea { octet4 |= 1 << 2; }
+        if self.flags.er { octet4 |= 1 << 1; }
+        buffer[18] = octet4;
+        buffer[19] = 0; // Reserved
+
+        buffer[20] = self.req_service_id as u8;
+        buffer[21] = self.target_node_id.0;
+        buffer[22] = self.epl_version.0;
+        
+        Ok(SOA_SIZE)
     }
+    
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        unimplemented!();
+        if buffer.len() < 60 { return Err(PowerlinkError::InvalidFrame); }
+
+        let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
+        let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
+
+        let nmt_state = NmtState::try_from(buffer[17])?;
+
+        let octet4 = buffer[18];
+        let flags = SoAFlags {
+            ea: (octet4 & (1 << 2)) != 0,
+            er: (octet4 & (1 << 1)) != 0,
+        };
+        
+        let req_service_id = RequestedServiceId::try_from(buffer[20])?;
+        let target_node_id = NodeId(buffer[21]);
+        let epl_version = EPLVersion(buffer[22]);
+
+        Ok(Self { eth_header, message_type, destination, source, nmt_state, flags, req_service_id, target_node_id, epl_version })
     }
 }
 
@@ -194,6 +265,20 @@ pub enum ServiceId {
     NmtCommand = 0x04,      
     /// Corresponds to `SDO`.
     Sdo = 0x05, 
+}
+
+impl TryFrom<u8> for ServiceId {
+    type Error = PowerlinkError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(Self::IdentResponse),
+            0x02 => Ok(Self::StatusResponse),
+            0x03 => Ok(Self::NmtRequest),
+            0x04 => Ok(Self::NmtCommand),
+            0x05 => Ok(Self::Sdo),
+            _ => Err(PowerlinkError::InvalidFrame),
+        }
+    }
 }
 
 /// Represents a complete ASnd frame.
@@ -254,7 +339,16 @@ impl Codec for ASndFrame {
         Ok(total_size)
     }
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        unimplemented!();
+        let header_size = ETHERNET_HEADER_SIZE + 4;
+        if buffer.len() < header_size { return Err(PowerlinkError::InvalidFrame); }
+
+        let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
+        let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
+        let service_id = ServiceId::try_from(buffer[17])?;
+        
+        let payload = buffer[header_size..].to_vec();
+
+        Ok(Self { eth_header, message_type, destination, source, service_id, payload })
     }
 }
 

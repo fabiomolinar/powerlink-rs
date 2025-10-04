@@ -6,7 +6,7 @@ use crate::types::{
 };
 use crate::pdo::{PDOVersion};
 use alloc::vec::Vec;
-use super::codec::Codec;
+use super::codec::{Codec, CodecHelpers};
 use crate::PowerlinkError;
 
 // --- Request to Send (RS) Flag ---
@@ -131,7 +131,27 @@ impl Codec for PReqFrame {
         Ok(total_size)
     }
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        unimplemented!();
+        let header_size = ETHERNET_HEADER_SIZE + 10;
+        if buffer.len() < header_size { return Err(PowerlinkError::InvalidFrame); }
+
+        let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
+        let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
+
+        let octet4 = buffer[18];
+        let flags = PReqFlags {
+            ms: (octet4 & (1 << 5)) != 0,
+            ea: (octet4 & (1 << 2)) != 0,
+            rd: (octet4 & (1 << 0)) != 0,
+        };
+
+        let pdo_version = PDOVersion(buffer[20]);
+        let payload_size = u16::from_le_bytes(buffer[22..24].try_into().unwrap());
+        
+        let payload_end = header_size + payload_size as usize;
+        if buffer.len() < payload_end { return Err(PowerlinkError::InvalidFrame); }
+        let payload = buffer[header_size..payload_end].to_vec();
+
+        Ok(Self { eth_header, message_type, destination, source, flags, pdo_version, payload_size, payload })
     }
 }
 
@@ -201,11 +221,64 @@ impl PResFrame {
 
 impl Codec for PResFrame {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        // Similar implementation to PReqFrame...
-        unimplemented!();
+        let header_size = ETHERNET_HEADER_SIZE + 10;
+        let total_size = header_size + self.payload.len();
+        if buffer.len() < total_size { return Err(PowerlinkError::FrameTooLarge); }
+
+        CodecHelpers::serialize_eth_header(&self.eth_header, buffer);
+
+        buffer[14] = self.message_type as u8;
+        buffer[15] = self.destination.0;
+        buffer[16] = self.source.0;
+        buffer[17] = self.nmt_state as u8;
+
+        let mut octet4 = 0u8;
+        if self.flags.ms { octet4 |= 1 << 5; }
+        if self.flags.en { octet4 |= 1 << 4; }
+        if self.flags.rd { octet4 |= 1 << 0; }
+        buffer[18] = octet4;
+
+        let octet5 = (self.flags.pr as u8) << 3 | self.flags.rs.get();
+        buffer[19] = octet5;
+
+        buffer[20] = self.pdo_version.0;
+        buffer[21] = 0; // Reserved
+        
+        buffer[22..24].copy_from_slice(&self.payload_size.to_le_bytes());
+
+        buffer[header_size..total_size].copy_from_slice(&self.payload);
+        
+        Ok(total_size.max(60))
     }
+    
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        unimplemented!();
+        let header_size = ETHERNET_HEADER_SIZE + 10;
+        if buffer.len() < header_size { return Err(PowerlinkError::InvalidFrame); }
+
+        let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
+        let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
+        let nmt_state = NmtState::try_from(buffer[17])?;
+
+        let octet4 = buffer[18];
+        let octet5 = buffer[19];
+
+        let flags = PResFlags {
+            ms: (octet4 & (1 << 5)) != 0,
+            en: (octet4 & (1 << 4)) != 0,
+            rd: (octet4 & (1 << 0)) != 0,
+            // Safety: The 3 bits for PR are always a valid PRFlag variant.
+            pr: unsafe { core::mem::transmute((octet5 >> 3) & 0b111) },
+            rs: RSFlag::new(octet5 & 0b111),
+        };
+
+        let pdo_version = PDOVersion(buffer[20]);
+        let payload_size = u16::from_le_bytes(buffer[22..24].try_into().unwrap());
+        
+        let payload_end = header_size + payload_size as usize;
+        if buffer.len() < payload_end { return Err(PowerlinkError::InvalidFrame); }
+        let payload = buffer[header_size..payload_end].to_vec();
+
+        Ok(Self { eth_header, message_type, destination, source, nmt_state, flags, pdo_version, payload_size, payload })
     }
 }
 

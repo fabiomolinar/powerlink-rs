@@ -1,3 +1,12 @@
+use crate::PowerlinkError;
+
+/// Used to specify the node type for context-aware parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeType {
+    ControlledNode,
+    ManagingNode,
+}
+
 /// Defines the NMT states for a POWERLINK node.
 ///
 /// This covers both the common initialisation states and the specific states
@@ -62,6 +71,40 @@ pub enum NmtState {
     NmtMsBasicEthernet,
 }
 
+impl NmtState {
+    /// Parses a u8 into an NmtState with node-specific context.
+    pub fn from_u8_with_context(value: u8, node_type: NodeType) -> Result<Self, PowerlinkError> {
+        match value {
+            0x1C => match node_type {
+                NodeType::ControlledNode => Ok(NmtState::NmtCsNotActive),
+                NodeType::ManagingNode => Ok(NmtState::NmtMsNotActive),
+            },
+            0x1D => match node_type {
+                NodeType::ControlledNode => Ok(NmtState::NmtCsPreOperational1),
+                NodeType::ManagingNode => Ok(NmtState::NmtMsPreOperational1),
+            },
+            0x5D => match node_type {
+                NodeType::ControlledNode => Ok(NmtState::NmtCsPreOperational2),
+                NodeType::ManagingNode => Ok(NmtState::NmtMsPreOperational2),
+            },
+            0x6D => match node_type {
+                NodeType::ControlledNode => Ok(NmtState::NmtCsReadyToOperate),
+                NodeType::ManagingNode => Ok(NmtState::NmtMsReadyToOperate),
+            },
+            0xFD => match node_type {
+                NodeType::ControlledNode => Ok(NmtState::NmtCsOperational),
+                NodeType::ManagingNode => Ok(NmtState::NmtMsOperational),
+            },
+            0x1E => match node_type {
+                NodeType::ControlledNode => Ok(NmtState::NmtCsBasicEthernet),
+                NodeType::ManagingNode => Ok(NmtState::NmtMsBasicEthernet),
+            },
+            // Unambiguous states can be handled by the standard TryFrom.
+            _ => NmtState::try_from(value),
+        }
+    }
+}
+
 /// Defines events that can trigger a state transition in the NMT state machine.
 ///
 /// These are derived from NMT commands or internal conditions.
@@ -88,4 +131,31 @@ pub enum NmtEvent {
     Timeout,
     /// Triggered by a significant DLL or application error.
     Error,
+}
+
+impl TryFrom<u8> for NmtState {
+    type Error = PowerlinkError;
+
+    /// Converts a raw u8 value into an NmtState enum variant.
+    /// This implementation covers all unique state values from EPSG DS 301, Appendix 3.6.
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            // Note: Several logical states share the same numeric value.
+            // For deserialization, we map to the most common/expected state.
+            // The internal state machine logic will handle transitions correctly.
+            0x00 => Ok(NmtState::NmtGsOff),
+            0x19 => Ok(NmtState::NmtGsInitialising),
+            0x29 => Ok(NmtState::NmtGsResetApplication),
+            0x39 => Ok(NmtState::NmtGsResetCommunication),
+            0x79 => Ok(NmtState::NmtGsResetConfiguration),
+            0x1C => Ok(NmtState::NmtCsNotActive),      // Also NmtMsNotActive
+            0x1D => Ok(NmtState::NmtCsPreOperational1), // Also NmtMsPreOperational1
+            0x5D => Ok(NmtState::NmtCsPreOperational2), // Also NmtMsPreOperational2
+            0x6D => Ok(NmtState::NmtCsReadyToOperate),  // Also NmtMsReadyToOperate
+            0xFD => Ok(NmtState::NmtCsOperational),     // Also NmtMsOperational
+            0x4D => Ok(NmtState::NmtCsStopped),
+            0x1E => Ok(NmtState::NmtCsBasicEthernet),   // Also NmtMsBasicEthernet
+            _ => Err(PowerlinkError::InvalidFrame),
+        }
+    }
 }
