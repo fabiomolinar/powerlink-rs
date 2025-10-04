@@ -9,16 +9,18 @@ pub mod types;
 pub mod hal;
 pub mod common;
 
-// --- Data Link Layer (DLL) implementation (Phase 1 Focus) ---
+// --- Data Link Layer (DLL) ---
 pub mod frame;
 
-// --- Higher Layers (Phase 2+ Focus, currently empty structures) ---
+// --- Higher Layers ---
 pub mod nmt;
 pub mod od;
 pub mod pdo;
 pub mod sdo;
     
-// Export core types and the Network Interface abstraction
-pub use types::{NodeId, UNSIGNED8, UNSIGNED16, UNSIGNED32};
+// --- Top-level Exports ---
+pub use types::NodeId;
 pub use hal::{NetworkInterface, PowerlinkError};
 pub use common::{NetTime, RelativeTime};
+pub use frame::error::{ErrorHandler, DllErrorManager, NoOpErrorHandler};
+pub use frame::codec::{Codec, deserialize_frame};

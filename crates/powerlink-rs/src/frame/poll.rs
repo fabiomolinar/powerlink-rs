@@ -1,11 +1,13 @@
-use crate::frame::basic::{EthernetHeader, MacAddress};
-use crate::nmt::states::{NmtState};
+use crate::frame::basic::{EthernetHeader, MacAddress, ETHERNET_HEADER_SIZE};
+use crate::nmt::states::NmtState;
 use crate::types::{
-    NodeId, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_PRES, 
+    NodeId, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_PRES,
     MessageType, C_ADR_BROADCAST_NODE_ID
 };
 use crate::pdo::{PDOVersion};
 use alloc::vec::Vec;
+use super::codec::Codec;
+use crate::PowerlinkError;
 
 // --- Request to Send (RS) Flag ---
 
@@ -94,6 +96,45 @@ impl PReqFrame {
     }
 }
 
+impl Codec for PReqFrame {
+    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+        let header_size = ETHERNET_HEADER_SIZE + 10; // 10 bytes for PReq header
+        let total_size = header_size + self.payload.len();
+        if buffer.len() < total_size { return Err(PowerlinkError::FrameTooLarge); }
+
+        // Ethernet Header
+        buffer[0..6].copy_from_slice(&self.eth_header.destination_mac.0);
+        buffer[6..12].copy_from_slice(&self.eth_header.source_mac.0);
+        buffer[12..14].copy_from_slice(&self.eth_header.ether_type.to_be_bytes());
+
+        // POWERLINK Data
+        buffer[14] = self.message_type as u8;
+        buffer[15] = self.destination.0;
+        buffer[16] = self.source.0;
+        buffer[17] = 0; // Reserved
+
+        let mut octet4 = 0u8;
+        if self.flags.ms { octet4 |= 1 << 5; }
+        if self.flags.ea { octet4 |= 1 << 2; }
+        if self.flags.rd { octet4 |= 1 << 0; }
+        buffer[18] = octet4;
+
+        buffer[19] = 0; // Reserved
+        buffer[20] = self.pdo_version.0;
+        buffer[21] = 0; // Reserved
+        
+        buffer[22..24].copy_from_slice(&self.payload_size.to_le_bytes());
+
+        // Payload
+        buffer[header_size..total_size].copy_from_slice(&self.payload);
+
+        Ok(total_size)
+    }
+    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
+        unimplemented!();
+    }
+}
+
 // --- Poll Response (PRes) ---
 
 /// Represents a Poll Response frame (CN multicast frame).
@@ -155,6 +196,16 @@ impl PResFrame {
             payload_size,
             payload,
         }
+    }
+}
+
+impl Codec for PResFrame {
+    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+        // Similar implementation to PReqFrame...
+        unimplemented!();
+    }
+    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
+        unimplemented!();
     }
 }
 

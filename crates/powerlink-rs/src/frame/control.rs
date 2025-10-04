@@ -1,12 +1,14 @@
-use crate::frame::basic::{EthernetHeader, MacAddress};
+use crate::frame::basic::{EthernetHeader, MacAddress, ETHERNET_HEADER_SIZE};
 use crate::common::{NetTime, RelativeTime};
 use crate::types::{
-    NodeId, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_SOA, 
-    C_DLL_MULTICAST_SOC, MessageType, C_ADR_BROADCAST_NODE_ID, 
+    NodeId, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_SOA,
+    C_DLL_MULTICAST_SOC, MessageType, C_ADR_BROADCAST_NODE_ID,
     EPLVersion
 };
 use crate::nmt::states::{NmtState};
 use alloc::vec::Vec;
+use super::codec::Codec;
+use crate::PowerlinkError;
 
 
 // --- Start of Cycle (SoC) ---
@@ -54,6 +56,43 @@ impl SocFrame {
             net_time,
             relative_time,
         }
+    }
+}
+
+impl Codec for SocFrame {
+    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+        const SOC_SIZE: usize = 60; // Minimum Ethernet payload size
+        if buffer.len() < SOC_SIZE { return Err(PowerlinkError::FrameTooLarge); }
+
+        // Ethernet Header
+        buffer[0..6].copy_from_slice(&self.eth_header.destination_mac.0);
+        buffer[6..12].copy_from_slice(&self.eth_header.source_mac.0);
+        buffer[12..14].copy_from_slice(&self.eth_header.ether_type.to_be_bytes());
+
+        // POWERLINK Data
+        buffer[14] = self.message_type as u8;
+        buffer[15] = self.destination.0;
+        buffer[16] = self.source.0;
+        buffer[17] = 0; // Reserved
+        
+        let mut octet4 = 0u8;
+        if self.flags.mc { octet4 |= 1 << 7; }
+        if self.flags.ps { octet4 |= 1 << 6; }
+        buffer[18] = octet4;
+        buffer[19] = 0; // Reserved
+
+        buffer[20..24].copy_from_slice(&self.net_time.seconds.to_le_bytes());
+        buffer[24..28].copy_from_slice(&self.net_time.nanoseconds.to_le_bytes());
+        
+        buffer[28..32].copy_from_slice(&self.relative_time.seconds.to_le_bytes());
+        buffer[32..36].copy_from_slice(&self.relative_time.nanoseconds.to_le_bytes());
+        
+        Ok(SOC_SIZE)
+    }
+
+    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
+        // Deserialization logic would go here, performing the reverse of serialize.
+        unimplemented!();
     }
 }
 
@@ -128,6 +167,16 @@ impl SoAFrame {
     }
 }
 
+impl Codec for SoAFrame {
+    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+        // Similar implementation to SocFrame...
+        unimplemented!();
+    }
+    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
+        unimplemented!();
+    }
+}
+
 // --- Asynchronous Send (ASnd) ---
 
 /// Service IDs for ASnd frames.
@@ -179,6 +228,33 @@ impl ASndFrame {
             service_id,
             payload,
         }
+    }
+}
+
+impl Codec for ASndFrame {
+    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+        let header_size = ETHERNET_HEADER_SIZE + 4; // 4 bytes for PL header
+        let total_size = header_size + self.payload.len();
+        if buffer.len() < total_size { return Err(PowerlinkError::FrameTooLarge); }
+        
+        // Ethernet Header
+        buffer[0..6].copy_from_slice(&self.eth_header.destination_mac.0);
+        buffer[6..12].copy_from_slice(&self.eth_header.source_mac.0);
+        buffer[12..14].copy_from_slice(&self.eth_header.ether_type.to_be_bytes());
+        
+        // POWERLINK Data
+        buffer[14] = self.message_type as u8;
+        buffer[15] = self.destination.0;
+        buffer[16] = self.source.0;
+        buffer[17] = self.service_id as u8;
+        
+        // Payload
+        buffer[header_size..total_size].copy_from_slice(&self.payload);
+        
+        Ok(total_size)
+    }
+    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
+        unimplemented!();
     }
 }
 

@@ -6,16 +6,22 @@ pub mod poll;
 pub mod cs_state_machine;
 pub mod ms_state_machine;
 pub mod error;
-pub use basic::{EthernetHeader};
-pub use control::{SocFrame, SoAFrame, RequestedServiceId};
-pub use poll::{PReqFrame, PResFrame};
+pub mod codec;
 
+pub use basic::EthernetHeader;
+pub use control::{SocFrame, SoAFrame, RequestedServiceId, ASndFrame, ServiceId};
+pub use poll::{PReqFrame, PResFrame, RSFlag, PRFlag};
+pub use cs_state_machine::{DllCsStateMachine, DllCsEvent};
+pub use ms_state_machine::{DllMsStateMachine, DllMsEvent};
+pub use error::{DllError, DllErrorManager, ErrorHandler, NoOpErrorHandler, NmtAction};
+pub use codec::{Codec, deserialize_frame};
 
-/// Represents a POWERLINK frame
+/// Represents any POWERLINK frame
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum PowerlinkFrame{
+pub enum PowerlinkFrame {
     Soc(SocFrame),
     PReq(PReqFrame),
     PRes(PResFrame),
     SoA(SoAFrame),
+    ASnd(ASndFrame),
 }

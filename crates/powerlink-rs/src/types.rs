@@ -40,43 +40,43 @@ pub type IpAddress = [u8; 4];
 pub struct NodeId(pub u8);
 
 /// Represents the POWERLINK Version.
-/// (EPSG DS 301, Table 112) [cite: 112]
+/// (EPSG DS 301, Table 112)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EPLVersion(pub u8);
 
 // --- Protocol Constants (Appendix 3) ---
 
-/// Ethernet EtherType for POWERLINK frames: 0x88AB[cite: 828].
+/// Ethernet EtherType for POWERLINK frames: 0x88AB.
 pub const C_DLL_ETHERTYPE_EPL: u16 = 0x88AB;
 
-/// Maximum size of PReq and PRes payload data (1490 Bytes)[cite: 857, 866].
+/// Maximum size of PReq and PRes payload data (1490 Bytes).
 pub const C_DLL_ISOCHR_MAX_PAYL: u16 = 1490;
 
-/// Maximum asynchronous payload in bytes (1500 Bytes)[cite: 1620].
+/// Maximum asynchronous payload in bytes (1500 Bytes).
 pub const C_DLL_MAX_ASYNC_MTU: usize = 1500;
 
 /// POWERLINK default Node ID of the Managing Node (240).
 pub const C_ADR_MN_DEF_NODE_ID: u8 = 240;
 
-/// Maximum Node ID available for regular Controlled Nodes (239)[cite: 819].
+/// Maximum Node ID available for regular Controlled Nodes (239).
 pub const C_ADR_MAX_CN_NODE_ID: u8 = 239;
 
-/// POWERLINK Node ID for diagnostic device (253)[cite: 825].
+/// POWERLINK Node ID for diagnostic device (253).
 pub const C_ADR_DIAG_DEF_NODE_ID: u8 = 253;
 
-/// POWERLINK Node ID for router (254)[cite: 825].
+/// POWERLINK Node ID for router (254).
 pub const C_ADR_RT1_DEF_NODE_ID: u8 = 254;
 
-/// POWERLINK Node ID for broadcast messages (255)[cite: 825].
+/// POWERLINK Node ID for broadcast messages (255).
 pub const C_ADR_BROADCAST_NODE_ID: u8 = 255;
 
-/// POWERLINK PRes multicast MAC address: 01-11-1E-00-00-02[cite: 815].
+/// POWERLINK PRes multicast MAC address: 01-11-1E-00-00-02.
 pub const C_DLL_MULTICAST_PRES: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x02];
 
-/// POWERLINK SoA multicast MAC address: 01-11-1E-00-00-03[cite: 815].
+/// POWERLINK SoA multicast MAC address: 01-11-1E-00-00-03.
 pub const C_DLL_MULTICAST_SOA: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x03];
 
-/// POWERLINK SoC multicast MAC address: 01-11-1E-00-00-01[cite: 815].
+/// POWERLINK SoC multicast MAC address: 01-11-1E-00-00-01.
 pub const C_DLL_MULTICAST_SOC: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x01];
 
 // --- Core Protocol Identifiers ---
@@ -91,6 +91,25 @@ pub enum MessageType {
     PRes = 0x04,
     SoA = 0x05,
     ASnd = 0x06,
+}
+
+/// Error type for failed conversion from a raw u8 to a MessageType.
+#[derive(Debug)]
+pub struct InvalidMessageTypeError;
+
+impl TryFrom<u8> for MessageType {
+    type Error = InvalidMessageTypeError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(MessageType::SoC),
+            0x03 => Ok(MessageType::PReq),
+            0x04 => Ok(MessageType::PRes),
+            0x05 => Ok(MessageType::SoA),
+            0x06 => Ok(MessageType::ASnd),
+            _ => Err(InvalidMessageTypeError),
+        }
+    }
 }
 
 /// Error type for invalid Node ID creation.
@@ -116,7 +135,7 @@ impl TryFrom<u8> for NodeId {
 
     /// Creates a `NodeId` from a `u8`, returning an error if the value is not valid.
     ///
-    /// Valid IDs are 1-240, 253, 254, and 255[cite: 825].
+    /// Valid IDs are 1-240, 253, 254, and 255.
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             1..=C_ADR_MN_DEF_NODE_ID => Ok(NodeId(value)),
