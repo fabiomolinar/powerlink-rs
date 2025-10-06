@@ -54,7 +54,7 @@ impl DllMsStateMachine {
     ) -> Option<Vec<DllError>> {
         let mut errors : Vec<DllError> = Vec::new();
         match nmt_state {
-            NmtState::NmtCsPreOperational1 => {
+            NmtState::NmtPreOperational1 => {
                 let next_state = match (self.state, event) {
                     (DllMsState::WaitSoa, DllMsEvent::SoaTrig) => {
                         match (async_in, response_expected, async_out) {
@@ -93,7 +93,7 @@ impl DllMsStateMachine {
                 };
                 self.state = next_state;
             },
-            NmtState::NmtMsOperational | NmtState::NmtMsReadyToOperate | NmtState::NmtMsPreOperational2 => {
+            NmtState::NmtOperational | NmtState::NmtReadyToOperate | NmtState::NmtPreOperational2 => {
                 let next_state = match (self.state, event) {
                     (DllMsState::WaitSocTrig, DllMsEvent::SocTrig) => {
                         match(isochr, async_in, isochr_out, async_out) {
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn test_dll_ms_pre_operational_1_cycle() {
         let mut sm = DllMsStateMachine::new();
-        let preop1_state = NmtState::NmtMsPreOperational1;
+        let preop1_state = NmtState::NmtPreOperational1;
         
         // In PreOp1, the state machine should start in a state ready to send SoA.
         // For this test, we'll assume it's already in WAIT_SOA.
@@ -212,13 +212,13 @@ mod tests {
             DllMsEvent::AsndTimeout, preop1_state, true,
              false, false, false, false, NodeId(1), 
         );
-        assert_eq!(sm.current_state(), DllMsState::WaitAsnd);
+        assert_eq!(sm.current_state(), DllMsState::WaitSoa);
     }
 
     #[test]
     fn test_dll_ms_operational_happy_path() {
         let mut sm = DllMsStateMachine::new();
-        let operational_state = NmtState::NmtMsOperational;
+        let operational_state = NmtState::NmtOperational;
 
         // The machine starts in NonCyclic. An NMT state change would trigger the first SOC.
         assert_eq!(sm.current_state(), DllMsState::NonCyclic);

@@ -311,7 +311,7 @@ mod tests {
         let frame = PResFrame::new(
             source_mac,
             source_node,
-            NmtState::NmtCsNotActive,
+            NmtState::NmtNotActive,
             flags,
             PDOVersion(1),
             payload.clone()
@@ -323,5 +323,49 @@ mod tests {
         assert_eq!(frame.payload, payload);
         assert!(!frame.flags.rd);
         assert_eq!(frame.flags.rs.get(), 5);
+    }
+
+    #[test]
+    fn test_preq_codec_roundtrip() {
+        let original_frame = PReqFrame::new(
+            MacAddress([0xAA; 6]),
+            MacAddress([0xBB; 6]),
+            NodeId(55),
+            PReqFlags { ms: true, ea: false, rd: true },
+            PDOVersion(2),
+            vec![0x01, 0x02, 0x03, 0x04]
+        );
+
+        let mut buffer = [0u8; 128];
+        let bytes_written = original_frame.serialize(&mut buffer).unwrap();
+        
+        let deserialized_frame = PReqFrame::deserialize(&buffer[..bytes_written]).unwrap();
+
+        assert_eq!(original_frame, deserialized_frame);
+    }
+
+    #[test]
+    fn test_pres_codec_roundtrip() {
+        let original_frame = PResFrame::new(
+            MacAddress([0xCC; 6]),
+            NodeId(10),
+            NmtState::NmtOperational,
+            PResFlags {
+                ms: false,
+                en: true,
+                rd: true,
+                pr: PRFlag::PrioNmtRequest,
+                rs: RSFlag::new(7),
+            },
+            PDOVersion(1),
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]
+        );
+        
+        let mut buffer = [0u8; 128];
+        let bytes_written = original_frame.serialize(&mut buffer).unwrap();
+
+        let deserialized_frame = PResFrame::deserialize(&buffer[..bytes_written]).unwrap();
+
+        assert_eq!(original_frame, deserialized_frame);
     }
 }

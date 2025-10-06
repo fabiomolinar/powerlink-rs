@@ -73,10 +73,10 @@ impl Codec for SocFrame {
         if self.flags.ps { octet4 |= 1 << 6; }
         buffer[18] = octet4;
         buffer[19] = 0;
-        buffer[20..28].copy_from_slice(&self.net_time.seconds.to_le_bytes());
-        buffer[28..36].copy_from_slice(&self.net_time.nanoseconds.to_le_bytes());
-        buffer[36..44].copy_from_slice(&self.relative_time.seconds.to_le_bytes());
-        buffer[44..52].copy_from_slice(&self.relative_time.nanoseconds.to_le_bytes());
+        buffer[20..24].copy_from_slice(&self.net_time.seconds.to_le_bytes());
+        buffer[24..28].copy_from_slice(&self.net_time.nanoseconds.to_le_bytes());
+        buffer[28..32].copy_from_slice(&self.relative_time.seconds.to_le_bytes());
+        buffer[32..36].copy_from_slice(&self.relative_time.nanoseconds.to_le_bytes());
         
         Ok(SOC_SIZE)
     }
@@ -343,6 +343,7 @@ impl Codec for ASndFrame {
 mod tests {
     use super::*;
     use crate::types::{C_DLL_MULTICAST_SOC, C_DLL_MULTICAST_SOA};
+    use alloc::vec;
     
     #[test]
     fn test_socframe_new_constructor() {
@@ -369,7 +370,7 @@ mod tests {
         let flags = SoAFlags { ea: true, er: false };
         
         let frame = SoAFrame::new(
-            source_mac, NmtState::NmtCsNotActive, flags,
+            source_mac, NmtState::NmtNotActive, flags,
             service, target_node, EPLVersion(1)
         );
 
@@ -377,5 +378,66 @@ mod tests {
         assert_eq!(frame.eth_header.source_mac, source_mac);
         assert_eq!(frame.message_type, MessageType::SoA);
         assert_eq!(frame.source, NodeId(C_ADR_MN_DEF_NODE_ID));
+    }
+
+    #[test]
+    fn test_soc_codec_roundtrip() {
+        let source_mac = MacAddress([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]);
+        let net_time = NetTime { seconds: 123, nanoseconds: 456 };
+        let relative_time = RelativeTime { seconds: 789, nanoseconds: 101 };
+        let flags = SocFlags { mc: true, ps: false };
+        let original_frame = SocFrame::new(source_mac, flags, net_time, relative_time);
+
+        let mut buffer = [0u8; 128];
+        let bytes_written = original_frame.serialize(&mut buffer).unwrap();
+        
+        // Ensure some bytes were written and it's at least the minimum frame size.
+        assert!(bytes_written >= 60);
+
+        let deserialized_frame = SocFrame::deserialize(&buffer[..bytes_written]).unwrap();
+
+        assert_eq!(original_frame, deserialized_frame);
+    }
+
+    #[test]
+    fn test_soa_codec_roundtrip() {
+        let source_mac = MacAddress([0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54]);
+        let original_frame = SoAFrame::new(
+            source_mac,
+            NmtState::NmtPreOperational1,
+            SoAFlags { ea: true, er: false },
+            RequestedServiceId::StatusRequest,
+            NodeId(42),
+            EPLVersion(1)
+        );
+
+        let mut buffer = [0u8; 128];
+        let bytes_written = original_frame.serialize(&mut buffer).unwrap();
+        assert!(bytes_written >= 60);
+
+        let deserialized_frame = SoAFrame::deserialize(&buffer[..bytes_written]).unwrap();
+        
+        assert_eq!(original_frame, deserialized_frame);
+    }
+
+    #[test]
+    fn test_asnd_codec_roundtrip() {
+        let source_mac = MacAddress([0x11; 6]);
+        let dest_mac = MacAddress([0x22; 6]);
+        let original_frame = ASndFrame::new(
+            source_mac,
+            dest_mac,
+            NodeId(10),
+            NodeId(240),
+            ServiceId::Sdo,
+            vec![0xDE, 0xAD, 0xBE, 0xEF]
+        );
+
+        let mut buffer = [0u8; 128];
+        let bytes_written = original_frame.serialize(&mut buffer).unwrap();
+
+        let deserialized_frame = ASndFrame::deserialize(&buffer[..bytes_written]).unwrap();
+        
+        assert_eq!(original_frame, deserialized_frame);
     }
 }

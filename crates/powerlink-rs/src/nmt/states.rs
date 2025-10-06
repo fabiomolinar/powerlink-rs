@@ -13,62 +13,39 @@ pub enum NodeType {
 /// for Controlled Nodes (CN) and Managing Nodes (MN).
 /// (Reference: EPSG DS 301, Section 7.1 and Appendix 3.6)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
 pub enum NmtState {
+    // NMT States. Super states are not coded.
     // --- Generic States (GS) ---
 
     /// Corresponds to the `NMT_GS_OFF` state in the specification.
-    NmtGsOff,
-    /// A super-state. Corresponds to `NMT_GS_POWERED` in the specification.
-    NmtGsPowered,
-    /// A super-state for the initialisation process. Corresponds to `NMT_GS_INITIALISATION` in the specification.
-    NmtGsInitialisation,
+    NmtGsOff = 0b0000_0000,
     /// Common initialisation state after power-on or reset. Corresponds to `NMT_GS_INITIALISING` in the specification.
-    NmtGsInitialising,
+    NmtGsInitialising = 0b0001_1001,
     /// Resets the application-specific parts of the object dictionary. Corresponds to `NMT_GS_RESET_APPLICATION` in the specification.
-    NmtGsResetApplication,
+    NmtGsResetApplication = 0b0010_1001,
     /// Resets the communication-specific parts of the object dictionary. Corresponds to `NMT_GS_RESET_COMMUNICATION` in the specification.
-    NmtGsResetCommunication,
+    NmtGsResetCommunication = 0b0011_1001,
     /// Resets the device configuration. Corresponds to `NMT_GS_RESET_CONFIGURATION` in the specification.
-    NmtGsResetConfiguration,
-    /// A super-state indicating the node is communicating. Corresponds to `NMT_GS_COMMUNICATING` in the specification.
-    NmtGsCommunicating,
+    NmtGsResetConfiguration = 0b0111_1001,
 
     // --- Controlled Node (CN) States (CS) ---
 
-    /// The node is not part of the POWERLINK cycle. Corresponds to `NMT_CS_NOT_ACTIVE` in the specification.
+    /// The node is not part of the POWERLINK cycle. Corresponds to `NMT_CS_NOT_ACTIVE` and `NMT_MS_NOT_ACTIVE` in the specification.
     #[default]
-    NmtCsNotActive,
-    /// A super-state for POWERLINK operational modes. Corresponds to `NMT_CS_EPL_MODE` in the specification.
-    NmtCsEplMode,
-    /// The node can only perform SDO communication. Corresponds to `NMT_CS_PRE_OPERATIONAL_1` in the specification.
-    NmtCsPreOperational1,
-    /// The node participates in the isochronous cycle, but PDOs are invalid. Corresponds to `NMT_CS_PRE_OPERATIONAL_2` in the specification.
-    NmtCsPreOperational2,
-    /// The node signals readiness for operation to the MN. Corresponds to `NMT_CS_READY_TO_OPERATE` in the specification.
-    NmtCsReadyToOperate,
-    /// The node is fully operational, and PDO data is valid. Corresponds to `NMT_CS_OPERATIONAL` in the specification.
-    NmtCsOperational,
+    NmtNotActive = 0b0001_1100,
+    /// The node can only perform SDO communication. Corresponds to `NMT_CS_PRE_OPERATIONAL_1` and `NMT_MS_PRE_OPERATIONAL_1` in the specification.
+    NmtPreOperational1 = 0b0001_1101,
+    /// The node participates in the isochronous cycle, but PDOs are invalid. Corresponds to `NMT_CS_PRE_OPERATIONAL_2` and `NMT_MS_PRE_OPERATIONAL_2` in the specification.
+    NmtPreOperational2 = 0b0101_1101,
+    /// The node signals readiness for operation to the MN. Corresponds to `NMT_CS_READY_TO_OPERATE` and `NMT_MS_READY_TO_OPERATE` in the specification.
+    NmtReadyToOperate = 0b0110_1101,
+    /// The node is fully operational, and PDO data is valid. Corresponds to `NMT_CS_OPERATIONAL` and `NMT_MS_OPERATIONAL` in the specification.
+    NmtOperational = 0b1111_1101,
     /// The node is in a controlled shutdown state. Corresponds to `NMT_CS_STOPPED` in the specification.
-    NmtCsStopped,
-    /// The node operates as a standard Ethernet device. Corresponds to `NMT_CS_BASIC_ETHERNET` in the specification.
-    NmtCsBasicEthernet,
-
-    // --- Managing Node (MN) States (MS) ---
-
-    /// Corresponds to the `NMT_MS_NOT_ACTIVE` state in the specification.
-    NmtMsNotActive,
-    /// Corresponds to the `NMT_MS_EPL_MODE` state in the specification.
-    NmtMsEplMode,
-    /// Corresponds to the `NMT_MS_PRE_OPERATIONAL_1` state in the specification.
-    NmtMsPreOperational1,
-    /// Corresponds to the `NMT_MS_PRE_OPERATIONAL_2` state in the specification.
-    NmtMsPreOperational2,
-    /// Corresponds to the `NMT_MS_READY_TO_OPERATE` state in the specification.
-    NmtMsReadyToOperate,
-    /// Corresponds to the `NMT_MS_OPERATIONAL` state in the specification.
-    NmtMsOperational,
-    /// Corresponds to the `NMT_MS_BASIC_ETHERNET` state in the specification.
-    NmtMsBasicEthernet,
+    NmtCsStopped = 0b0100_1101,
+    /// The node operates as a standard Ethernet device. Corresponds to `NMT_CS_BASIC_ETHERNET` and `NMT_MS_BASIC_ETHERNET` in the specification.
+    NmtBasicEthernet = 0b0001_1110,
 }
 
 impl NmtState {
@@ -76,28 +53,28 @@ impl NmtState {
     pub fn from_u8_with_context(value: u8, node_type: NodeType) -> Result<Self, PowerlinkError> {
         match value {
             0x1C => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtCsNotActive),
-                NodeType::ManagingNode => Ok(NmtState::NmtMsNotActive),
+                NodeType::ControlledNode => Ok(NmtState::NmtNotActive),
+                NodeType::ManagingNode => Ok(NmtState::NmtNotActive),
             },
             0x1D => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtCsPreOperational1),
-                NodeType::ManagingNode => Ok(NmtState::NmtMsPreOperational1),
+                NodeType::ControlledNode => Ok(NmtState::NmtPreOperational1),
+                NodeType::ManagingNode => Ok(NmtState::NmtPreOperational1),
             },
             0x5D => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtCsPreOperational2),
-                NodeType::ManagingNode => Ok(NmtState::NmtMsPreOperational2),
+                NodeType::ControlledNode => Ok(NmtState::NmtPreOperational2),
+                NodeType::ManagingNode => Ok(NmtState::NmtPreOperational2),
             },
             0x6D => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtCsReadyToOperate),
-                NodeType::ManagingNode => Ok(NmtState::NmtMsReadyToOperate),
+                NodeType::ControlledNode => Ok(NmtState::NmtReadyToOperate),
+                NodeType::ManagingNode => Ok(NmtState::NmtReadyToOperate),
             },
             0xFD => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtCsOperational),
-                NodeType::ManagingNode => Ok(NmtState::NmtMsOperational),
+                NodeType::ControlledNode => Ok(NmtState::NmtOperational),
+                NodeType::ManagingNode => Ok(NmtState::NmtOperational),
             },
             0x1E => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtCsBasicEthernet),
-                NodeType::ManagingNode => Ok(NmtState::NmtMsBasicEthernet),
+                NodeType::ControlledNode => Ok(NmtState::NmtBasicEthernet),
+                NodeType::ManagingNode => Ok(NmtState::NmtBasicEthernet),
             },
             // Unambiguous states can be handled by the standard TryFrom.
             _ => NmtState::try_from(value),
@@ -148,14 +125,56 @@ impl TryFrom<u8> for NmtState {
             0x29 => Ok(NmtState::NmtGsResetApplication),
             0x39 => Ok(NmtState::NmtGsResetCommunication),
             0x79 => Ok(NmtState::NmtGsResetConfiguration),
-            0x1C => Ok(NmtState::NmtCsNotActive),      // Also NmtMsNotActive
-            0x1D => Ok(NmtState::NmtCsPreOperational1), // Also NmtMsPreOperational1
-            0x5D => Ok(NmtState::NmtCsPreOperational2), // Also NmtMsPreOperational2
-            0x6D => Ok(NmtState::NmtCsReadyToOperate),  // Also NmtMsReadyToOperate
-            0xFD => Ok(NmtState::NmtCsOperational),     // Also NmtMsOperational
+            0x1C => Ok(NmtState::NmtNotActive),      // Also NmtMsNotActive
+            0x1D => Ok(NmtState::NmtPreOperational1), // Also NmtMsPreOperational1
+            0x5D => Ok(NmtState::NmtPreOperational2), // Also NmtMsPreOperational2
+            0x6D => Ok(NmtState::NmtReadyToOperate),  // Also NmtMsReadyToOperate
+            0xFD => Ok(NmtState::NmtOperational),     // Also NmtMsOperational
             0x4D => Ok(NmtState::NmtCsStopped),
-            0x1E => Ok(NmtState::NmtCsBasicEthernet),   // Also NmtMsBasicEthernet
+            0x1E => Ok(NmtState::NmtBasicEthernet),   // Also NmtMsBasicEthernet
             _ => Err(PowerlinkError::InvalidFrame),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_try_from_u8_unambiguous() {
+        assert_eq!(NmtState::try_from(0x00), Ok(NmtState::NmtGsOff));
+        assert_eq!(NmtState::try_from(0x4D), Ok(NmtState::NmtCsStopped));
+        assert!(NmtState::try_from(0xFF).is_err());
+    }
+
+    #[test]
+    fn test_as_u8() {
+        assert_eq!(NmtState::NmtGsOff as u8, 0x00);
+        assert_eq!(NmtState::NmtCsStopped as u8, 0x4D);
+        assert_eq!(NmtState::NmtPreOperational1 as u8, 0x1D);        
+    }
+
+    #[test]
+    fn test_from_u8_with_context() {
+        // Test a shared value
+        assert_eq!(
+            NmtState::from_u8_with_context(0xFD, NodeType::ControlledNode),
+            Ok(NmtState::NmtOperational)
+        );
+        assert_eq!(
+            NmtState::from_u8_with_context(0xFD, NodeType::ManagingNode),
+            Ok(NmtState::NmtOperational)
+        );
+
+        // Test a non-shared value (falls back to TryFrom)
+        assert_eq!(
+            NmtState::from_u8_with_context(0x4D, NodeType::ControlledNode),
+            Ok(NmtState::NmtCsStopped)
+        );
+        assert_eq!(
+            NmtState::from_u8_with_context(0x4D, NodeType::ManagingNode),
+            Ok(NmtState::NmtCsStopped)
+        );
     }
 }

@@ -227,3 +227,90 @@ impl ErrorCounters for MnErrorCounters {
         NmtAction::None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+    
+    // A mock error handler for testing purposes.
+    struct TestErrorHandler {
+        logged_errors: Vec<DllError>,
+    }
+    impl ErrorHandler for TestErrorHandler {
+        fn log_error(&mut self, error: &DllError) {
+            self.logged_errors.push(*error);
+        }
+    }
+
+    #[test]
+    fn test_threshold_counter_logic() {
+        let mut counter = ThresholdCounter::new(10);
+
+        // Increment once, count should be 8.
+        counter.increment();
+        assert_eq!(counter.threshold_cnt, 8);
+        assert!(!counter.check_and_reset());
+
+        // Decrement, count should be 7.
+        counter.decrement();
+        assert_eq!(counter.threshold_cnt, 7);
+
+        // Increment again, count becomes 15, which is >= 10.
+        counter.increment();
+        assert_eq!(counter.threshold_cnt, 15);
+
+        // Check should now return true and reset the count to 0.
+        assert!(counter.check_and_reset());
+        assert_eq!(counter.threshold_cnt, 0);
+    }
+
+    #[test]
+    fn test_cn_error_counters_handling() {
+        let mut counters = CnErrorCounters::new();
+        let mut handler = TestErrorHandler { logged_errors: Vec::new() };
+
+        // First error, no action yet.
+        let action1 = counters.handle_error(DllError::LossOfSocThreshold, &mut handler);
+        assert_eq!(action1, NmtAction::None);
+        assert_eq!(handler.logged_errors.len(), 0);
+
+        // Second error, threshold is now 16 (>= 15), so an action is triggered.
+        let action2 = counters.handle_error(DllError::LossOfSocThreshold, &mut handler);
+        assert_eq!(action2, NmtAction::ResetCommunication);
+        assert_eq!(handler.logged_errors.len(), 1);
+        assert_eq!(handler.logged_errors[0], DllError::LossOfSocThreshold);
+    }
+
+    #[test]
+    fn test_mn_error_counters_handling() {
+        let mut counters = MnErrorCounters::new();
+        let mut handler = TestErrorHandler { logged_errors: Vec::new() };
+        let node_id = NodeId(5);
+        let error = DllError::LossOfPresThreshold { node_id };
+
+        // Trigger the error twice to exceed the threshold.
+        let action1 = counters.handle_error(error, &mut handler);
+        let action2 = counters.handle_error(error, &mut handler);
+
+        assert_eq!(action1, NmtAction::None);
+        assert_eq!(action2, NmtAction::ResetNode(node_id));
+        assert_eq!(handler.logged_errors.len(), 1);
+        assert_eq!(handler.logged_errors[0], error);
+    }
+
+    #[test]
+    fn test_counters_on_cycle_complete() {
+        let mut cn_counters = CnErrorCounters::new();
+        cn_counters.loss_of_soc.increment(); // count = 8
+        cn_counters.on_cycle_complete();
+        assert_eq!(cn_counters.loss_of_soc.threshold_cnt, 7);
+
+        let mut mn_counters = MnErrorCounters::new();
+        let node_id = NodeId(10);
+        mn_counters.handle_error(DllError::LossOfPresThreshold { node_id }, &mut TestErrorHandler {logged_errors: Vec::new()});
+        assert_eq!(mn_counters.cn_loss_of_pres.get(&node_id).unwrap().threshold_cnt, 8);
+        mn_counters.on_cycle_complete();
+        assert_eq!(mn_counters.cn_loss_of_pres.get(&node_id).unwrap().threshold_cnt, 7);
+    }
+}
