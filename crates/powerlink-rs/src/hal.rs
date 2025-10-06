@@ -1,4 +1,5 @@
 use crate::types::InvalidMessageTypeError;
+use core::array::TryFromSliceError;
 
 /// Define a portable Error type compatible with both no_std and std environments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +17,12 @@ pub enum PowerlinkError {
 
 impl From<InvalidMessageTypeError> for PowerlinkError {
     fn from(_: InvalidMessageTypeError) -> Self {
+        PowerlinkError::InvalidFrame
+    }
+}
+
+impl From<TryFromSliceError> for PowerlinkError {
+    fn from(_: TryFromSliceError) -> Self {
         PowerlinkError::InvalidFrame
     }
 }

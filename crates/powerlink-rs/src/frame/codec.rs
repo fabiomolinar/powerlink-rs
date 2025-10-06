@@ -30,9 +30,9 @@ impl CodecHelpers {
     pub(super) fn deserialize_eth_header(buffer: &[u8]) -> Result<EthernetHeader, PowerlinkError> {
         if buffer.len() < 14 { return Err(PowerlinkError::InvalidFrame); }
         Ok(EthernetHeader {
-            destination_mac: MacAddress(buffer[0..6].try_into().unwrap()),
-            source_mac: MacAddress(buffer[6..12].try_into().unwrap()),
-            ether_type: u16::from_be_bytes(buffer[12..14].try_into().unwrap()),
+            destination_mac: MacAddress(buffer[0..6].try_into()?),
+            source_mac: MacAddress(buffer[6..12].try_into()?),
+            ether_type: u16::from_be_bytes(buffer[12..14].try_into()?),
         })
     }
 
