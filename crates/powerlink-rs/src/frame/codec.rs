@@ -26,6 +26,18 @@ impl CodecHelpers {
         buffer[12..14].copy_from_slice(&header.ether_type.to_be_bytes());
     }
 
+    /// Serializes the common POWERLINK header fields (MessageType, Dest, Src).
+    pub(super) fn serialize_pl_header(
+        message_type: MessageType,
+        destination: NodeId,
+        source: NodeId,
+        buffer: &mut [u8],
+    ) {
+        buffer[14] = message_type as u8;
+        buffer[15] = destination.0;
+        buffer[16] = source.0;
+    }
+
     /// Deserializes the 14-byte Ethernet header.
     pub(super) fn deserialize_eth_header(buffer: &[u8]) -> Result<EthernetHeader, PowerlinkError> {
         if buffer.len() < 14 { return Err(PowerlinkError::InvalidFrame); }
