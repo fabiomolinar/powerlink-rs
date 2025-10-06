@@ -61,37 +61,28 @@ impl SocFrame {
 
 impl Codec for SocFrame {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        const SOC_SIZE: usize = 60; // Minimum Ethernet payload size
-        if buffer.len() < SOC_SIZE { return Err(PowerlinkError::FrameTooLarge); }
+        const SOC_SIZE: usize = 60;
+        if buffer.len() < SOC_SIZE { return Err(PowerlinkError::BufferTooShort); }
 
-        // Ethernet Header
-        buffer[0..6].copy_from_slice(&self.eth_header.destination_mac.0);
-        buffer[6..12].copy_from_slice(&self.eth_header.source_mac.0);
-        buffer[12..14].copy_from_slice(&self.eth_header.ether_type.to_be_bytes());
+        CodecHelpers::serialize_eth_header(&self.eth_header, buffer);
+        CodecHelpers::serialize_pl_header(self.message_type, self.destination, self.source, buffer);
 
-        // POWERLINK Data
-        buffer[14] = self.message_type as u8;
-        buffer[15] = self.destination.0;
-        buffer[16] = self.source.0;
-        buffer[17] = 0; // Reserved
-        
+        buffer[17] = 0;
         let mut octet4 = 0u8;
         if self.flags.mc { octet4 |= 1 << 7; }
         if self.flags.ps { octet4 |= 1 << 6; }
         buffer[18] = octet4;
-        buffer[19] = 0; // Reserved
-
-        buffer[20..24].copy_from_slice(&self.net_time.seconds.to_le_bytes());
-        buffer[24..28].copy_from_slice(&self.net_time.nanoseconds.to_le_bytes());
-        
-        buffer[28..32].copy_from_slice(&self.relative_time.seconds.to_le_bytes());
-        buffer[32..36].copy_from_slice(&self.relative_time.nanoseconds.to_le_bytes());
+        buffer[19] = 0;
+        buffer[20..28].copy_from_slice(&self.net_time.seconds.to_le_bytes());
+        buffer[28..36].copy_from_slice(&self.net_time.nanoseconds.to_le_bytes());
+        buffer[36..44].copy_from_slice(&self.relative_time.seconds.to_le_bytes());
+        buffer[44..52].copy_from_slice(&self.relative_time.nanoseconds.to_le_bytes());
         
         Ok(SOC_SIZE)
     }
 
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        if buffer.len() < 60 { return Err(PowerlinkError::InvalidFrame); }
+        if buffer.len() < 60 { return Err(PowerlinkError::BufferTooShort); }
 
         let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
         let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
@@ -103,13 +94,13 @@ impl Codec for SocFrame {
         };
 
         let net_time = NetTime {
-            seconds: u32::from_le_bytes(buffer[20..24].try_into().unwrap()),
-            nanoseconds: u32::from_le_bytes(buffer[24..28].try_into().unwrap()),
+            seconds: u32::from_le_bytes(buffer[20..24].try_into()?),
+            nanoseconds: u32::from_le_bytes(buffer[24..28].try_into()?),
         };
 
         let relative_time = RelativeTime {
-            seconds: u32::from_le_bytes(buffer[28..32].try_into().unwrap()),
-            nanoseconds: u32::from_le_bytes(buffer[32..36].try_into().unwrap()),
+            seconds: u32::from_le_bytes(buffer[28..32].try_into()?),
+            nanoseconds: u32::from_le_bytes(buffer[32..36].try_into()?),
         };
 
         Ok(Self { eth_header, message_type, destination, source, flags, net_time, relative_time })
@@ -203,35 +194,29 @@ impl SoAFrame {
 
 impl Codec for SoAFrame {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        const SOA_SIZE: usize = 60;
-        if buffer.len() < SOA_SIZE { return Err(PowerlinkError::FrameTooLarge); }
+        const SOA_SIZE: usize = 60;        
+        if buffer.len() < SOA_SIZE { return Err(PowerlinkError::BufferTooShort); }
 
         CodecHelpers::serialize_eth_header(&self.eth_header, buffer);
+        CodecHelpers::serialize_pl_header(self.message_type, self.destination, self.source, buffer);
 
-        buffer[14] = self.message_type as u8;
-        buffer[15] = self.destination.0;
-        buffer[16] = self.source.0;
-        buffer[17] = self.nmt_state as u8;
-
+        buffer[17] = self.nmt_state as u8;        
         let mut octet4 = 0u8;
         if self.flags.ea { octet4 |= 1 << 2; }
         if self.flags.er { octet4 |= 1 << 1; }
         buffer[18] = octet4;
-        buffer[19] = 0; // Reserved
-
+        buffer[19] = 0;
         buffer[20] = self.req_service_id as u8;
         buffer[21] = self.target_node_id.0;
         buffer[22] = self.epl_version.0;
-        
         Ok(SOA_SIZE)
     }
     
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        if buffer.len() < 60 { return Err(PowerlinkError::InvalidFrame); }
+        if buffer.len() < 60 { return Err(PowerlinkError::BufferTooShort); }
 
         let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
         let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
-
         let nmt_state = NmtState::try_from(buffer[17])?;
 
         let octet4 = buffer[18];
@@ -338,9 +323,10 @@ impl Codec for ASndFrame {
         
         Ok(total_size)
     }
+
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
         let header_size = ETHERNET_HEADER_SIZE + 4;
-        if buffer.len() < header_size { return Err(PowerlinkError::InvalidFrame); }
+        if buffer.len() < header_size { return Err(PowerlinkError::BufferTooShort); }
 
         let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
         let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;

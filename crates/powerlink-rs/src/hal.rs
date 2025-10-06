@@ -1,31 +1,57 @@
 use crate::types::InvalidMessageTypeError;
 use core::array::TryFromSliceError;
+use core::fmt;
 
-/// Define a portable Error type compatible with both no_std and std environments.
+/// Defines a portable, descriptive Error type for the POWERLINK stack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PowerlinkError {
+    /// The provided buffer is too small for the operation.
+    BufferTooShort,
+    /// An underlying I/O error occurred.
+    IoError,
+    /// A received frame is fundamentally invalid (e.g., wrong EtherType, bad message type).
+    InvalidFrame,
+    /// A value in a frame is not a valid enum variant.
+    InvalidEnumValue,
+    /// A multi-byte value could not be parsed from a slice.
+    SliceConversion,
     /// The frame size exceeds the maximum physical or configured MTU.
     FrameTooLarge,
-    /// An underlying I/O error occurred (requires standard library to elaborate on source).
-    IoError,
-    /// The received frame failed a basic validity check (e.g., CRC or fundamental format error).
-    InvalidFrame,
     /// The device is not yet configured or ready to transmit/receive.
     NotReady,
-    // Add more low-level protocol errors as needed (e.g., buffer overflow detection).
 }
+
+// --- From Implementations for Error Conversion ---
 
 impl From<InvalidMessageTypeError> for PowerlinkError {
     fn from(_: InvalidMessageTypeError) -> Self {
-        PowerlinkError::InvalidFrame
+        PowerlinkError::InvalidEnumValue
     }
 }
 
 impl From<TryFromSliceError> for PowerlinkError {
     fn from(_: TryFromSliceError) -> Self {
-        PowerlinkError::InvalidFrame
+        PowerlinkError::SliceConversion
     }
 }
+
+// --- Display trait for better error messages ---
+impl fmt::Display for PowerlinkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BufferTooShort => write!(f, "Buffer is too short for the frame"),
+            Self::IoError => write!(f, "An underlying I/O error occurred"),
+            Self::InvalidFrame => write!(f, "Frame is invalid or malformed"),
+            Self::InvalidEnumValue => write!(f, "A value does not correspond to a valid enum variant"),
+            Self::SliceConversion => write!(f, "Failed to convert slice to a fixed-size array"),
+            Self::FrameTooLarge => write!(f, "Frame size exceeds maximum allowed MTU"),
+            Self::NotReady => write!(f, "Device is not ready or configured"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for PowerlinkError {}
 
 /// Hardware Abstraction Layer (HAL) for raw Ethernet packet transmission.
 ///
