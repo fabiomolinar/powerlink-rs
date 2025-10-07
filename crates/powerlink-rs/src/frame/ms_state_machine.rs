@@ -89,7 +89,10 @@ impl DllMsStateMachine {
                         }
                     },
                     // If an unexpected event occurs, remain in the current state.
-                    (current, _) => current,                    
+                    (current, _) => {
+                        errors.push(DllError::UnexpectedEventInState);
+                        current
+                    },                    
                 };
                 self.state = next_state;
             },
@@ -158,7 +161,10 @@ impl DllMsStateMachine {
                     // --- DLL_MT0 --- Initial transition from NMT
                     (DllMsState::NonCyclic, DllMsEvent::SocTrig) => DllMsState::WaitSocTrig,
 
-                    (current, _) => current,                  
+                    (current, _) => {
+                        errors.push(DllError::UnexpectedEventInState);
+                        current
+                    },                  
                 };
                 self.state = next_state;
             },

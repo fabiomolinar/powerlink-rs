@@ -113,6 +113,14 @@ pub enum NmtEvent {
     /// Triggered when node received a SoC or SoA frame.
     SocSoAReceived,
 
+    // --- Controlled Node (CN) Specific Events ---
+    /// The CN received a SoC frame.
+    SocReceived,
+    /// Configuration completed and the CN is ready to operate.
+    CnConfigurationComplete,
+    /// Any powerlink frame received (for boot-up sequence).
+    PowerlinkFrameReceived,
+
     // --- Managing Node (MN) Specific Events ---
 
     /// All mandatory CNs identified.

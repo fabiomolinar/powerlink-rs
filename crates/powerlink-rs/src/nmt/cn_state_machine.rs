@@ -1,3 +1,4 @@
+use crate::frame::DllError;
 use crate::types::NodeId;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::PowerlinkError;
@@ -61,6 +62,7 @@ impl<'a> CnNmtStateMachine<'a> {
     /// Resets the state machine to a specific reset state.
     pub fn reset(&mut self, event: NmtEvent) {
         match event {
+            NmtEvent::Reset => self.current_state = NmtState::NmtGsInitialising,
             NmtEvent::ResetNode => self.current_state = NmtState::NmtGsResetApplication,
             NmtEvent::ResetCommunication => self.current_state = NmtState::NmtGsResetCommunication,
             NmtEvent::ResetConfiguration => self.current_state = NmtState::NmtGsResetConfiguration,
@@ -70,7 +72,7 @@ impl<'a> CnNmtStateMachine<'a> {
 
     /// Handles automatic, internal state transitions that don't require an external event.
     /// This should be called in a loop after `process_event`.
-    pub fn run_internal_transitions(&mut self) {
+    pub fn run_internal_initialisation(&mut self) {
         let mut transition = true;
         while transition {
             let next_state = match self.current_state {
@@ -93,9 +95,11 @@ impl<'a> CnNmtStateMachine<'a> {
     }
 
     /// Processes an external event and transitions the NMT state accordingly.
-    pub fn process_event(&mut self, event: NmtEvent) {
+    pub fn process_event(&mut self, event: NmtEvent) -> Option<Vec<DllError>> {
+        let mut errors: Vec<DllError> = Vec::new();
         let next_state = match (self.current_state, event) {
             // --- Reset and Initialisation Transitions ---
+            (_, NmtEvent::Reset) => NmtState::NmtGsInitialising,
             (_, NmtEvent::ResetNode) => NmtState::NmtGsResetApplication,
             (_, NmtEvent::ResetCommunication) => NmtState::NmtGsResetCommunication,
             (_, NmtEvent::ResetConfiguration) => NmtState::NmtGsResetConfiguration,
@@ -103,16 +107,17 @@ impl<'a> CnNmtStateMachine<'a> {
             // --- CN Boot-up Sequence ---
 
             // (NMT_CT2) Any POWERLINK frame moves the node from NotActive to PreOp1.
-            (NmtState::NmtNotActive, NmtEvent::EnterEplMode) => NmtState::NmtPreOperational1,
+            (NmtState::NmtNotActive, NmtEvent::SocSoAReceived) => NmtState::NmtPreOperational1,
             // (NMT_CT3) A timeout in NotActive leads to BasicEthernet mode.
             (NmtState::NmtNotActive, NmtEvent::Timeout) => NmtState::NmtBasicEthernet,
             
             // (NMT_CT4) Receiving a SoC in PreOp1 signals the start of the isochronous phase.
-            (NmtState::NmtPreOperational1, NmtEvent::EnterEplMode) => NmtState::NmtPreOperational2,
+            (NmtState::NmtPreOperational1, NmtEvent::SocReceived) => NmtState::NmtPreOperational2,
             
-            // (NMT_CT5 & NMT_CT6) The MN enables the next state, and the application confirms readiness.
-            (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => NmtState::NmtReadyToOperate,
-            
+            // (NMT_CT5) The MN enables the next state, and the application confirms readiness.
+            (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => NmtState::NmtPreOperational2,
+            // (NMT_CT6) The MN enables the next state, and the application confirms readiness.
+            (NmtState::NmtPreOperational2, NmtEvent::CnConfigurationComplete) => NmtState::NmtReadyToOperate,            
             // (NMT_CT7) The MN commands the CN to start full operation.
             (NmtState::NmtReadyToOperate, NmtEvent::StartNode) => NmtState::NmtOperational,
             
@@ -123,20 +128,27 @@ impl<'a> CnNmtStateMachine<'a> {
             
             // (NMT_CT9) The MN can command a node to return to PreOp2.
             (NmtState::NmtOperational, NmtEvent::EnterPreOperational2) => NmtState::NmtPreOperational2,
-            
             // (NMT_CT10) The MN can bring a stopped node back to PreOp2.
             (NmtState::NmtCsStopped, NmtEvent::EnterPreOperational2) => NmtState::NmtPreOperational2,
-
             // (NMT_CT11) A critical error in any cyclic state forces a reset to PreOp1.
             (NmtState::NmtPreOperational2 | NmtState::NmtReadyToOperate | NmtState::NmtOperational | NmtState::NmtCsStopped, NmtEvent::Error) => NmtState::NmtPreOperational1,
 
             // (NMT_CT12) Receiving a POWERLINK frame while in BasicEthernet forces a return to PreOp1.
-            (NmtState::NmtBasicEthernet, NmtEvent::EnterEplMode) => NmtState::NmtPreOperational1,
+            (NmtState::NmtBasicEthernet, NmtEvent::PowerlinkFrameReceived) => NmtState::NmtPreOperational1,
             
             // If no specific transition is defined, remain in the current state.
-            (current, _) => current,
+            (current, _) => {
+                errors.push(DllError::UnexpectedEventInState);
+                current
+            },
         };
         self.current_state = next_state;
+
+        if errors.is_empty() {
+            None
+        } else {
+            Some(errors)
+        }
     }
 }
 
@@ -192,7 +204,7 @@ mod tests {
         assert_eq!(nmt.current_state, NmtState::NmtGsInitialising);
 
         // Run the automatic boot-up sequence
-        nmt.run_internal_transitions();
+        nmt.run_internal_initialisation();
         
         // Should end up in NotActive, ready for network events.
         assert_eq!(nmt.current_state, NmtState::NmtNotActive);
@@ -203,7 +215,7 @@ mod tests {
         let od = get_test_od();
         let mut nmt = CnNmtStateMachine::new(&od).unwrap();
 
-        nmt.run_internal_transitions(); // -> NotActive
+        nmt.run_internal_initialisation(); // -> NotActive
         assert_eq!(nmt.current_state, NmtState::NmtNotActive);
 
         nmt.process_event(NmtEvent::EnterEplMode);
@@ -229,7 +241,7 @@ mod tests {
         nmt.process_event(NmtEvent::Error);
 
         // State machine should fall back to PreOperational1
-        assert_eq!(nmt.current_state, NmtState::NmtPreOperational1);
+        assert_eq!(nmt.current_state, NmtState::NmtPreOperational1); 
     }
 
     #[test]

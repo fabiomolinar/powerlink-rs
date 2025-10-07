@@ -55,4 +55,6 @@ pub enum DllError {
     AddressConflict,
     /// Corresponds to `E_DLL_MEV_ASND_TIMEOUT` in the specification.
     MevAsndTimeout,
+    /// Unexpected event in the current state machine state.
+    UnexpectedEventInState
 }

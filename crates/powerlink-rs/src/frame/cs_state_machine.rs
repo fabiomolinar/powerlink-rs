@@ -141,7 +141,10 @@ impl DllCsStateMachine {
 
                     // If an unexpected event occurs, remain in the current state.
                     // Error reporting would be triggered here.
-                    (current, _) => current,
+                    (current, _) => {
+                        errors.push(DllError::UnexpectedEventInState);
+                        current
+                    },
                 };
                 self.state = next_state;
             },
