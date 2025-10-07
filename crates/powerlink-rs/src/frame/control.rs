@@ -303,19 +303,13 @@ impl ASndFrame {
 
 impl Codec for ASndFrame {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        let header_size = ETHERNET_HEADER_SIZE + 4; // 4 bytes for PL header
+        let header_size = 18; // 4 bytes for PL header
         let total_size = header_size + self.payload.len();
         if buffer.len() < total_size { return Err(PowerlinkError::FrameTooLarge); }
         
-        // Ethernet Header
-        buffer[0..6].copy_from_slice(&self.eth_header.destination_mac.0);
-        buffer[6..12].copy_from_slice(&self.eth_header.source_mac.0);
-        buffer[12..14].copy_from_slice(&self.eth_header.ether_type.to_be_bytes());
-        
-        // POWERLINK Data
-        buffer[14] = self.message_type as u8;
-        buffer[15] = self.destination.0;
-        buffer[16] = self.source.0;
+        CodecHelpers::serialize_eth_header(&self.eth_header, buffer);
+        CodecHelpers::serialize_pl_header(self.message_type, self.destination, self.source, buffer);
+
         buffer[17] = self.service_id as u8;
         
         // Payload
