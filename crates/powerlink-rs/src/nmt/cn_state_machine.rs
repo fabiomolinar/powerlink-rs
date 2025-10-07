@@ -1,5 +1,6 @@
 use crate::types::NodeId;
-use crate::od::ObjectDictionary;
+use crate::od::{ObjectDictionary, ObjectValue};
+use crate::PowerlinkError;
 use super::states::{NmtState, NmtEvent};
 
 /// Manages the NMT state for a Controlled Node.
@@ -12,21 +13,60 @@ pub struct CnNmtStateMachine<'a> {
 
 impl<'a> CnNmtStateMachine<'a> {
     /// Creates a new NMT state machine for a Controlled Node.
-    /// It requires an Object Dictionary to read necessary configuration, like the Node ID.
-    pub fn new(od: &'a ObjectDictionary) -> Self {
-        // The Node ID is read from the OD upon initialization.
-        // A real implementation would handle potential errors here.
-        let node_id = NodeId(1); // Placeholder
+    /// This is now fallible, as it must successfully read the Node ID from the OD.
+    pub fn new(od: &'a ObjectDictionary) -> Result<Self, PowerlinkError> {
+        // Read Node ID from OD entry 0x1F93, sub-index 1.
+        let node_id_val = od.read(0x1F93, 1)
+            .ok_or(PowerlinkError::InvalidFrame)?; // Or a more specific OD error
+        
+        let node_id = if let ObjectValue::Unsigned8(val) = node_id_val {
+            NodeId::try_from(*val).map_err(|_| PowerlinkError::InvalidFrame)?
+        } else {
+            return Err(PowerlinkError::InvalidFrame); // OD has wrong data type
+        };
 
-        Self {
+        Ok(Self {
             current_state: NmtState::NmtGsInitialising,
             node_id,
             od,
+        })
+    }
+    
+    /// Resets the state machine to a specific reset state.
+    pub fn reset(&mut self, event: NmtEvent) {
+        match event {
+            NmtEvent::ResetNode => self.current_state = NmtState::NmtGsResetApplication,
+            NmtEvent::ResetCommunication => self.current_state = NmtState::NmtGsResetCommunication,
+            NmtEvent::ResetConfiguration => self.current_state = NmtState::NmtGsResetConfiguration,
+            _ => {}, // Ignore other events
         }
     }
 
-    /// Processes an event and transitions the NMT state according to the CN state diagram.
-    /// (Reference: EPSG DS 301, Section 7.1.4, Figure 74)
+    /// Handles automatic, internal state transitions that don't require an external event.
+    /// This should be called in a loop after `process_event`.
+    pub fn run_internal_transitions(&mut self) {
+        let mut transition = true;
+        while transition {
+            let next_state = match self.current_state {
+                // After basic init, automatically move to reset the application.
+                NmtState::NmtGsInitialising => NmtState::NmtGsResetApplication,
+                // After app reset, automatically move to reset comms.
+                NmtState::NmtGsResetApplication => NmtState::NmtGsResetCommunication,
+                // After comms reset, automatically move to reset config.
+                NmtState::NmtGsResetCommunication => NmtState::NmtGsResetConfiguration,
+                // After config reset, the node is ready to listen on the network.
+                NmtState::NmtGsResetConfiguration => NmtState::NmtNotActive,
+                // No other states have automatic transitions.
+                _ => {
+                    transition = false; // Stop the loop
+                    self.current_state
+                }
+            };
+            self.current_state = next_state;
+        }
+    }
+
+    /// Processes an external event and transitions the NMT state accordingly.
     pub fn process_event(&mut self, event: NmtEvent) {
         let next_state = match (self.current_state, event) {
             // --- Reset and Initialisation Transitions ---
@@ -78,39 +118,66 @@ impl<'a> CnNmtStateMachine<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::od::{ObjectDictionary, Object, ObjectValue};
+
+    // Helper to create a test OD with a valid Node ID.
+    fn get_test_od() -> ObjectDictionary {
+        let mut od = ObjectDictionary::new();
+        od.insert(0x1F93, Object::Record(vec![
+            ObjectValue::Unsigned8(2), // Number of Entries
+            ObjectValue::Unsigned8(42), // Node ID
+            ObjectValue::Boolean(0), // Set by HW
+        ]));
+        od
+    }
 
     #[test]
-    fn test_cn_boot_up_happy_path() {
-        let od = ObjectDictionary::new();
-        let mut nmt = CnNmtStateMachine::new(&od);
+    fn test_new_reads_node_id() {
+        let od = get_test_od();
+        let nmt = CnNmtStateMachine::new(&od).unwrap();
+        assert_eq!(nmt.node_id, NodeId(42));
+    }
 
-        // Initial state after power on
+    #[test]
+    fn test_internal_boot_sequence() {
+        let od = get_test_od();
+        let mut nmt = CnNmtStateMachine::new(&od).unwrap();
+
+        // Starts in Initialising
         assert_eq!(nmt.current_state, NmtState::NmtGsInitialising);
 
-        // Simulate internal auto-transitions after init
-        nmt.current_state = NmtState::NmtNotActive;
+        // Run the automatic boot-up sequence
+        nmt.run_internal_transitions();
+        
+        // Should end up in NotActive, ready for network events.
+        assert_eq!(nmt.current_state, NmtState::NmtNotActive);
+    }
 
-        // Receive a POWERLINK frame (e.g., SoA) -> move to PreOp1
+    #[test]
+    fn test_full_boot_up_happy_path() {
+        let od = get_test_od();
+        let mut nmt = CnNmtStateMachine::new(&od).unwrap();
+
+        nmt.run_internal_transitions(); // -> NotActive
+        assert_eq!(nmt.current_state, NmtState::NmtNotActive);
+
         nmt.process_event(NmtEvent::EnterEplMode);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational1);
 
-        // Receive a SoC -> move to PreOp2
         nmt.process_event(NmtEvent::EnterEplMode);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
 
-        // Receive EnableReadyToOperate command -> move to ReadyToOperate
         nmt.process_event(NmtEvent::EnableReadyToOperate);
         assert_eq!(nmt.current_state, NmtState::NmtReadyToOperate);
 
-        // Receive StartNode command -> move to Operational
         nmt.process_event(NmtEvent::StartNode);
         assert_eq!(nmt.current_state, NmtState::NmtOperational);
     }
 
     #[test]
     fn test_error_handling_transition() {
-        let od = ObjectDictionary::new();
-        let mut nmt = CnNmtStateMachine::new(&od);
+        let od = get_test_od();
+        let mut nmt = CnNmtStateMachine::new(&od).unwrap();
         nmt.current_state = NmtState::NmtOperational;
 
         // A DLL error occurs
@@ -122,8 +189,8 @@ mod tests {
 
     #[test]
     fn test_stop_and_restart_node() {
-        let od = ObjectDictionary::new();
-        let mut nmt = CnNmtStateMachine::new(&od);
+        let od = get_test_od();
+        let mut nmt = CnNmtStateMachine::new(&od).unwrap();
         nmt.current_state = NmtState::NmtOperational;
 
         // MN sends StopNode command
