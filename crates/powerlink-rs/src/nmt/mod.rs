@@ -1,7 +1,10 @@
+pub mod states;
+pub mod cn_state_machine;
+
 use crate::types::{NodeId};
 use self::states::{NmtState, NmtEvent};
 
-pub mod states;
+
 
 /// Manages the NMT state for a POWERLINK node.
 pub struct NmtStateMachine {
