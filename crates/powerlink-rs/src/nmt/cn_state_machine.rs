@@ -2,12 +2,17 @@ use crate::types::NodeId;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::PowerlinkError;
 use super::states::{NmtState, NmtEvent};
+use super::flags::FeatureFlags;
 
 /// Manages the NMT state for a Controlled Node.
 pub struct CnNmtStateMachine<'a> {
     pub current_state: NmtState,
     pub node_id: NodeId,
-    /// A reference to the Object Dictionary is needed to read configuration.
+    /// Cached feature flags from OD 0x1F82.
+    pub feature_flags: FeatureFlags,
+    /// Cached timeout for Basic Ethernet transition from OD 0x1F99.
+    pub basic_ethernet_timeout: u32,
+    /// A reference to the Object Dictionary.
     od: &'a ObjectDictionary,
 }
 
@@ -17,8 +22,7 @@ impl<'a> CnNmtStateMachine<'a> {
     pub fn new(od: &'a ObjectDictionary) -> Result<Self, PowerlinkError> {
         // Read Node ID from OD entry 0x1F93, sub-index 1.
         let node_id_val = od.read(0x1F93, 1)
-            .ok_or(PowerlinkError::ObjectNotFound)?;
-        
+            .ok_or(PowerlinkError::ObjectNotFound)?;        
         // Dereference the Cow to access the inner ObjectValue.
         let node_id = if let ObjectValue::Unsigned8(val) = &*node_id_val {
             NodeId::try_from(*val).map_err(|_| PowerlinkError::InvalidFrame)?
@@ -26,9 +30,30 @@ impl<'a> CnNmtStateMachine<'a> {
             return Err(PowerlinkError::TypeMismatch);
         };
 
+        // Read Feature Flags from OD entry 0x1F82, sub-index 0.
+        let feature_flags_val = od.read(0x1F82, 0)
+            .ok_or(PowerlinkError::ObjectNotFound)?;
+        let feature_flags = if let ObjectValue::Unsigned32(val) = &*feature_flags_val {
+            FeatureFlags::from_bits_truncate(*val)
+        } else {
+            return Err(PowerlinkError::TypeMismatch);
+        };
+
+
+        // Read Basic Ethernet Timeout from OD entry 0x1F99, sub-index 0.
+        let basic_ethernet_timeout = od.read(0x1F99, 0)
+            .ok_or(PowerlinkError::ObjectNotFound)?;
+        let basic_ethernet_timeout = if let ObjectValue::Unsigned32(val) = &*basic_ethernet_timeout {
+            *val
+        } else {
+            return Err(PowerlinkError::TypeMismatch);
+        };
+
         Ok(Self {
             current_state: NmtState::NmtGsInitialising,
             node_id,
+            feature_flags,
+            basic_ethernet_timeout,
             od,
         })
     }
@@ -122,13 +147,18 @@ mod tests {
     use crate::od::{ObjectDictionary, Object, ObjectValue};
     use alloc::vec;
 
-    // Helper to create a test OD with a valid Node ID.
+    // Helper to create a test OD with all mandatory values.
     fn get_test_od() -> ObjectDictionary {
         let mut od = ObjectDictionary::new();
+        // NMT_EPLNodeID_REC (0x1F93)
         od.insert(0x1F93, Object::Record(vec![
-            ObjectValue::Unsigned8(42), // Node ID
-            ObjectValue::Boolean(0), // Set by HW
+            ObjectValue::Unsigned8(42), // Node ID at sub-index 1
+            ObjectValue::Boolean(0),    // NodeIDByHW_BOOL at sub-index 2
         ]));
+        // NMT_FeatureFlags_U32 (0x1F82)
+        od.insert(0x1F82, Object::Variable(ObjectValue::Unsigned32(0x0000_FFFF)));
+        // NMT_CNBasicEthernetTimeout_U32 (0x1F99)
+        od.insert(0x1F99, Object::Variable(ObjectValue::Unsigned32(5_000_000)));
         od
     }
 
@@ -209,5 +239,18 @@ mod tests {
         let od = ObjectDictionary::new();
         let result = CnNmtStateMachine::new(&od);
         assert_eq!(result.err(), Some(PowerlinkError::ObjectNotFound));
+    }
+
+    #[test]
+    fn test_new_reads_od_parameters() {
+        let od = get_test_od();
+        let nmt = CnNmtStateMachine::new(&od).unwrap();
+        
+        assert_eq!(nmt.node_id, NodeId(42));
+        // UPDATED: Test for a specific flag.
+        assert!(nmt.feature_flags.contains(FeatureFlags::SDO_ASND));
+        assert!(nmt.feature_flags.contains(FeatureFlags::SDO_UDP));
+        assert!(!nmt.feature_flags.contains(FeatureFlags::ROUTING_TYPE_1));
+        assert_eq!(nmt.basic_ethernet_timeout, 5_000_000);
     }
 }
