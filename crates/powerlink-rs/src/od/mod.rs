@@ -64,7 +64,7 @@ impl ObjectDictionary {
     /// - For normal data access (`sub_index > 0`), it returns a cheap `Cow::Borrowed` reference.
     /// - For `sub_index == 0` on complex types, it returns a temporary `Cow::Owned` value
     ///   representing the number of entries, as required by the specification.
-    pub fn read(&self, index: u16, sub_index: u8) -> Option<Cow<ObjectValue>> {
+    pub fn read<'a>(&'a self, index: u16, sub_index: u8) -> Option<Cow<'a, ObjectValue>> {
         self.entries.get(&index).and_then(|object| match object {
             Object::Variable(value) => {
                 if sub_index == 0 {
