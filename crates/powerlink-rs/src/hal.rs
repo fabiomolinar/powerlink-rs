@@ -19,6 +19,14 @@ pub enum PowerlinkError {
     FrameTooLarge,
     /// The device is not yet configured or ready to transmit/receive.
     NotReady,
+    /// The requested Object Dictionary index does not exist.
+    ObjectNotFound,
+    /// The requested sub-index does not exist for the given object.
+    SubObjectNotFound,
+    /// An attempt was made to write a value with an incorrect data type to an object.
+    TypeMismatch,
+    /// Invalid Node ID value encountered.
+    InvalidNodeId,
 }
 
 // --- From Implementations for Error Conversion ---
@@ -46,6 +54,10 @@ impl fmt::Display for PowerlinkError {
             Self::SliceConversion => write!(f, "Failed to convert slice to a fixed-size array"),
             Self::FrameTooLarge => write!(f, "Frame size exceeds maximum allowed MTU"),
             Self::NotReady => write!(f, "Device is not ready or configured"),
+            Self::ObjectNotFound => write!(f, "The requested Object Dictionary index was not found"),
+            Self::SubObjectNotFound => write!(f, "The requested sub-index was not found for this object"),
+            Self::TypeMismatch => write!(f, "The provided value's type does not match the object's type"),                        
+            Self::InvalidNodeId => write!(f, "The Node ID value is invalid"),
         }
     }
 }

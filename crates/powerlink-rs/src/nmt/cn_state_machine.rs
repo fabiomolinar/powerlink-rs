@@ -17,12 +17,13 @@ impl<'a> CnNmtStateMachine<'a> {
     pub fn new(od: &'a ObjectDictionary) -> Result<Self, PowerlinkError> {
         // Read Node ID from OD entry 0x1F93, sub-index 1.
         let node_id_val = od.read(0x1F93, 1)
-            .ok_or(PowerlinkError::InvalidFrame)?; // Or a more specific OD error
+            // UPDATED: Return a specific error if the object is not found.
+            .ok_or(PowerlinkError::ObjectNotFound)?;
         
         let node_id = if let ObjectValue::Unsigned8(val) = node_id_val {
-            NodeId::try_from(*val).map_err(|_| PowerlinkError::InvalidFrame)?
+            NodeId::try_from(*val).map_err(|_| PowerlinkError::InvalidNodeId)?
         } else {
-            return Err(PowerlinkError::InvalidFrame); // OD has wrong data type
+            return Err(PowerlinkError::TypeMismatch);
         };
 
         Ok(Self {
@@ -119,12 +120,12 @@ impl<'a> CnNmtStateMachine<'a> {
 mod tests {
     use super::*;
     use crate::od::{ObjectDictionary, Object, ObjectValue};
+    use alloc::vec;
 
     // Helper to create a test OD with a valid Node ID.
     fn get_test_od() -> ObjectDictionary {
         let mut od = ObjectDictionary::new();
         od.insert(0x1F93, Object::Record(vec![
-            ObjectValue::Unsigned8(2), // Number of Entries
             ObjectValue::Unsigned8(42), // Node ID
             ObjectValue::Boolean(0), // Set by HW
         ]));
@@ -200,5 +201,13 @@ mod tests {
         // MN sends EnterPreOperational2 to bring it back
         nmt.process_event(NmtEvent::EnterPreOperational2);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
+    }
+
+    #[test]
+    fn test_new_fails_if_od_is_missing_nodeid() {
+        // Create an empty OD without the required Node ID object.
+        let od = ObjectDictionary::new();
+        let result = CnNmtStateMachine::new(&od);
+        assert_eq!(result.err(), Some(PowerlinkError::ObjectNotFound));
     }
 }
