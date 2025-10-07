@@ -17,11 +17,11 @@ impl<'a> CnNmtStateMachine<'a> {
     pub fn new(od: &'a ObjectDictionary) -> Result<Self, PowerlinkError> {
         // Read Node ID from OD entry 0x1F93, sub-index 1.
         let node_id_val = od.read(0x1F93, 1)
-            // UPDATED: Return a specific error if the object is not found.
             .ok_or(PowerlinkError::ObjectNotFound)?;
         
-        let node_id = if let ObjectValue::Unsigned8(val) = node_id_val {
-            NodeId::try_from(*val).map_err(|_| PowerlinkError::InvalidNodeId)?
+        // Dereference the Cow to access the inner ObjectValue.
+        let node_id = if let ObjectValue::Unsigned8(val) = &*node_id_val {
+            NodeId::try_from(*val).map_err(|_| PowerlinkError::InvalidFrame)?
         } else {
             return Err(PowerlinkError::TypeMismatch);
         };
