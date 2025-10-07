@@ -96,6 +96,8 @@ pub enum NmtEvent {
     EnterPreOperational2,
     /// Corresponds to the `NMTEnableReadyToOperate` command.
     EnableReadyToOperate,
+    /// Corresponds to the `NMTReset` and `NMTSwReset` commands.
+    Reset,
     /// Corresponds to the `NMTResetNode` command.
     ResetNode,
     /// Corresponds to the `NMTResetCommunication` command.
@@ -108,6 +110,15 @@ pub enum NmtEvent {
     Timeout,
     /// Triggered by a significant DLL or application error.
     Error,
+    /// Triggered when node received a SoC or SoA frame.
+    SocSoAReceived,
+
+    // --- Managing Node (MN) Specific Events ---
+
+    /// All mandatory CNs identified.
+    AllCnsIdentified,
+    /// MN configuration complete and all CNs ready to operate.    
+    ConfigurationCompleteCnsReady,
 }
 
 impl TryFrom<u8> for NmtState {

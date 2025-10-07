@@ -48,8 +48,11 @@ pub enum Object {
 pub enum AccessType {
     ReadOnly,
     WriteOnly,
+    WriteOnlYStore,
     ReadWrite,
+    ReadWriteStore,
     Constant,
+    Conditional,
 }
 
 /// A complete entry in the Object Dictionary, containing both the data and its metadata.
