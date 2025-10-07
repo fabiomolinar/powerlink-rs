@@ -114,7 +114,7 @@ impl Codec for PReqFrame {
         buffer[19] = 0;
         buffer[20] = self.pdo_version.0;
         buffer[21] = 0;
-        buffer[22..23].copy_from_slice(&self.payload_size.to_le_bytes());
+        buffer[22..24].copy_from_slice(&self.payload_size.to_le_bytes());
         buffer[header_size..total_size].copy_from_slice(&self.payload);
         
         Ok(total_size.max(60))
@@ -135,7 +135,7 @@ impl Codec for PReqFrame {
         };
 
         let pdo_version = PDOVersion(buffer[20]);
-        let payload_size = u16::from_le_bytes(buffer[22..23].try_into()?);
+        let payload_size = u16::from_le_bytes(buffer[22..24].try_into()?);
         
         let payload_end = header_size + payload_size as usize;
         if buffer.len() < payload_end { return Err(PowerlinkError::BufferTooShort); }
@@ -228,7 +228,7 @@ impl Codec for PResFrame {
         buffer[19] = octet5;
         buffer[20] = self.pdo_version.0;
         buffer[21] = 0;
-        buffer[22..23].copy_from_slice(&self.payload_size.to_le_bytes());
+        buffer[22..24].copy_from_slice(&self.payload_size.to_le_bytes());
         buffer[header_size..total_size].copy_from_slice(&self.payload);
         
         Ok(total_size.max(60))
@@ -255,7 +255,7 @@ impl Codec for PResFrame {
         };
 
         let pdo_version = PDOVersion(buffer[20]);
-        let payload_size = u16::from_le_bytes(buffer[22..23].try_into()?);
+        let payload_size = u16::from_le_bytes(buffer[22..24].try_into()?);
         
         let payload_end = header_size + payload_size as usize;
         if buffer.len() < payload_end { return Err(PowerlinkError::BufferTooShort); }
