@@ -13,6 +13,8 @@ pub type INTEGER16 = i16;
 pub type INTEGER24 = i32;
 /// Alias for INTEGER32 (32-bit signed integer).
 pub type INTEGER32 = i32;
+/// Alias for INTEGER64 (64-bit signed integer).
+pub type INTEGER64 = i64;
 /// Alias for UNSIGNED8 (8-bit unsigned integer).
 pub type UNSIGNED8 = u8;
 /// Alias for UNSIGNED16 (16-bit unsigned integer).
@@ -21,6 +23,8 @@ pub type UNSIGNED16 = u16;
 pub type UNSIGNED24 = u32;
 /// Alias for UNSIGNED32 (32-bit unsigned integer).
 pub type UNSIGNED32 = u32;
+/// Alias for UNSIGNED64 (64-bit unsigned integer).
+pub type UNSIGNED64 = u64;
 /// Alias for REAL32 (32-bit floating point).
 pub type REAL32 = f32;
 /// Alias for REAL64 (64-bit floating point).

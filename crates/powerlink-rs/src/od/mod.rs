@@ -1,31 +1,45 @@
+use crate::common::{NetTime, TimeDifference, TimeOfDay};
 use crate::types::{
-    BOOLEAN, INTEGER16, INTEGER32, INTEGER8, UNSIGNED16, UNSIGNED32, UNSIGNED8,
+    BOOLEAN, INTEGER16, INTEGER32, INTEGER64, INTEGER8, REAL32, REAL64, UNSIGNED16,
+    UNSIGNED32, UNSIGNED64, UNSIGNED8, IpAddress, MacAddress,
 };
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{
+    collections::BTreeMap,
+    string::String,
+    vec::Vec,
+};
 
 /// Represents any value that can be stored in an Object Dictionary entry.
-/// This enum covers the basic data types from the specification.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// This enum now covers all basic and extended data types from the specification.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ObjectValue {
     Boolean(BOOLEAN),
     Integer8(INTEGER8),
     Integer16(INTEGER16),
     Integer32(INTEGER32),
+    Integer64(INTEGER64),
     Unsigned8(UNSIGNED8),
     Unsigned16(UNSIGNED16),
     Unsigned32(UNSIGNED32),
-    // Other types like strings, domains, etc., would be added here.
+    Unsigned64(UNSIGNED64),
+    Real32(REAL32),
+    Real64(REAL64),
+    VisibleString(String),
+    OctetString(Vec<u8>),
+    UnicodeString(Vec<u16>),
+    Domain(Vec<u8>),
+    TimeOfDay(TimeOfDay),
+    TimeDifference(TimeDifference),
+    NetTime(NetTime),
+    MacAddress(MacAddress),
+    IpAddress(IpAddress),
 }
 
 /// Represents a single entry in the Object Dictionary.
-/// It can be a simple variable or a complex data structure like an array or record.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Object {
-    /// A single value.
     Variable(ObjectValue),
-    /// A collection of sub-entries, all of the same type.
     Array(Vec<ObjectValue>),
-    /// A collection of sub-entries, potentially of different types.
     Record(Vec<ObjectValue>),
 }
 
