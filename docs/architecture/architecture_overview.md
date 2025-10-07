@@ -18,6 +18,10 @@ To ensure the implementation can run across diverse targets, including embedded 
 - **Feature Flag Strategy:** Cross-platform compilation is managed via feature flags. The platform-specific I/O crates (like `powerlink-io-windows`) explicitly enable the **`std` feature** of the core `powerlink-rs` crate when standard library functionality (such as OS sockets) is required for those platforms..
 - **alloc:** At least for now, we are relying on alloc for dynamic memory allocation. This may change on the future.
 
+## Crate independence
+
+To the extent possible, this crate will try to avoid adding other crates as dependencies.
+
 ## Hardware Abstraction Layer (HAL)
 
 To decouple the core protocol logic from the physical network interface, a Hardware Abstraction Layer (HAL) approach is mandated.

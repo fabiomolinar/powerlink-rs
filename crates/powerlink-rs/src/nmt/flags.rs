@@ -1,3 +1,5 @@
+use core::ops::BitOr;
+
 /// Represents the NMT Feature Flags from Object 0x1F82 as a type-safe bitmask.
 /// (Reference: EPSG DS 301, Section 7.2.1.1.6, Table 111)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -47,5 +49,32 @@ impl FeatureFlags {
     /// Removes the specified flags.
     pub fn remove(&mut self, other: Self) {
         self.0 &= !other.0;
+    }
+}
+
+impl BitOr for FeatureFlags {
+    type Output = Self;
+
+    /// Implements the `|` operator for combining flags.
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bitor_implementation() {
+        let flags1 = FeatureFlags::ISOCHRONOUS; // Bit 0
+        let flags2 = FeatureFlags::SDO_ASND;    // Bit 2
+        
+        let combined = flags1 | flags2;
+
+        assert_eq!(combined.0, 0b0000_0101); // Bit 0 and Bit 2 are set
+        assert!(combined.contains(FeatureFlags::ISOCHRONOUS));
+        assert!(combined.contains(FeatureFlags::SDO_ASND));
+        assert!(!combined.contains(FeatureFlags::SDO_UDP));
     }
 }

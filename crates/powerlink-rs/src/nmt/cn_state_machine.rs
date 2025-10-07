@@ -144,21 +144,35 @@ impl<'a> CnNmtStateMachine<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::od::{ObjectDictionary, Object, ObjectValue};
-    use alloc::vec;
+    use crate::od::{ObjectDictionary, Object, ObjectValue, ObjectEntry, AccessType};
+    use alloc::vec;    
 
     // Helper to create a test OD with all mandatory values.
     fn get_test_od() -> ObjectDictionary {
         let mut od = ObjectDictionary::new();
-        // NMT_EPLNodeID_REC (0x1F93)
-        od.insert(0x1F93, Object::Record(vec![
-            ObjectValue::Unsigned8(42), // Node ID at sub-index 1
-            ObjectValue::Boolean(0),    // NodeIDByHW_BOOL at sub-index 2
-        ]));
-        // NMT_FeatureFlags_U32 (0x1F82)
-        od.insert(0x1F82, Object::Variable(ObjectValue::Unsigned32(0x0000_FFFF)));
-        // NMT_CNBasicEthernetTimeout_U32 (0x1F99)
-        od.insert(0x1F99, Object::Variable(ObjectValue::Unsigned32(5_000_000)));
+        
+        od.insert(0x1F93, ObjectEntry {
+            object: Object::Record(vec![
+                ObjectValue::Unsigned8(42), // Node ID at sub-index 1
+                ObjectValue::Boolean(0),    // NodeIDByHW_BOOL at sub-index 2
+            ]),
+            name: "NMT_EPLNodeID_REC",
+            access: AccessType::ReadWrite,
+        });
+
+        let flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND | FeatureFlags::SDO_UDP;
+        od.insert(0x1F82, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(flags.0)),
+            name: "NMT_FeatureFlags_U32",
+            access: AccessType::Constant,
+        });
+
+        od.insert(0x1F99, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(5_000_000)),
+            name: "NMT_CNBasicEthernetTimeout_U32",
+            access: AccessType::ReadWrite,
+        });
+        
         od
     }
 
