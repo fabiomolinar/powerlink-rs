@@ -40,7 +40,7 @@ impl CodecHelpers {
 
     /// Deserializes the 14-byte Ethernet header.
     pub(super) fn deserialize_eth_header(buffer: &[u8]) -> Result<EthernetHeader, PowerlinkError> {
-        if buffer.len() < 14 { return Err(PowerlinkError::InvalidFrame); }
+        if buffer.len() < 14 { return Err(PowerlinkError::InvalidEthernetFrame); }
         Ok(EthernetHeader {
             destination_mac: MacAddress(buffer[0..6].try_into()?),
             source_mac: MacAddress(buffer[6..12].try_into()?),
@@ -50,7 +50,7 @@ impl CodecHelpers {
 
     /// Deserializes the common POWERLINK header fields (MessageType, Dest, Src).
     pub(super) fn deserialize_pl_header(buffer: &[u8]) -> Result<(MessageType, NodeId, NodeId), PowerlinkError> {
-        if buffer.len() < 17 { return Err(PowerlinkError::InvalidFrame); }
+        if buffer.len() < 17 { return Err(PowerlinkError::InvalidPlFrame); }
         let message_type = MessageType::try_from(buffer[14] & 0x7F)?;
         let destination = NodeId(buffer[15]);
         let source = NodeId(buffer[16]);
@@ -64,7 +64,7 @@ pub fn deserialize_frame(buffer: &[u8]) -> Result<PowerlinkFrame, PowerlinkError
     // A valid POWERLINK frame must have at least an Ethernet header (14 bytes)
     // and a message type field (1 byte).
     if buffer.len() < 15 {
-        return Err(PowerlinkError::InvalidFrame);
+        return Err(PowerlinkError::InvalidPlFrame);
     }
     
     // The message type is in the lower 7 bits of the 15th byte (index 14).
@@ -76,6 +76,6 @@ pub fn deserialize_frame(buffer: &[u8]) -> Result<PowerlinkFrame, PowerlinkError
         Ok(MessageType::PRes) => PResFrame::deserialize(buffer).map(PowerlinkFrame::PRes),
         Ok(MessageType::SoA) => SoAFrame::deserialize(buffer).map(PowerlinkFrame::SoA),
         Ok(MessageType::ASnd) => ASndFrame::deserialize(buffer).map(PowerlinkFrame::ASnd),
-        Err(_) => Err(PowerlinkError::InvalidFrame),
+        Err(_) => Err(PowerlinkError::InvalidPlFrame),
     }
 }

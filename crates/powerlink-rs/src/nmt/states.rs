@@ -151,7 +151,7 @@ impl TryFrom<u8> for NmtState {
             0xFD => Ok(NmtState::NmtOperational),     // Also NmtMsOperational
             0x4D => Ok(NmtState::NmtCsStopped),
             0x1E => Ok(NmtState::NmtBasicEthernet),   // Also NmtMsBasicEthernet
-            _ => Err(PowerlinkError::InvalidFrame),
+            _ => Err(PowerlinkError::InvalidNmtState(value)),
         }
     }
 }

@@ -90,7 +90,7 @@ impl DllMsStateMachine {
                     },
                     // If an unexpected event occurs, remain in the current state.
                     (current, _) => {
-                        errors.push(DllError::UnexpectedEventInState);
+                        errors.push(DllError::UnexpectedEventInState { state: current as u8, event: event as u8 });
                         current
                     },                    
                 };
@@ -119,7 +119,7 @@ impl DllMsStateMachine {
                     },
                     (DllMsState::WaitPres, e @ DllMsEvent::Pres | e @ DllMsEvent::PresTimeout) => {
                         if e == DllMsEvent::PresTimeout {
-                            errors.push(DllError::LossOfPresThreshold { node_id: dest_node_id });
+                            errors.push(DllError::LossOfPres { node_id: dest_node_id });
                         }
                         match(isochr, async_in, isochr_out, async_out) {
                             // --- DLL_MT2 --- Send next PReq
@@ -162,7 +162,7 @@ impl DllMsStateMachine {
                     (DllMsState::NonCyclic, DllMsEvent::SocTrig) => DllMsState::WaitSocTrig,
 
                     (current, _) => {
-                        errors.push(DllError::UnexpectedEventInState);
+                        errors.push(DllError::UnexpectedEventInState { state: current as u8, event: event as u8 });
                         current
                     },                  
                 };

@@ -1,4 +1,4 @@
-use crate::frame::basic::{EthernetHeader, MacAddress, ETHERNET_HEADER_SIZE};
+use crate::frame::basic::{EthernetHeader, MacAddress};
 use crate::nmt::states::NmtState;
 use crate::types::{
     NodeId, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_PRES,

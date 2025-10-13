@@ -1,4 +1,5 @@
-use crate::types::InvalidMessageTypeError;
+use crate::types::{InvalidMessageTypeError, NodeIdError};
+use crate::pdo::PayloadSizeError;
 use core::array::TryFromSliceError;
 use core::fmt;
 
@@ -10,7 +11,21 @@ pub enum PowerlinkError {
     /// An underlying I/O error occurred.
     IoError,
     /// A received frame is fundamentally invalid (e.g., wrong EtherType, bad message type).
-    InvalidFrame,
+    InvalidEthernetFrame,
+    /// A received powerlink frame is fundamentally invalid (e.g., too short to contain required headers).
+    InvalidPlFrame,
+    /// A value in the frame is not a valid MessageType.
+    InvalidMessageType(u8),
+    /// A value in the frame is not a valid NMT State.
+    InvalidNmtState(u8),
+    /// A value in the frame is not a valid ServiceId.
+    InvalidServiceId(u8),
+    /// A value in the frame is not a valid RequestedServiceId.
+    InvalidRequestedServiceId(u8),
+    /// A value in the frame is not a valid NodeId.
+    InvalidNodeId(u8),
+    /// A value in the frame is not a valid PayloadSize.
+    InvalidPayloadSize(u16),
     /// A value in a frame is not a valid enum variant.
     InvalidEnumValue,
     /// A multi-byte value could not be parsed from a slice.
@@ -24,9 +39,7 @@ pub enum PowerlinkError {
     /// The requested sub-index does not exist for the given object.
     SubObjectNotFound,
     /// An attempt was made to write a value with an incorrect data type to an object.
-    TypeMismatch,
-    /// Invalid Node ID value encountered.
-    InvalidNodeId,
+    TypeMismatch,    
 }
 
 // --- From Implementations for Error Conversion ---
@@ -43,21 +56,43 @@ impl From<TryFromSliceError> for PowerlinkError {
     }
 }
 
+impl From<NodeIdError> for PowerlinkError {
+    fn from(err: NodeIdError) -> Self {
+        match err {
+            NodeIdError::InvalidRange(val) => PowerlinkError::InvalidNodeId(val),
+        }
+    }
+}
+
+impl From<PayloadSizeError> for PowerlinkError {
+    fn from(err: PayloadSizeError) -> Self {
+        match err {
+            PayloadSizeError::InvalidRange(val) => PowerlinkError::InvalidPayloadSize(val),
+        }
+    }
+}
+
 // --- Display trait for better error messages ---
 impl fmt::Display for PowerlinkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::BufferTooShort => write!(f, "Buffer is too short for the frame"),
             Self::IoError => write!(f, "An underlying I/O error occurred"),
-            Self::InvalidFrame => write!(f, "Frame is invalid or malformed"),
-            Self::InvalidEnumValue => write!(f, "A value does not correspond to a valid enum variant"),
+            Self::InvalidEthernetFrame => write!(f, "Frame is not a valid Ethernet II frame"),
+            Self::InvalidPlFrame => write!(f, "Frame is not a valid POWERLINK frame"),
+            Self::InvalidMessageType(v) => write!(f, "Invalid MessageType value: {v:#04x}"),
+            Self::InvalidNmtState(v) => write!(f, "Invalid NMT State value: {v:#04x}"),
+            Self::InvalidServiceId(v) => write!(f, "Invalid ServiceId value: {v:#04x}"),
+            Self::InvalidRequestedServiceId(v) => write!(f, "Invalid RequestedServiceId value: {v:#04x}"),
+            Self::InvalidNodeId(v) => write!(f, "Invalid NodeId value: {v}"),
+            Self::InvalidPayloadSize(v) => write!(f, "Invalid PayloadSize value: {v}"),
             Self::SliceConversion => write!(f, "Failed to convert slice to a fixed-size array"),
             Self::FrameTooLarge => write!(f, "Frame size exceeds maximum allowed MTU"),
             Self::NotReady => write!(f, "Device is not ready or configured"),
             Self::ObjectNotFound => write!(f, "The requested Object Dictionary index was not found"),
             Self::SubObjectNotFound => write!(f, "The requested sub-index was not found for this object"),
-            Self::TypeMismatch => write!(f, "The provided value's type does not match the object's type"),                        
-            Self::InvalidNodeId => write!(f, "The Node ID value is invalid"),
+            Self::TypeMismatch => write!(f, "The provided value's type does not match the object's type"), 
+            Self::InvalidEnumValue => write!(f, "A value in the frame is not a valid enum variant"),
         }
     }
 }

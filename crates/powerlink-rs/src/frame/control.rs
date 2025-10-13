@@ -135,7 +135,7 @@ impl TryFrom<u8> for RequestedServiceId {
             0x02 => Ok(Self::StatusRequest),
             0x03 => Ok(Self::NmtRequestInvite),
             0xFF => Ok(Self::UnspecifiedInvite),
-            _ => Err(PowerlinkError::InvalidFrame),
+            _ => Err(PowerlinkError::InvalidServiceId(value)),
         }
     }
 }
@@ -261,7 +261,7 @@ impl TryFrom<u8> for ServiceId {
             0x03 => Ok(Self::NmtRequest),
             0x04 => Ok(Self::NmtCommand),
             0x05 => Ok(Self::Sdo),
-            _ => Err(PowerlinkError::InvalidFrame),
+            _ => Err(PowerlinkError::InvalidServiceId(value)),
         }
     }
 }

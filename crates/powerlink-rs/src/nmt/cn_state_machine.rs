@@ -4,6 +4,7 @@ use crate::od::{ObjectDictionary, ObjectValue};
 use crate::PowerlinkError;
 use super::states::{NmtState, NmtEvent};
 use super::flags::FeatureFlags;
+use alloc::vec::Vec;
 
 /// Manages the NMT state for a Controlled Node.
 pub struct CnNmtStateMachine<'a> {
@@ -26,7 +27,7 @@ impl<'a> CnNmtStateMachine<'a> {
             .ok_or(PowerlinkError::ObjectNotFound)?;        
         // Dereference the Cow to access the inner ObjectValue.
         let node_id = if let ObjectValue::Unsigned8(val) = &*node_id_val {
-            NodeId::try_from(*val).map_err(|_| PowerlinkError::InvalidFrame)?
+            NodeId::try_from(*val)?
         } else {
             return Err(PowerlinkError::TypeMismatch);
         };
@@ -138,7 +139,7 @@ impl<'a> CnNmtStateMachine<'a> {
             
             // If no specific transition is defined, remain in the current state.
             (current, _) => {
-                errors.push(DllError::UnexpectedEventInState);
+                errors.push(DllError::UnexpectedEventInState { state: current as u8, event: event as u8 });
                 current
             },
         };
@@ -218,13 +219,16 @@ mod tests {
         nmt.run_internal_initialisation(); // -> NotActive
         assert_eq!(nmt.current_state, NmtState::NmtNotActive);
 
-        nmt.process_event(NmtEvent::EnterEplMode);
+        nmt.process_event(NmtEvent::SocSoAReceived);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational1);
 
-        nmt.process_event(NmtEvent::EnterEplMode);
+        nmt.process_event(NmtEvent::SocReceived);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
 
         nmt.process_event(NmtEvent::EnableReadyToOperate);
+        assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
+
+        nmt.process_event(NmtEvent::CnConfigurationComplete);
         assert_eq!(nmt.current_state, NmtState::NmtReadyToOperate);
 
         nmt.process_event(NmtEvent::StartNode);

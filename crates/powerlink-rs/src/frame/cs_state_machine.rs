@@ -62,14 +62,14 @@ impl DllCsStateMachine {
                     (DllCsState::WaitSoa, DllCsEvent::Soa) => DllCsState::WaitSoc,
                     // Accept the PReq frame and send a PRes frame, report error DLL_CEV_LOSS_SOC and DLL_CEV_LOSS_SOA
                     (DllCsState::WaitSoa, DllCsEvent::Preq) => {
-                        errors.push(DllError::LossOfSocThreshold);
-                        errors.push(DllError::LossOfSoaThreshold);
+                        errors.push(DllError::LossOfSoc);
+                        errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoc
                     },
                     // Synchronise to the next SoC, report error DLL_CEV_LOSS_SOC and DLL_CEV_LOSS_SOA
                     (DllCsState::WaitSoa, DllCsEvent::SocTimeout) => {
-                        errors.push(DllError::LossOfSocThreshold);
-                        errors.push(DllError::LossOfSoaThreshold);
+                        errors.push(DllError::LossOfSoc);
+                        errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoc
                     },
                     // --- (DLL_CT04) ---
@@ -77,22 +77,22 @@ impl DllCsStateMachine {
                     (DllCsState::WaitSoc, DllCsEvent::Asnd) => DllCsState::WaitSoc,
                     // Respond with PRes frame, report error DLL_CEV_LOSS_SOC
                     (DllCsState::WaitSoc, DllCsEvent::Preq) => {
-                        errors.push(DllError::LossOfSocThreshold);
+                        errors.push(DllError::LossOfSoc);
                         DllCsState::WaitSoc
                     },
                     // Report error DLL_CEV_LOSS_SOC
                     (DllCsState::WaitSoc, DllCsEvent::Pres) => {
-                        errors.push(DllError::LossOfSocThreshold);
+                        errors.push(DllError::LossOfSoc);
                         DllCsState::WaitSoc
                     },
                     // Report error DLL_CEV_LOSS_SOC
                     (DllCsState::WaitSoc, DllCsEvent::Soa) => {
-                        errors.push(DllError::LossOfSocThreshold);
+                        errors.push(DllError::LossOfSoc);
                         DllCsState::WaitSoc
                     },                    
                     // Report error DLL_CEV_LOSS_SOC
                     (DllCsState::WaitSoc, DllCsEvent::SocTimeout) => {
-                        errors.push(DllError::LossOfSocThreshold);
+                        errors.push(DllError::LossOfSoc);
                         DllCsState::WaitSoc
                     },
                     // --- (DLL_CT07) ---
@@ -100,30 +100,30 @@ impl DllCsStateMachine {
                     (DllCsState::WaitPreq, DllCsEvent::Pres) => DllCsState::WaitPreq,
                     // Report error DLL_CEV_LOSS_SOA
                     (DllCsState::WaitPreq, DllCsEvent::Asnd) => {
-                        errors.push(DllError::LossOfSoaThreshold);
+                        errors.push(DllError::LossOfSoa);
                         DllCsState::WaitPreq
                     }, 
                     // Synchronise to the cycle begin, report error DLL_CEV_LOSS_SOA
                     (DllCsState::WaitPreq, DllCsEvent::Soc) => {
-                        errors.push(DllError::LossOfSoaThreshold);
+                        errors.push(DllError::LossOfSoa);
                         DllCsState::WaitPreq
                     }, 
                     // --- (DLL_CT08) ---
                     // Process SoA, if invited, transmit a legal Ethernet frame
                     (DllCsState::WaitPreq, DllCsEvent::Soa) => {
-                        errors.push(DllError::LossOfPreqThreshold);
+                        errors.push(DllError::LossOfPreq);
                         DllCsState::WaitSoc
                     },
                     //  Synchronise on the next SoC, report error DLL_CEV_LOSS_SOC and DLL_CEV_LOSS_SOA
                     (DllCsState::WaitPreq, DllCsEvent::SocTimeout) => {
-                        errors.push(DllError::LossOfSocThreshold);
-                        errors.push(DllError::LossOfSoaThreshold);
+                        errors.push(DllError::LossOfSoc);
+                        errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoc
                     }, 
                     // --- (DLL_CT09) ---
                     // Synchronise on the SoC, report error DLL_CEV_LOSS_SOA
                     (DllCsState::WaitSoa, DllCsEvent::Soc) => {
-                        errors.push(DllError::LossOfSoaThreshold);
+                        errors.push(DllError::LossOfSoa);
                         DllCsState::WaitPreq
                     },
                     // --- (DLL_CT10) ---
@@ -131,7 +131,7 @@ impl DllCsStateMachine {
                     (DllCsState::WaitSoa, DllCsEvent::Pres) => DllCsState::WaitSoa,
                     // Report error DLL_CEV_LOSS_SOA 
                     (DllCsState::WaitSoa, DllCsEvent::Asnd) => {
-                        errors.push(DllError::LossOfSoaThreshold);
+                        errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoa
                     },                 
                     // --- (DLL_CT01) ---
@@ -142,7 +142,7 @@ impl DllCsStateMachine {
                     // If an unexpected event occurs, remain in the current state.
                     // Error reporting would be triggered here.
                     (current, _) => {
-                        errors.push(DllError::UnexpectedEventInState);
+                        errors.push(DllError::UnexpectedEventInState { state: current as u8, event: event as u8 });
                         current
                     },
                 };
@@ -197,7 +197,7 @@ mod tests {
         let op_state = NmtState::NmtOperational;
         sm.process_event(DllCsEvent::Soc, op_state); // -> WaitPreq
         let errors = sm.process_event(DllCsEvent::Soa, op_state);
-        assert_eq!(errors, Some(vec![DllError::LossOfPreqThreshold]));
+        assert_eq!(errors, Some(vec![DllError::LossOfPreq]));
         assert_eq!(sm.current_state(), DllCsState::WaitSoc);
     }
 
@@ -209,7 +209,7 @@ mod tests {
         sm.process_event(DllCsEvent::Preq, op_state);
         sm.process_event(DllCsEvent::Soa, op_state); // -> WaitSoc
         let errors = sm.process_event(DllCsEvent::Preq, op_state);
-        assert_eq!(errors,Some(vec![DllError::LossOfSocThreshold]));
+        assert_eq!(errors,Some(vec![DllError::LossOfSoc]));
         assert_eq!(sm.current_state(), DllCsState::WaitSoc);
     }
 
@@ -219,7 +219,7 @@ mod tests {
         let op_state = NmtState::NmtOperational;
         sm.process_event(DllCsEvent::Soc, op_state); // -> WaitPreq
         let errors = sm.process_event(DllCsEvent::SocTimeout, op_state);
-        assert_eq!(errors, Some(vec![DllError::LossOfSocThreshold, DllError::LossOfSoaThreshold]));
+        assert_eq!(errors, Some(vec![DllError::LossOfSoc, DllError::LossOfSoa]));
         assert_eq!(sm.current_state(), DllCsState::WaitSoc);
     }
 }
