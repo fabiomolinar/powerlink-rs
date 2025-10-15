@@ -44,3 +44,25 @@ The core implementation mirrors the functional layers defined in the EPSG DS 301
 ## Naming Conventions
 
 This crate tries to keep the Rust standard when creating names. However, where appropriate, it should document what are the names defined by the specification.
+
+## The Core Crate `powerlink-rs`
+
+### Key Modules & Responsibilities
+
+*`hal` defines the `NetworkInterface` trait, which is the contract for all platform-specific I/O crates. It also defines the primary `PowerlinkError` enum.
+*`types` contains primitive, globally relevant types (`NodeId`, `MessageType`, integer aliases) and protocol constants.
+*`common` contains more complex but globally used data structures like `NetTime` and `TimeOfDay`.
+*`frame` implements the Data Link Layer (DLL).
+    * `basic.rs`, `control.rs`, `poll.rs`: Define the structs for all POWERLINK frames.
+    * `codec.rs`: Provides the `Codec` trait and helper functions for serializing and deserializing frames.
+    * `cs_state_machine.rs`, `ms_state_machine.rs`: Implement the low-level cycle state machines (DLL_CS and DLL_MS).
+    * `error/`: Contains the complete DLL error handling logic, including the `ErrorHandler` trait and counter implementations.
+*`nmt` implements the high-level Network Management layer.
+    * `states.rs`: Defines the `NmtState` and `NmtEvent` enums.
+    * `cn_state_machine.rs`: Implements the state machine for a Controlled Node.
+    * `mn_state_machine.rs`: (Placeholder) for the Managing Node's state machine.
+    * `flags.rs`: Defines the `FeatureFlags` bitmask struct.
+*`od` implements the Object Dictionary.
+    * Uses an `ObjectEntry` struct to store metadata (like `AccessType`) alongside the `Object` data.
+    * The `read()` method uses `Cow<ObjectValue>` to efficiently return either a borrowed reference to existing data or an owned value for calculated data (like the length of an array at sub-index 0).
+*`pdo` & `sdo` currently placeholders for future implementation of Process Data Objects and Service Data Objects.
