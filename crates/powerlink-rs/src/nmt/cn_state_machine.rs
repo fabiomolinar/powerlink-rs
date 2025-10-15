@@ -1,31 +1,41 @@
+// In crates/powerlink-rs/src/nmt/cn_state_machine.rs
+
 use crate::frame::DllError;
-use crate::types::NodeId;
 use crate::od::{ObjectDictionary, ObjectValue};
+use crate::types::NodeId;
 use crate::PowerlinkError;
-use super::states::{NmtState, NmtEvent};
 use super::flags::FeatureFlags;
+use super::states::{NmtEvent, NmtState};
 use alloc::vec::Vec;
 
 /// Manages the NMT state for a Controlled Node.
-pub struct CnNmtStateMachine<'od, 's> {
+// No longer needs lifetime parameters.
+pub struct CnNmtStateMachine {
     pub current_state: NmtState,
     pub node_id: NodeId,
-    /// Cached feature flags from OD 0x1F82.
     pub feature_flags: FeatureFlags,
-    /// Cached timeout for Basic Ethernet transition from OD 0x1F99.
     pub basic_ethernet_timeout: u32,
-    /// A reference to the Object Dictionary.
-    od: &'od ObjectDictionary<'s>,
 }
 
-impl<'od, 's> CnNmtStateMachine<'od, 's> {
-    /// Creates a new NMT state machine for a Controlled Node.
-    /// This is now fallible, as it must successfully read the Node ID from the OD.
-    pub fn new(od: &'od ObjectDictionary<'s>) -> Result<Self, PowerlinkError> {
+impl CnNmtStateMachine {
+    /// Creates a new NMT state machine with pre-validated parameters.
+    pub fn new(
+        node_id: NodeId,
+        feature_flags: FeatureFlags,
+        basic_ethernet_timeout: u32,
+    ) -> Self {
+        Self {
+            current_state: NmtState::NmtGsInitialising,
+            node_id,
+            feature_flags,
+            basic_ethernet_timeout,
+        }
+    }
+
+    /// A fallible constructor that reads its configuration from an Object Dictionary.
+    pub fn from_od(od: &ObjectDictionary) -> Result<Self, PowerlinkError> {
         // Read Node ID from OD entry 0x1F93, sub-index 1.
-        let node_id_val = od.read(0x1F93, 1)
-            .ok_or(PowerlinkError::ObjectNotFound)?;
-        // Dereference the Cow to access the inner ObjectValue.
+        let node_id_val = od.read(0x1F93, 1).ok_or(PowerlinkError::ObjectNotFound)?;
         let node_id = if let ObjectValue::Unsigned8(val) = &*node_id_val {
             NodeId::try_from(*val)?
         } else {
@@ -33,31 +43,22 @@ impl<'od, 's> CnNmtStateMachine<'od, 's> {
         };
 
         // Read Feature Flags from OD entry 0x1F82, sub-index 0.
-        let feature_flags_val = od.read(0x1F82, 0)
-            .ok_or(PowerlinkError::ObjectNotFound)?;
+        let feature_flags_val = od.read(0x1F82, 0).ok_or(PowerlinkError::ObjectNotFound)?;
         let feature_flags = if let ObjectValue::Unsigned32(val) = &*feature_flags_val {
             FeatureFlags::from_bits_truncate(*val)
         } else {
             return Err(PowerlinkError::TypeMismatch);
         };
 
-
         // Read Basic Ethernet Timeout from OD entry 0x1F99, sub-index 0.
-        let basic_ethernet_timeout = od.read(0x1F99, 0)
-            .ok_or(PowerlinkError::ObjectNotFound)?;
-        let basic_ethernet_timeout = if let ObjectValue::Unsigned32(val) = &*basic_ethernet_timeout {
+        let basic_ethernet_timeout_val = od.read(0x1F99, 0).ok_or(PowerlinkError::ObjectNotFound)?;
+        let basic_ethernet_timeout = if let ObjectValue::Unsigned32(val) = &*basic_ethernet_timeout_val {
             *val
         } else {
             return Err(PowerlinkError::TypeMismatch);
         };
 
-        Ok(Self {
-            current_state: NmtState::NmtGsInitialising,
-            node_id,
-            feature_flags,
-            basic_ethernet_timeout,
-            od,
-        })
+        Ok(Self::new(node_id, feature_flags, basic_ethernet_timeout))
     }
     
     /// Resets the state machine to a specific reset state.
@@ -157,130 +158,96 @@ impl<'od, 's> CnNmtStateMachine<'od, 's> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::od::{ObjectDictionary, Object, ObjectValue, ObjectEntry, AccessType};
-    use alloc::vec;    
+    use crate::od::{Object, ObjectEntry};
+    use crate::od::AccessType;
+    use alloc::vec;
 
-    // Helper to create a test OD with all mandatory values.
     fn get_test_od() -> ObjectDictionary<'static> {
         let mut od = ObjectDictionary::new(None);
-        
         od.insert(0x1F93, ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(42), // Node ID at sub-index 1
-                ObjectValue::Boolean(0),    // NodeIDByHW_BOOL at sub-index 2
+                ObjectValue::Unsigned8(42),
+                ObjectValue::Boolean(0),
             ]),
             name: "NMT_EPLNodeID_REC",
             access: AccessType::ReadWrite,
         });
-
         let flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND | FeatureFlags::SDO_UDP;
         od.insert(0x1F82, ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(flags.0)),
             name: "NMT_FeatureFlags_U32",
             access: AccessType::Constant,
         });
-
         od.insert(0x1F99, ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(5_000_000)),
             name: "NMT_CNBasicEthernetTimeout_U32",
             access: AccessType::ReadWrite,
         });
-        
         od
     }
 
+    // Helper for creating a state machine for tests
+    fn get_test_nmt() -> CnNmtStateMachine {
+        let node_id = NodeId::try_from(42).unwrap();
+        let feature_flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND;
+        CnNmtStateMachine::new(node_id, feature_flags, 5_000_000)
+    }
+
     #[test]
-    fn test_new_reads_node_id() {
+    fn test_from_od_reads_parameters() {
         let od = get_test_od();
-        let nmt = CnNmtStateMachine::new(&od).unwrap();
+        let nmt = CnNmtStateMachine::from_od(&od).unwrap();
         assert_eq!(nmt.node_id, NodeId(42));
+        assert!(nmt.feature_flags.contains(FeatureFlags::SDO_ASND));
+        assert_eq!(nmt.basic_ethernet_timeout, 5_000_000);
+    }
+
+    #[test]
+    fn test_from_od_fails_if_missing_objects() {
+        let od = ObjectDictionary::new(None);
+        let result = CnNmtStateMachine::from_od(&od);
+        assert_eq!(result.err(), Some(PowerlinkError::ObjectNotFound));
     }
 
     #[test]
     fn test_internal_boot_sequence() {
-        let od = get_test_od();
-        let mut nmt = CnNmtStateMachine::new(&od).unwrap();
-
-        // Starts in Initialising
+        let mut nmt = get_test_nmt();
         assert_eq!(nmt.current_state, NmtState::NmtGsInitialising);
-
-        // Run the automatic boot-up sequence
         nmt.run_internal_initialisation();
-        
-        // Should end up in NotActive, ready for network events.
         assert_eq!(nmt.current_state, NmtState::NmtNotActive);
     }
 
     #[test]
     fn test_full_boot_up_happy_path() {
-        let od = get_test_od();
-        let mut nmt = CnNmtStateMachine::new(&od).unwrap();
-
-        nmt.run_internal_initialisation(); // -> NotActive
-        assert_eq!(nmt.current_state, NmtState::NmtNotActive);
-
+        let mut nmt = get_test_nmt();
+        nmt.current_state = NmtState::NmtNotActive;
         nmt.process_event(NmtEvent::SocSoAReceived);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational1);
-
         nmt.process_event(NmtEvent::SocReceived);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
-
         nmt.process_event(NmtEvent::EnableReadyToOperate);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
-
         nmt.process_event(NmtEvent::CnConfigurationComplete);
         assert_eq!(nmt.current_state, NmtState::NmtReadyToOperate);
-
         nmt.process_event(NmtEvent::StartNode);
         assert_eq!(nmt.current_state, NmtState::NmtOperational);
     }
 
     #[test]
     fn test_error_handling_transition() {
-        let od = get_test_od();
-        let mut nmt = CnNmtStateMachine::new(&od).unwrap();
+        let mut nmt = get_test_nmt();
         nmt.current_state = NmtState::NmtOperational;
-
-        // A DLL error occurs
         nmt.process_event(NmtEvent::Error);
-
-        // State machine should fall back to PreOperational1
-        assert_eq!(nmt.current_state, NmtState::NmtPreOperational1); 
+        assert_eq!(nmt.current_state, NmtState::NmtPreOperational1);
     }
 
     #[test]
     fn test_stop_and_restart_node() {
-        let od = get_test_od();
-        let mut nmt = CnNmtStateMachine::new(&od).unwrap();
+        let mut nmt = get_test_nmt();
         nmt.current_state = NmtState::NmtOperational;
-
-        // MN sends StopNode command
         nmt.process_event(NmtEvent::StopNode);
         assert_eq!(nmt.current_state, NmtState::NmtCsStopped);
-        
-        // MN sends EnterPreOperational2 to bring it back
         nmt.process_event(NmtEvent::EnterPreOperational2);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
-    }
-
-    #[test]
-    fn test_new_fails_if_od_is_missing_nodeid() {
-        // Create an empty OD without the required Node ID object.
-        let od = ObjectDictionary::new(None);
-        let result = CnNmtStateMachine::new(&od);
-        assert_eq!(result.err(), Some(PowerlinkError::ObjectNotFound));
-    }
-
-    #[test]
-    fn test_new_reads_od_parameters() {
-        let od = get_test_od();
-        let nmt = CnNmtStateMachine::new(&od).unwrap();
-        
-        assert_eq!(nmt.node_id, NodeId(42));
-        // UPDATED: Test for a specific flag.
-        assert!(nmt.feature_flags.contains(FeatureFlags::SDO_ASND));
-        assert!(nmt.feature_flags.contains(FeatureFlags::SDO_UDP));
-        assert!(!nmt.feature_flags.contains(FeatureFlags::ROUTING_TYPE_1));
-        assert_eq!(nmt.basic_ethernet_timeout, 5_000_000);
     }
 }

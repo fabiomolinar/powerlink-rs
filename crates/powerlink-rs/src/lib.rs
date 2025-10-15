@@ -9,6 +9,9 @@ pub mod types;
 pub mod hal;
 pub mod common;
 
+// --- Node Abstraction ---
+pub mod node;
+
 // --- Data Link Layer (DLL) ---
 pub mod frame;
 
