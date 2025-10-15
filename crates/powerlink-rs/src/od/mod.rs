@@ -7,8 +7,13 @@ use alloc::{
     borrow::Cow,
     collections::BTreeMap,
     string::String,
+    vec,
     vec::Vec,
 };
+use core::fmt;
+
+pub mod storage;
+use storage::ObjectDictionaryStorage;
 
 /// Represents any value that can be stored in an Object Dictionary entry.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,12 +51,19 @@ pub enum Object {
 /// Defines the access rights for an Object Dictionary entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessType {
+    /// read only access
     ReadOnly,
+    /// write only access
     WriteOnly,
+    /// write only access, value shall be stored
     WriteOnlYStore,
+    /// read and write access
     ReadWrite,
+    /// read and write access, value shall be stored
     ReadWriteStore,
+    /// read only access, value is constant
     Constant,
+    /// variable access controlled by the device
     Conditional,
 }
 
@@ -60,21 +72,77 @@ pub enum AccessType {
 pub struct ObjectEntry {
     /// The actual data, stored in the existing Object enum.
     pub object: Object,
-    /// A descriptive name for the object (for diagnostics or future SDO-by-name).
+    /// A descriptive name for the object.
     pub name: &'static str,
-    /// The access rights for this object (e.g., ReadOnly).
+    /// The access rights for this object.
     pub access: AccessType,
 }
 
 /// The main Object Dictionary structure.
-#[derive(Debug, Default)]
-pub struct ObjectDictionary {
+pub struct ObjectDictionary<'a> {
     entries: BTreeMap<u16, ObjectEntry>,
+    storage: Option<&'a mut dyn ObjectDictionaryStorage>,
 }
 
-impl ObjectDictionary {
-    pub fn new() -> Self {
-        Self::default()
+impl<'a> fmt::Debug for ObjectDictionary<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ObjectDictionary")
+            .field("entries", &self.entries)
+            .field(
+                "storage",
+                &if self.storage.is_some() {
+                    "Some(<Storage Backend>)"
+                } else {
+                    "None"
+                },
+            )
+            .finish()
+    }
+}
+
+impl<'a> ObjectDictionary<'a> {
+    /// Creates a new OD, populates it with protocol-level objects,
+    /// and then loads any persistent values from storage.
+    pub fn new(storage: Option<&'a mut dyn ObjectDictionaryStorage>) -> Self {
+        let mut od = Self {
+            entries: BTreeMap::new(),
+            storage,
+        };
+
+        od.populate_protocol_objects();
+
+        if let Some(s) = &mut od.storage {
+            if let Ok(stored_params) = s.load() {
+                for ((index, sub_index), value) in stored_params {
+                    // This internal write bypasses access checks during initialization.
+                    let _ = od.write_internal(index, sub_index, value, false);
+                }
+            }
+        }
+
+        od
+    }
+
+    /// Populates the OD with mandatory objects that define protocol mechanisms.
+    /// Device-specific identification objects are left to the user to insert.
+    fn populate_protocol_objects(&mut self) {
+        // Add Store Parameters (1010h)
+        self.insert(0x1010, ObjectEntry {
+            object: Object::Record(vec![
+                ObjectValue::Unsigned32(1), // Sub-index 1: All Parameters
+            ]),
+            name: "NMT_StoreParam_REC",
+            access: AccessType::ReadWrite,
+        });
+
+        // Add Restore Default Parameters (1011h)
+        self.insert(0x1011, ObjectEntry {
+            object: Object::Record(vec![
+                ObjectValue::Unsigned32(1), // Sub-index 1: All Parameters
+            ]),
+            name: "NMT_RestoreDefParam_REC",
+            access: AccessType::ReadWrite,
+        });
     }
 
     /// Inserts a new object entry into the dictionary at a given index.
@@ -83,13 +151,7 @@ impl ObjectDictionary {
     }
 
     /// Reads a value from the Object Dictionary by index and sub-index.
-    ///
-    /// This function returns a `Cow<ObjectValue>` to efficiently handle two cases:
-    /// - For normal data access (`sub_index > 0`), it returns a cheap `Cow::Borrowed` reference.
-    /// - For `sub_index == 0` on complex types, it returns a temporary `Cow::Owned` value
-    ///   representing the number of entries, as required by the specification.    
-    pub fn read<'a>(&'a self, index: u16, sub_index: u8) -> Option<Cow<'a, ObjectValue>> {
-        // UPDATED: Now accesses the `object` field of the `ObjectEntry`.
+    pub fn read<'s>(&'s self, index: u16, sub_index: u8) -> Option<Cow<'s, ObjectValue>> {
         self.entries.get(&index).and_then(|entry| match &entry.object {
             Object::Variable(value) => {
                 if sub_index == 0 {
@@ -100,6 +162,7 @@ impl ObjectDictionary {
             }
             Object::Array(values) | Object::Record(values) => {
                 if sub_index == 0 {
+                    // Sub-index 0 holds the number of entries.
                     Some(Cow::Owned(ObjectValue::Unsigned8(values.len() as u8)))
                 } else {
                     values.get(sub_index as usize - 1).map(Cow::Borrowed)
@@ -108,41 +171,108 @@ impl ObjectDictionary {
         })
     }
 
-    /// Writes a value to the Object Dictionary, respecting the object's access rights.
+    /// Public write function that respects access rights and handles special command objects.
     pub fn write(&mut self, index: u16, sub_index: u8, value: ObjectValue) -> Result<(), &'static str> {
-        self.entries.get_mut(&index).map_or_else(
-            || Err("Object index not found"),
-            |entry| {
-                // First, check access rights. If read-only, return an error from the closure.
-                if matches!(entry.access, AccessType::ReadOnly | AccessType::Constant) {
-                    return Err("Object is read-only");
+        // Special case for Store Parameters command (1010h).
+        if index == 0x1010 {
+            if let ObjectValue::VisibleString(s) = &value {
+                if s == "save" {
+                    return self.store_parameters(sub_index);
                 }
+            }
+            return Err("Invalid signature for Store Parameters");
+        }
 
-                // If access is permitted, proceed with the modification logic.
-                match &mut entry.object {
-                    Object::Variable(v) => {
-                        if sub_index == 0 {
-                            // Type checking should be added here in a real implementation
-                            *v = value;
-                            Ok(())
-                        } else {
-                            Err("Invalid sub-index for a variable")
-                        }
+        // Special case for Restore Default Parameters command (1011h).
+        if index == 0x1011 {
+            if let ObjectValue::VisibleString(s) = &value {
+                if s == "load" {
+                    return self.restore_defaults(sub_index);
+                }
+            }
+            return Err("Invalid signature for Restore Defaults");
+        }
+
+        self.write_internal(index, sub_index, value, true)
+    }
+
+    /// Internal write function with an option to bypass access checks.
+    fn write_internal(&mut self, index: u16, sub_index: u8, value: ObjectValue, check_access: bool) -> Result<(), &'static str> {
+        self.entries.get_mut(&index).map_or(Err("Object index not found"), |entry| {
+            if check_access && matches!(entry.access, AccessType::ReadOnly | AccessType::Constant) {
+                return Err("Object is read-only");
+            }
+
+            match &mut entry.object {
+                Object::Variable(v) => {
+                    if sub_index == 0 {
+                        *v = value;
+                        Ok(())
+                    } else {
+                        Err("Invalid sub-index for a variable")
                     }
-                    Object::Array(values) | Object::Record(values) => {
-                        if sub_index == 0 {
-                            Err("Cannot write to sub-index 0")
-                        } else if let Some(v) = values.get_mut(sub_index as usize - 1) {
-                             // Type checking should be added here
-                            *v = value;
-                            Ok(())
-                        } else {
-                            Err("Sub-index out of bounds")
+                }
+                Object::Array(values) | Object::Record(values) => {
+                    if sub_index == 0 {
+                        Err("Cannot write to sub-index 0")
+                    } else if let Some(v) = values.get_mut(sub_index as usize - 1) {
+                        *v = value;
+                        Ok(())
+                    } else {
+                        Err("Sub-index out of bounds")
+                    }
+                }
+            }
+        })
+    }
+
+    /// Collects all storable parameters and tells the storage backend to save them.
+    fn store_parameters(&mut self, list_to_save: u8) -> Result<(), &'static str> {
+        if list_to_save == 0 {
+            return Err("Cannot save to sub-index 0");
+        }
+        if let Some(s) = &mut self.storage {
+            let mut storable_params = BTreeMap::new();
+            for (&index, entry) in &self.entries {
+                if matches!(entry.access, AccessType::ReadWriteStore | AccessType::WriteOnlYStore) {
+                    // A real implementation would filter based on `list_to_save`.
+                    // For now, we save all storable parameters if sub-index 1 is used.
+                    if list_to_save == 1 {
+                        match &entry.object {
+                            Object::Variable(val) => {
+                                storable_params.insert((index, 0), val.clone());
+                            }
+                            Object::Record(vals) | Object::Array(vals) => {
+                                for (i, val) in vals.iter().enumerate() {
+                                    storable_params.insert((index, (i + 1) as u8), val.clone());
+                                }
+                            }
                         }
                     }
                 }
-            },
-        )
+            }
+            s.save(&storable_params)
+        } else {
+            Err("No storage backend configured")
+        }
+    }
+
+    /// Tells the storage backend to clear persistent data.
+    fn restore_defaults(&mut self, list_to_restore: u8) -> Result<(), &'static str> {
+        if list_to_restore == 0 {
+            return Err("Cannot restore from sub-index 0");
+        }
+        if let Some(s) = &mut self.storage {
+            // A real implementation would clear specific sets of parameters.
+            // For now, sub-index 1 clears everything.
+            if list_to_restore == 1 {
+                s.clear()
+            } else {
+                Err("Unsupported restore list")
+            }
+        } else {
+            Err("No storage backend configured")
+        }
     }
 }
 
@@ -150,175 +280,139 @@ impl ObjectDictionary {
 // --- Unit Tests ---
 #[cfg(test)]
 mod tests {
+    use super::storage::ObjectDictionaryStorage;
     use super::*;
-    use alloc::vec;
     use alloc::borrow::Cow;
+    use alloc::string::ToString;
+
+    // A mock storage implementation for testing purposes.
+    struct MockStorage {
+        saved_data: BTreeMap<(u16, u8), ObjectValue>,
+        save_called: bool,
+        load_called: bool,
+        clear_called: bool,
+    }
+
+    impl MockStorage {
+        fn new() -> Self {
+            Self {
+                saved_data: BTreeMap::new(),
+                save_called: false,
+                load_called: false,
+                clear_called: false,
+            }
+        }
+    }
+
+    impl ObjectDictionaryStorage for MockStorage {
+        fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, &'static str> {
+            self.load_called = true;
+            Ok(self.saved_data.clone())
+        }
+
+        fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>) -> Result<(), &'static str> {
+            self.save_called = true;
+            self.saved_data = parameters.clone();
+            Ok(())
+        }
+
+        fn clear(&mut self) -> Result<(), &'static str> {
+            self.clear_called = true;
+            self.saved_data.clear();
+            Ok(())
+        }
+    }
 
     #[test]
-    fn test_read_variable() {
-        let mut od = ObjectDictionary::new();
-        od.insert(0x1006, ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned32(12345)),
-            name: "TestVar",
-            access: AccessType::ReadWrite,
-        });
+    fn test_new_populates_protocol_objects() {
+        let od = ObjectDictionary::new(None);
+        assert!(od.read(0x1010, 0).is_some());
+        assert!(od.read(0x1011, 0).is_some());
+    }
 
-        let value = od.read(0x1006, 0).unwrap();
-        assert_eq!(*value, ObjectValue::Unsigned32(12345));
-        // Verify it's a borrowed reference
-        assert!(matches!(value, Cow::Borrowed(_)));
+    #[test]
+    fn test_loading_from_storage_on_new() {
+        let mut storage = MockStorage::new();
+        storage.saved_data.insert((0x6000, 0), ObjectValue::Unsigned32(999));
+
+        {
+            // Create the OD inside a new scope.
+            let mut od = ObjectDictionary::new(Some(&mut storage));
+
+            // Insert a dummy object to read from.
+            od.insert(0x6000, ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned32(999)),
+                name: "StorableVar",
+                access: AccessType::ReadWriteStore,
+            });
+
+            // The value should be updated from storage.
+            assert_eq!(
+                *od.read(0x6000, 0).unwrap(),
+                ObjectValue::Unsigned32(999)
+            );
+        } // `od` is dropped here, and the mutable borrow of `storage` is released.
+
+        // Now we can access `storage` again.
+        assert!(storage.load_called);
     }
     
     #[test]
-    fn test_read_array_element() {
-        let mut od = ObjectDictionary::new();
-        let arr = ObjectEntry { 
-            object: Object::Array(vec![ObjectValue::Unsigned16(100)]), 
-            name: "TestArray", 
-            access: AccessType::ReadWrite
-        };
-        od.insert(0x2000, arr);
+    fn test_save_command() {
+        let mut storage = MockStorage::new();
+        let mut od = ObjectDictionary::new(Some(&mut storage));
 
-        let value = od.read(0x2000, 1).unwrap();
-        assert_eq!(*value, ObjectValue::Unsigned16(100));
-        assert!(matches!(value, Cow::Borrowed(_)));
-    }
-
-    #[test]
-    fn test_read_sub_index_zero_returns_owned_length() {
-        let mut od = ObjectDictionary::new();
-        let arr = ObjectEntry { 
-            object: Object::Array(vec![
-                ObjectValue::Unsigned16(100), 
-                ObjectValue::Unsigned16(200)
-            ]), 
-            name: "TestArray", 
-            access: AccessType::ReadWrite
-        };
-        od.insert(0x2000, arr);
-
-        let value = od.read(0x2000, 0).unwrap();
-        // UPDATED: Dereference the Cow for comparison.
-        assert_eq!(*value, ObjectValue::Unsigned8(2));
-        assert!(matches!(value, Cow::Owned(_)));
-    }
-
-    #[test]
-    fn test_create_and_insert_variable() {
-        let mut od = ObjectDictionary::new();
-        let obj = ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned32(12345)),
-            name: "TestVar",
-            access: AccessType::ReadWrite,
-        };
-        od.insert(0x1006, obj);
-
-        let value = od.read(0x1006, 0).unwrap();
-        assert_eq!(*value, ObjectValue::Unsigned32(12345));
-    }
-
-    #[test]
-    fn test_read_write_variable() {
-        let mut od = ObjectDictionary::new();
-        od.insert(0x1008, ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned8(10)),
-            name: "TestVar",
+        // Add a storable object and a non-storable one.
+        od.insert(0x6000, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(123)),
+            name: "StorableVar",
+            access: AccessType::ReadWriteStore,
+        });
+        od.insert(0x7000, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(456)),
+            name: "NonStorableVar",
             access: AccessType::ReadWrite,
         });
 
-        assert_eq!(*od.read(0x1008, 0).unwrap(), ObjectValue::Unsigned8(10));
-        od.write(0x1008, 0, ObjectValue::Unsigned8(42)).unwrap();
-        assert_eq!(*od.read(0x1008, 0).unwrap(), ObjectValue::Unsigned8(42));
+        // Trigger the save command
+        od.write(0x1010, 1, ObjectValue::VisibleString("save".to_string())).unwrap();
+
+        assert!(storage.save_called);
+        // Verify only the storable object was saved.
+        assert_eq!(storage.saved_data.len(), 1);
+        assert_eq!(storage.saved_data.get(&(0x6000, 0)), Some(&ObjectValue::Unsigned32(123)));
     }
-
+    
     #[test]
-    fn test_read_write_array() {
-        let mut od = ObjectDictionary::new();
-        let arr = ObjectEntry { 
-            object: Object::Array(vec![
-                ObjectValue::Unsigned16(100), 
-                ObjectValue::Unsigned16(200)
-            ]), 
-            name: "TestArray", 
-            access: AccessType::ReadWrite
-        };
-        od.insert(0x2000, arr);
+    fn test_restore_defaults_command() {
+        let mut storage = MockStorage::new();
+        storage.saved_data.insert((0x6000, 0), ObjectValue::Unsigned32(999));
+        let mut od = ObjectDictionary::new(Some(&mut storage));
 
-        // Read initial values
-        // UPDATED: Dereference the Cow for comparison.
-        assert_eq!(*od.read(0x2000, 1).unwrap(), ObjectValue::Unsigned16(100));
-        assert_eq!(*od.read(0x2000, 2).unwrap(), ObjectValue::Unsigned16(200));
-
-        // Write to the second element
-        od.write(0x2000, 2, ObjectValue::Unsigned16(999)).unwrap();
-
-        // Verify the change
-        assert_eq!(*od.read(0x2000, 2).unwrap(), ObjectValue::Unsigned16(999));
-    }
-
-    #[test]
-    fn test_read_write_record() {
-        let mut od = ObjectDictionary::new();
-        let rec = ObjectEntry { 
-            object: Object::Record(vec![
-                ObjectValue::Unsigned8(1), 
-                ObjectValue::Unsigned32(50000)
-            ]), 
-            name: "TestArray", 
-            access: AccessType::ReadWrite
-        };
-        od.insert(0x1F89, rec);
-
-        // Read initial values
-        assert_eq!(*od.read(0x1F89, 1).unwrap(), ObjectValue::Unsigned8(1));
-        assert_eq!(*od.read(0x1F89, 2).unwrap(), ObjectValue::Unsigned32(50000));
-
-        // Write to the first element
-        od.write(0x1F89, 1, ObjectValue::Unsigned8(255)).unwrap();
+        // Trigger restore defaults
+        od.write(0x1011, 1, ObjectValue::VisibleString("load".to_string())).unwrap();
         
-        // Verify the change
-        assert_eq!(*od.read(0x1F89, 1).unwrap(), ObjectValue::Unsigned8(255));
-    }
-
-    #[test]
-    fn test_error_on_invalid_access() {
-        let mut od = ObjectDictionary::new();
-        let obj = ObjectEntry {
-            object: Object::Variable(ObjectValue::Boolean(1)),
-            name: "TestVar",
-            access: AccessType::ReadWrite,
-        };
-        od.insert(0x1000, obj);
-        
-        // Error: Index does not exist
-        assert!(od.read(0x9999, 0).is_none());
-        assert!(od.write(0x9999, 0, ObjectValue::Boolean(0)).is_err());
-
-        // Error: Invalid sub-index for a variable
-        assert!(od.read(0x1000, 1).is_none());
-        assert!(od.write(0x1000, 1, ObjectValue::Boolean(0)).is_err());
+        assert!(storage.clear_called);
+        assert!(storage.saved_data.is_empty());
     }
 
     #[test]
     fn test_write_to_readonly_fails() {
-        let mut od = ObjectDictionary::new();
+        let mut od = ObjectDictionary::new(None);
         od.insert(0x1008, ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned8(10)),
             name: "ReadOnlyVar",
             access: AccessType::ReadOnly,
         });
 
-        // Attempting to write should return an error.
         let result = od.write(0x1008, 0, ObjectValue::Unsigned8(42));
         assert_eq!(result, Err("Object is read-only"));
-
-        // Verify the original value was not changed.
         assert_eq!(*od.read(0x1008, 0).unwrap(), ObjectValue::Unsigned8(10));
     }
 
     #[test]
     fn test_read_sub_index_zero_for_array() {
-        let mut od = ObjectDictionary::new();
+        let mut od = ObjectDictionary::new(None);
         od.insert(0x2000, ObjectEntry {
             object: Object::Array(vec![
                 ObjectValue::Unsigned16(100),

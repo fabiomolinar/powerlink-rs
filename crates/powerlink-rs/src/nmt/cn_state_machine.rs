@@ -7,7 +7,7 @@ use super::flags::FeatureFlags;
 use alloc::vec::Vec;
 
 /// Manages the NMT state for a Controlled Node.
-pub struct CnNmtStateMachine<'a> {
+pub struct CnNmtStateMachine<'od, 's> {
     pub current_state: NmtState,
     pub node_id: NodeId,
     /// Cached feature flags from OD 0x1F82.
@@ -15,16 +15,16 @@ pub struct CnNmtStateMachine<'a> {
     /// Cached timeout for Basic Ethernet transition from OD 0x1F99.
     pub basic_ethernet_timeout: u32,
     /// A reference to the Object Dictionary.
-    od: &'a ObjectDictionary,
+    od: &'od ObjectDictionary<'s>,
 }
 
-impl<'a> CnNmtStateMachine<'a> {
+impl<'od, 's> CnNmtStateMachine<'od, 's> {
     /// Creates a new NMT state machine for a Controlled Node.
     /// This is now fallible, as it must successfully read the Node ID from the OD.
-    pub fn new(od: &'a ObjectDictionary) -> Result<Self, PowerlinkError> {
+    pub fn new(od: &'od ObjectDictionary<'s>) -> Result<Self, PowerlinkError> {
         // Read Node ID from OD entry 0x1F93, sub-index 1.
         let node_id_val = od.read(0x1F93, 1)
-            .ok_or(PowerlinkError::ObjectNotFound)?;        
+            .ok_or(PowerlinkError::ObjectNotFound)?;
         // Dereference the Cow to access the inner ObjectValue.
         let node_id = if let ObjectValue::Unsigned8(val) = &*node_id_val {
             NodeId::try_from(*val)?
@@ -161,8 +161,8 @@ mod tests {
     use alloc::vec;    
 
     // Helper to create a test OD with all mandatory values.
-    fn get_test_od() -> ObjectDictionary {
-        let mut od = ObjectDictionary::new();
+    fn get_test_od() -> ObjectDictionary<'static> {
+        let mut od = ObjectDictionary::new(None);
         
         od.insert(0x1F93, ObjectEntry {
             object: Object::Record(vec![
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn test_new_fails_if_od_is_missing_nodeid() {
         // Create an empty OD without the required Node ID object.
-        let od = ObjectDictionary::new();
+        let od = ObjectDictionary::new(None);
         let result = CnNmtStateMachine::new(&od);
         assert_eq!(result.err(), Some(PowerlinkError::ObjectNotFound));
     }
