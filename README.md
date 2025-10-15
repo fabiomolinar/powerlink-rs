@@ -37,12 +37,12 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
   - Focus: Implementing the lowest-level structures and serialization/deserialization logic.
   - Key Features (DS-301): Definition of basic types (Node ID, data sizes), frame construction/parsing (Ethernet II, POWERLINK basic frame format), and handling of fundamental control frames (SoC, SoA) and data frames (PReq, PRes).
   - Success Metric: The crate can accurately generate and parse raw byte arrays corresponding to basic POWERLINK frames.
-  - Status: In development.
+  - Status: First draft finished.
 - Phase 2: Object Dictionary and Basic Network Management (NMT):
   - Focus: Core configuration logic and device identification.
   - Key Features (DS-301): Implementation of the Object Dictionary (OD) structure (Index and Sub-Index usage), defining mandatory NMT objects (e.g., identity object 1018h, NMT features 1F82h, EPL version 1F83h), and implementing the fundamental NMT State Machines (Common, MN, and CN states, e.g., NMT_CS_NOT_ACTIVE to NMT_CS_OPERATIONAL).
   - Success Metric: The device can maintain internal NMT state correctly and respond to simulated NMT state commands.
-  - Status: Not started.
+  - Status: In development.
 - Phase 3: Service Data Object (SDO) Communication:
   - Focus: Reliable, asynchronous configuration and diagnostic access over ASnd frames.
   - Key Features (DS-301): Implementation of the SDO Command Layer Protocol (e.g., Read/Write by Index requests), the SDO Sequence Layer (for reliability), and integration for transfer via the mandatory ASnd frame (Method 2, signaled by NMT_FeatureFlags_U32 Bit 2).
