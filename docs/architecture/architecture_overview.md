@@ -26,7 +26,7 @@ To the extent possible, this crate will try to avoid adding other crates as depe
 
 To decouple the core protocol logic from the physical network interface, a Hardware Abstraction Layer (HAL) approach is mandated.
 
-- **HAL Trait Definition:** The core `powerlink-rs` crate defines a Rust trait for low-level I/O, abstracting functions such as `send_raw_frame` and `receive_raw_frame`.
+- **HAL Trait Definition:** The core `powerlink-rs` crate defines a Rust trait for low-level I/O, abstracting functions such as `send_frame` and `receive_frame`.
 - **Platform Implementation:** The platform-specific crates (e.g., `powerlink-io-windows`) are responsible for implementing this **core HAL**, utilizing platform-native APIs (such as raw sockets or specialized bindings like WinPcap/Npcap on Windows) to handle raw Ethernet packet interaction.
 
 ## Internal Protocol Layering and Code Modules
@@ -49,7 +49,11 @@ This crate tries to keep the Rust standard when creating names. However, where a
 
 ### Key Modules & Responsibilities
 
-*`hal` defines the `NetworkInterface` trait, which is the contract for all platform-specific I/O crates. It also defines the primary `PowerlinkError` enum.
+*`hal` defines the `NetworkInterface` trait, which is the contract for all platform-specific I/O crates. It also defines the primary `PowerlinkError` enum. The trait contains the following methods:
+    * `send_frame`: Sends a raw Ethernet frame (including Ethernet header) over the network.
+    * `receive_frame`: Attempts to receive a single raw Ethernet frame into the provided buffer.
+    * `local_node_id`: Returns the Node ID assigned to this local device.
+    * `local_mac_address`: Returns the local MAC address of the interface.
 *`types` contains primitive, globally relevant types (`NodeId`, `MessageType`, integer aliases) and protocol constants.
 *`common` contains more complex but globally used data structures like `NetTime` and `TimeOfDay`.
 *`frame` implements the Data Link Layer (DLL).
@@ -65,4 +69,5 @@ This crate tries to keep the Rust standard when creating names. However, where a
 *`od` implements the Object Dictionary.
     * Uses an `ObjectEntry` struct to store metadata (like `AccessType`) alongside the `Object` data.
     * The `read()` method uses `Cow<ObjectValue>` to efficiently return either a borrowed reference to existing data or an owned value for calculated data (like the length of an array at sub-index 0).
-*`pdo` & `sdo` currently placeholders for future implementation of Process Data Objects and Service Data Objects.
+*`pdo` contains a basic implementation for `PayloadSize`.
+*`sdo` is a placeholder for the future implementation of Service Data Objects.
