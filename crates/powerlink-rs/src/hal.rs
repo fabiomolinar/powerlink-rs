@@ -44,6 +44,8 @@ pub enum PowerlinkError {
     TypeMismatch,
     /// An error occurred in the storage backend.
     StorageError(&'static str),
+    /// A mandatory object was missing from the Object Dictionary during validation.
+    ValidationError(&'static str),
 }
 
 impl fmt::Display for PowerlinkError {
@@ -67,6 +69,7 @@ impl fmt::Display for PowerlinkError {
             Self::TypeMismatch => write!(f, "The provided value's type does not match the object's type"), 
             Self::InvalidEnumValue => write!(f, "A value in the frame is not a valid enum variant"),
             Self::StorageError(s) => write!(f, "Storage error: {}", s),
+            Self::ValidationError(s) => write!(f, "OD Validation Error: {}", s),
         }
     }
 }
@@ -136,6 +139,8 @@ pub trait NetworkInterface {
 }
 
 /// A trait for abstracting the non-volatile storage of OD parameters.
+/// This abstraction is crucial for the "Restore Defaults" functionality,
+/// which must persist across device reboots.
 pub trait ObjectDictionaryStorage {
     /// Loads storable parameters from non-volatile memory.
     /// Returns a map of (Index, SubIndex) -> Value.
@@ -144,7 +149,18 @@ pub trait ObjectDictionaryStorage {
     /// Saves the given storable parameters to non-volatile memory.
     fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>) -> Result<(), &'static str>;
     
-    /// Clears all stored parameters, forcing a load of defaults on next boot.
+    /// Clears all stored parameters from non-volatile memory.
     fn clear(&mut self) -> Result<(), &'static str>;
-}
 
+    /// Checks if a "Restore Defaults" operation has been requested and is pending a reboot.
+    /// This should check for a persistent flag set by `request_restore_defaults`.
+    fn is_restore_requested(&mut self) -> Result<bool, &'static str>;
+
+    /// Sets a persistent flag to indicate that defaults should be restored on the next boot.
+    /// This is called when the "load" signature is written to OD entry 0x1011.
+    fn request_restore_defaults(&mut self) -> Result<(), &'static str>;
+
+    /// Clears the persistent "Restore Defaults" flag. This should be called
+    /// after the restore operation has been completed on boot.
+    fn clear_restore_request(&mut self) -> Result<(), &'static str>;
+}

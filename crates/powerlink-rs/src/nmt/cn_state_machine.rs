@@ -9,7 +9,6 @@ use super::states::{NmtEvent, NmtState};
 use alloc::vec::Vec;
 
 /// Manages the NMT state for a Controlled Node.
-// No longer needs lifetime parameters.
 pub struct CnNmtStateMachine {
     pub current_state: NmtState,
     pub node_id: NodeId,
@@ -62,7 +61,7 @@ impl CnNmtStateMachine {
     }
     
     /// Resets the state machine to a specific reset state.
-    pub fn reset(&mut self, event: NmtEvent) {
+    pub fn reset(&mut self, event: NmtEvent, od: &mut ObjectDictionary) {
         match event {
             NmtEvent::Reset => self.current_state = NmtState::NmtGsInitialising,
             NmtEvent::ResetNode => self.current_state = NmtState::NmtGsResetApplication,
@@ -70,11 +69,13 @@ impl CnNmtStateMachine {
             NmtEvent::ResetConfiguration => self.current_state = NmtState::NmtGsResetConfiguration,
             _ => {}, // Ignore other events
         }
+        // After any reset, update the OD.
+        self.update_od_state(od);
     }
 
     /// Handles automatic, internal state transitions that don't require an external event.
     /// This should be called in a loop after `process_event`.
-    pub fn run_internal_initialisation(&mut self) {
+    pub fn run_internal_initialisation(&mut self, od: &mut ObjectDictionary) {
         let mut transition = true;
         while transition {
             let next_state = match self.current_state {
@@ -93,11 +94,12 @@ impl CnNmtStateMachine {
                 }
             };
             self.current_state = next_state;
+            self.update_od_state(od);
         }
     }
 
     /// Processes an external event and transitions the NMT state accordingly.
-    pub fn process_event(&mut self, event: NmtEvent) -> Option<Vec<DllError>> {
+    pub fn process_event(&mut self, event: NmtEvent, od: &mut ObjectDictionary) -> Option<Vec<DllError>> {
         let mut errors: Vec<DllError> = Vec::new();
         let next_state = match (self.current_state, event) {
             // --- Reset and Initialisation Transitions ---
@@ -144,13 +146,22 @@ impl CnNmtStateMachine {
                 current
             },
         };
-        self.current_state = next_state;
+        if self.current_state != next_state {
+            self.current_state = next_state;
+            self.update_od_state(od);
+        }
 
         if errors.is_empty() {
             None
         } else {
             Some(errors)
         }
+    }
+
+    /// Writes the current NMT state to the Object Dictionary (Index 0x1F8C).
+    fn update_od_state(&self, od: &mut ObjectDictionary) {
+        // This write is internal and should not fail. `unwrap` is acceptable here.
+        od.write_internal(0x1F8C, 0, ObjectValue::Unsigned8(self.current_state as u8), false).unwrap();
     }
 }
 
@@ -183,6 +194,11 @@ mod tests {
             name: "NMT_CNBasicEthernetTimeout_U32",
             access: AccessType::ReadWrite,
         });
+        od.insert(0x1F8C, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned8(0)),
+            name: "NMT_CurrNMTState_U8",
+            access: AccessType::ReadOnly,
+        });
         od
     }
 
@@ -210,44 +226,51 @@ mod tests {
     }
 
     #[test]
-    fn test_internal_boot_sequence() {
+    fn test_internal_boot_sequence_updates_od() {
         let mut nmt = get_test_nmt();
+        let mut od = get_test_od();
         assert_eq!(nmt.current_state, NmtState::NmtGsInitialising);
-        nmt.run_internal_initialisation();
+        nmt.run_internal_initialisation(&mut od);
         assert_eq!(nmt.current_state, NmtState::NmtNotActive);
+        assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtNotActive as u8));
     }
 
     #[test]
     fn test_full_boot_up_happy_path() {
         let mut nmt = get_test_nmt();
+        let mut od = get_test_od();
         nmt.current_state = NmtState::NmtNotActive;
-        nmt.process_event(NmtEvent::SocSoAReceived);
+        nmt.process_event(NmtEvent::SocSoAReceived, &mut od);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational1);
-        nmt.process_event(NmtEvent::SocReceived);
+        nmt.process_event(NmtEvent::SocReceived, &mut od);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
-        nmt.process_event(NmtEvent::EnableReadyToOperate);
+        nmt.process_event(NmtEvent::EnableReadyToOperate, &mut od);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
-        nmt.process_event(NmtEvent::CnConfigurationComplete);
+        nmt.process_event(NmtEvent::CnConfigurationComplete, &mut od);
         assert_eq!(nmt.current_state, NmtState::NmtReadyToOperate);
-        nmt.process_event(NmtEvent::StartNode);
+        nmt.process_event(NmtEvent::StartNode, &mut od);
         assert_eq!(nmt.current_state, NmtState::NmtOperational);
+        assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtOperational as u8));
     }
 
     #[test]
     fn test_error_handling_transition() {
         let mut nmt = get_test_nmt();
+        let mut od = get_test_od();
         nmt.current_state = NmtState::NmtOperational;
-        nmt.process_event(NmtEvent::Error);
+        nmt.process_event(NmtEvent::Error, &mut od);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational1);
+        assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtPreOperational1 as u8));
     }
 
     #[test]
     fn test_stop_and_restart_node() {
         let mut nmt = get_test_nmt();
+        let mut od = get_test_od();
         nmt.current_state = NmtState::NmtOperational;
-        nmt.process_event(NmtEvent::StopNode);
+        nmt.process_event(NmtEvent::StopNode, &mut od);
         assert_eq!(nmt.current_state, NmtState::NmtCsStopped);
-        nmt.process_event(NmtEvent::EnterPreOperational2);
+        nmt.process_event(NmtEvent::EnterPreOperational2, &mut od);
         assert_eq!(nmt.current_state, NmtState::NmtPreOperational2);
     }
 }
