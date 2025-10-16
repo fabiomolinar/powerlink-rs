@@ -267,13 +267,111 @@ impl<'a> ObjectDictionary<'a> {
 mod tests {
     use super::*;
     use crate::hal::ObjectDictionaryStorage;
+    use alloc::string::ToString;
     
-    struct MockStorage { saved_data: BTreeMap<(u16, u8), ObjectValue>, load_called: bool }
-    impl MockStorage { fn new() -> Self { Self { saved_data: BTreeMap::new(), load_called: false } } }
+    struct MockStorage { 
+        saved_data: BTreeMap<(u16, u8), ObjectValue>, 
+        save_called: bool,
+        load_called: bool,
+        clear_called: bool,
+    }
+    impl MockStorage { 
+        fn new() -> Self { 
+            Self { 
+                saved_data: BTreeMap::new(), 
+                save_called: false,
+                load_called: false,
+                clear_called: false,
+            } 
+        } 
+    }
     impl ObjectDictionaryStorage for MockStorage {
         fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, &'static str> { self.load_called = true; Ok(self.saved_data.clone()) }
-        fn save(&mut self, params: &BTreeMap<(u16, u8), ObjectValue>) -> Result<(), &'static str> { self.saved_data = params.clone(); Ok(()) }
-        fn clear(&mut self) -> Result<(), &'static str> { self.saved_data.clear(); Ok(()) }
+        fn save(&mut self, params: &BTreeMap<(u16, u8), ObjectValue>) -> Result<(), &'static str> { self.save_called = true; self.saved_data = params.clone(); Ok(()) }
+        fn clear(&mut self) -> Result<(), &'static str> { self.clear_called = true; self.saved_data.clear(); Ok(()) }
+    }
+
+    #[test]
+    fn test_read_variable() {
+        let mut od = ObjectDictionary::new(None);
+        od.insert(0x1006, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(12345)),
+            name: "TestVar",
+            access: AccessType::ReadWrite,
+        });
+
+        let value = od.read(0x1006, 0).unwrap();
+        assert_eq!(*value, ObjectValue::Unsigned32(12345));
+    }
+
+    #[test]
+    fn test_read_write_array_element() {
+        let mut od = ObjectDictionary::new(None);
+        od.insert(0x2000, ObjectEntry { 
+            object: Object::Array(vec![ObjectValue::Unsigned16(100)]), 
+            name: "TestArray", 
+            access: AccessType::ReadWrite
+        });
+
+        od.write(0x2000, 1, ObjectValue::Unsigned16(999)).unwrap();
+        let value = od.read(0x2000, 1).unwrap();
+        assert_eq!(*value, ObjectValue::Unsigned16(999));
+    }
+
+    #[test]
+    fn test_read_sub_index_zero_returns_owned_length() {
+        let mut od = ObjectDictionary::new(None);
+        od.insert(0x2000, ObjectEntry { 
+            object: Object::Array(vec![ObjectValue::Unsigned16(100), ObjectValue::Unsigned16(200)]), 
+            name: "TestArray", 
+            access: AccessType::ReadWrite
+        });
+
+        let value = od.read(0x2000, 0).unwrap();
+        assert_eq!(*value, ObjectValue::Unsigned8(2));
+        assert!(matches!(value, Cow::Owned(_)));
+    }
+
+    #[test]
+    fn test_write_to_readonly_fails() {
+        let mut od = ObjectDictionary::new(None);
+        od.insert(0x1008, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned8(10)),
+            name: "ReadOnlyVar",
+            access: AccessType::ReadOnly,
+        });
+
+        let result = od.write(0x1008, 0, ObjectValue::Unsigned8(42));
+        assert_eq!(result, Err("Object is read-only"));
+        assert_eq!(*od.read(0x1008, 0).unwrap(), ObjectValue::Unsigned8(10));
+    }
+
+    #[test]
+    fn test_save_command() {
+        let mut storage = MockStorage::new();
+        let mut od = ObjectDictionary::new(Some(&mut storage));
+        od.insert(0x6000, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(123)),
+            name: "StorableVar",
+            access: AccessType::ReadWriteStore,
+        });
+
+        od.write(0x1010, 1, ObjectValue::VisibleString("save".to_string())).unwrap();
+
+        assert!(storage.save_called);
+        assert_eq!(storage.saved_data.get(&(0x6000, 0)), Some(&ObjectValue::Unsigned32(123)));
+    }
+
+    #[test]
+    fn test_restore_defaults_command() {
+        let mut storage = MockStorage::new();
+        storage.saved_data.insert((0x6000, 0), ObjectValue::Unsigned32(999));
+        let mut od = ObjectDictionary::new(Some(&mut storage));
+
+        od.write(0x1011, 1, ObjectValue::VisibleString("load".to_string())).unwrap();
+        
+        assert!(storage.clear_called);
+        assert!(storage.saved_data.is_empty());
     }
 
     #[test]
