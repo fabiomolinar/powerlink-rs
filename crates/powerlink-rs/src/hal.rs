@@ -1,6 +1,6 @@
 use crate::od::ObjectValue;
-use crate::types::{InvalidMessageTypeError, NodeIdError};
 use crate::pdo::PayloadSizeError;
+use crate::types::{InvalidMessageTypeError, NodeIdError};
 use alloc::collections::BTreeMap;
 use core::array::TryFromSliceError;
 use core::fmt;
@@ -41,8 +41,38 @@ pub enum PowerlinkError {
     /// The requested sub-index does not exist for the given object.
     SubObjectNotFound,
     /// An attempt was made to write a value with an incorrect data type to an object.
-    TypeMismatch,    
+    TypeMismatch,
+    /// An error occurred in the storage backend.
+    StorageError(&'static str),
 }
+
+impl fmt::Display for PowerlinkError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BufferTooShort => write!(f, "Buffer is too short for the frame"),
+            Self::IoError => write!(f, "An underlying I/O error occurred"),
+            Self::InvalidEthernetFrame => write!(f, "Frame is not a valid Ethernet II frame"),
+            Self::InvalidPlFrame => write!(f, "Frame is not a valid POWERLINK frame"),
+            Self::InvalidMessageType(v) => write!(f, "Invalid MessageType value: {v:#04x}"),
+            Self::InvalidNmtState(v) => write!(f, "Invalid NMT State value: {v:#04x}"),
+            Self::InvalidServiceId(v) => write!(f, "Invalid ServiceId value: {v:#04x}"),
+            Self::InvalidRequestedServiceId(v) => write!(f, "Invalid RequestedServiceId value: {v:#04x}"),
+            Self::InvalidNodeId(v) => write!(f, "Invalid NodeId value: {v}"),
+            Self::InvalidPayloadSize(v) => write!(f, "Invalid PayloadSize value: {v}"),
+            Self::SliceConversion => write!(f, "Failed to convert slice to a fixed-size array"),
+            Self::FrameTooLarge => write!(f, "Frame size exceeds maximum allowed MTU"),
+            Self::NotReady => write!(f, "Device is not ready or configured"),
+            Self::ObjectNotFound => write!(f, "The requested Object Dictionary index was not found"),
+            Self::SubObjectNotFound => write!(f, "The requested sub-index was not found for this object"),
+            Self::TypeMismatch => write!(f, "The provided value's type does not match the object's type"), 
+            Self::InvalidEnumValue => write!(f, "A value in the frame is not a valid enum variant"),
+            Self::StorageError(s) => write!(f, "Storage error: {}", s),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for PowerlinkError {}
 
 // --- From Implementations for Error Conversion ---
 
@@ -74,33 +104,11 @@ impl From<PayloadSizeError> for PowerlinkError {
     }
 }
 
-// --- Display trait for better error messages ---
-impl fmt::Display for PowerlinkError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BufferTooShort => write!(f, "Buffer is too short for the frame"),
-            Self::IoError => write!(f, "An underlying I/O error occurred"),
-            Self::InvalidEthernetFrame => write!(f, "Frame is not a valid Ethernet II frame"),
-            Self::InvalidPlFrame => write!(f, "Frame is not a valid POWERLINK frame"),
-            Self::InvalidMessageType(v) => write!(f, "Invalid MessageType value: {v:#04x}"),
-            Self::InvalidNmtState(v) => write!(f, "Invalid NMT State value: {v:#04x}"),
-            Self::InvalidServiceId(v) => write!(f, "Invalid ServiceId value: {v:#04x}"),
-            Self::InvalidRequestedServiceId(v) => write!(f, "Invalid RequestedServiceId value: {v:#04x}"),
-            Self::InvalidNodeId(v) => write!(f, "Invalid NodeId value: {v}"),
-            Self::InvalidPayloadSize(v) => write!(f, "Invalid PayloadSize value: {v}"),
-            Self::SliceConversion => write!(f, "Failed to convert slice to a fixed-size array"),
-            Self::FrameTooLarge => write!(f, "Frame size exceeds maximum allowed MTU"),
-            Self::NotReady => write!(f, "Device is not ready or configured"),
-            Self::ObjectNotFound => write!(f, "The requested Object Dictionary index was not found"),
-            Self::SubObjectNotFound => write!(f, "The requested sub-index was not found for this object"),
-            Self::TypeMismatch => write!(f, "The provided value's type does not match the object's type"), 
-            Self::InvalidEnumValue => write!(f, "A value in the frame is not a valid enum variant"),
-        }
+impl From<&'static str> for PowerlinkError {
+    fn from(s: &'static str) -> Self {
+        PowerlinkError::StorageError(s)
     }
 }
-
-#[cfg(feature = "std")]
-impl std::error::Error for PowerlinkError {}
 
 /// Hardware Abstraction Layer (HAL) for raw Ethernet packet transmission.
 ///
@@ -127,7 +135,7 @@ pub trait NetworkInterface {
     fn local_mac_address(&self) -> [u8; 6];
 }
 
-/// A trait for abstracting the non-volatile storage of Object Dictionary parameters.
+/// A trait for abstracting the non-volatile storage of OD parameters.
 pub trait ObjectDictionaryStorage {
     /// Loads storable parameters from non-volatile memory.
     /// Returns a map of (Index, SubIndex) -> Value.
@@ -139,3 +147,4 @@ pub trait ObjectDictionaryStorage {
     /// Clears all stored parameters, forcing a load of defaults on next boot.
     fn clear(&mut self) -> Result<(), &'static str>;
 }
+

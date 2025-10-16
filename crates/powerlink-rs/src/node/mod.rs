@@ -1,14 +1,14 @@
-use crate::frame::PowerlinkFrame;
+pub mod cn;
+pub mod handler;
+
 use crate::nmt::states::NmtState;
 use alloc::vec::Vec;
 
-pub mod cn;
-
 /// Represents the possible actions a POWERLINK node might need to perform
 /// in response to an event or a tick.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum NodeAction {
-    /// The node needs to send a frame over the network. The Vec<u8> is the serialized raw frame.
+    /// The node needs to send a frame over the network.
     SendFrame(Vec<u8>),
     /// The node needs a timer to be set for the specified duration in microseconds.
     /// When the timer expires, the application should call `tick()`.
@@ -26,3 +26,4 @@ pub trait Node {
     /// Returns the current NMT state of the node.
     fn nmt_state(&self) -> NmtState;
 }
+
