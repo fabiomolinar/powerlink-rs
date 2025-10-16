@@ -170,8 +170,7 @@ impl<'s> Node for ControlledNode<'s> {
     fn process_raw_frame(&mut self, buffer: &[u8]) -> NodeAction {
         match deserialize_frame(buffer) {
             Ok(frame) => self.process_frame(frame),
-            Err(e @ PowerlinkError::InvalidPlFrame)
-            | Err(e @ PowerlinkError::InvalidEthernetFrame) => {
+            Err(PowerlinkError::InvalidPlFrame) | Err(PowerlinkError::InvalidEthernetFrame) => {
                 if self
                     .dll_error_manager
                     .handle_error(DllError::InvalidFormat)

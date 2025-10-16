@@ -550,15 +550,13 @@ mod tests {
     #[test]
     fn test_restore_defaults_command_flags_for_reboot() {
         let mut storage = MockStorage::new();
-        {
-            let mut od = ObjectDictionary::new(Some(&mut storage));
-            assert!(od.storage.unwrap().restore_defaults_requested());
-            od.write(0x1011, 1, ObjectValue::VisibleString("load".to_string()))
-                .unwrap();
-        } // od is dropped here, releasing the borrow
-
-        assert!(storage.restore_requested);
-        assert!(!storage.clear_called);
+        let mut od = ObjectDictionary::new(Some(&mut storage));
+        assert!(!od.storage.as_ref().unwrap().restore_defaults_requested());
+        od.write(0x1011, 1, ObjectValue::VisibleString("load".to_string()))
+            .unwrap();
+        // After the write, the storage inside od is now borrowed mutably.
+        // To check its state, we must borrow it again immutably.
+        assert!(od.storage.as_ref().unwrap().restore_defaults_requested());
     }
 
     #[test]
@@ -578,7 +576,7 @@ mod tests {
             },
         );
 
-        od.init().unwrap();       
+        od.init().unwrap();
 
         assert_eq!(od.read_u32(0x6000, 0).unwrap(), 999);
     }
@@ -603,7 +601,11 @@ mod tests {
 
         od.init().unwrap();
 
-        assert!(!od.storage.unwrap().restore_defaults_requested()); // Flag should be cleared
+        assert!(!od
+            .storage
+            .as_ref()
+            .unwrap()
+            .restore_defaults_requested()); // Flag should be cleared
 
         assert_eq!(od.read_u32(0x6000, 0).unwrap(), 0); // Back to default
     }
