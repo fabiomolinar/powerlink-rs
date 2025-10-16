@@ -42,12 +42,12 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
   - Focus: Core configuration logic and device identification.
   - Key Features (DS-301): Implementation of the Object Dictionary (OD) structure (Index and Sub-Index usage), defining mandatory NMT objects (e.g., identity object 1018h, NMT features 1F82h, EPL version 1F83h), and implementing the fundamental NMT State Machines (Common, MN, and CN states, e.g., NMT_CS_NOT_ACTIVE to NMT_CS_OPERATIONAL).
   - Success Metric: The device can maintain internal NMT state correctly and respond to simulated NMT state commands.
-  - Status: In development.
+  - Status: First draft finished.
 - Phase 3: Service Data Object (SDO) Communication:
   - Focus: Reliable, asynchronous configuration and diagnostic access over ASnd frames.
   - Key Features (DS-301): Implementation of the SDO Command Layer Protocol (e.g., Read/Write by Index requests), the SDO Sequence Layer (for reliability), and integration for transfer via the mandatory ASnd frame (Method 2, signaled by NMT_FeatureFlags_U32 Bit 2).
   - Success Metric: Successful simulated read/write transactions (SDO client and server) to the mock Object Dictionary.
-  - Status: Not started.
+  - Status: In development.
 - Phase 4: Platform Abstraction and Initial I/O Layer:
   - Focus: Enabling cross-platform usage and testing.
   - Key Features: Define the core Rust Trait for low-level I/O (send_raw_frame, receive_raw_frame). Implement the initial platform-specific driver modules for Linux/Windows (using sockets/raw interfaces). Optionally, support the use of SDO via UDP/IP (Method 1, signaled by NMT_FeatureFlags_U32 Bit 1).
