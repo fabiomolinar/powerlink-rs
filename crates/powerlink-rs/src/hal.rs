@@ -1,5 +1,7 @@
+use crate::od::ObjectValue;
 use crate::types::{InvalidMessageTypeError, NodeIdError};
 use crate::pdo::PayloadSizeError;
+use alloc::collections::BTreeMap;
 use core::array::TryFromSliceError;
 use core::fmt;
 
@@ -123,4 +125,17 @@ pub trait NetworkInterface {
 
     /// Returns the local MAC address of the interface.
     fn local_mac_address(&self) -> [u8; 6];
+}
+
+/// A trait for abstracting the non-volatile storage of Object Dictionary parameters.
+pub trait ObjectDictionaryStorage {
+    /// Loads storable parameters from non-volatile memory.
+    /// Returns a map of (Index, SubIndex) -> Value.
+    fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, &'static str>;
+
+    /// Saves the given storable parameters to non-volatile memory.
+    fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>) -> Result<(), &'static str>;
+    
+    /// Clears all stored parameters, forcing a load of defaults on next boot.
+    fn clear(&mut self) -> Result<(), &'static str>;
 }

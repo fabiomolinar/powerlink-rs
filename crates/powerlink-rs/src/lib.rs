@@ -23,7 +23,9 @@ pub mod sdo;
     
 // --- Top-level Exports ---
 pub use types::NodeId;
-pub use hal::{NetworkInterface, PowerlinkError};
+pub use hal::{NetworkInterface, PowerlinkError, ObjectDictionaryStorage};
 pub use common::{NetTime, RelativeTime};
 pub use frame::error::{ErrorHandler, DllErrorManager, NoOpErrorHandler};
 pub use frame::codec::{Codec, deserialize_frame};
+pub use node::{Node, NodeAction};
+pub use node::cn::ControlledNode;

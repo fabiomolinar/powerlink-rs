@@ -1,15 +1,13 @@
-// In crates/powerlink-rs/src/node/cn.rs
-
 use crate::frame::basic::MacAddress;
 use crate::frame::{
-    ASndFrame, DllCsEvent, DllCsStateMachine, PowerlinkFrame, RequestedServiceId, ServiceId,
+    deserialize_frame, ASndFrame, Codec, DllCsEvent, DllCsStateMachine, PowerlinkFrame,
+    RequestedServiceId, ServiceId,
 };
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
-use crate::nmt::states::NmtEvent;
-use crate::od::{ObjectDictionary, ObjectValue};
+use crate::nmt::states::{NmtEvent, NmtState};
+use crate::od::ObjectDictionary;
 use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
 use crate::PowerlinkError;
-use alloc::borrow::Cow;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -46,12 +44,7 @@ impl<'s> ControlledNode<'s> {
         })
     }
 
-    /// The main entry point for processing all incoming POWERLINK frames.
-    ///
-    /// This method drives the DLL and NMT state machines and generates a response
-    /// frame if required by the protocol.
-    pub fn process_frame(&mut self, frame: PowerlinkFrame) -> Option<PowerlinkFrame> {
-        // 1. Map the incoming frame to a DLL event.
+    fn process_frame(&mut self, frame: PowerlinkFrame) -> NodeAction {
         let dll_event = match &frame {
             PowerlinkFrame::Soc(_) => DllCsEvent::Soc,
             PowerlinkFrame::PReq(_) => DllCsEvent::Preq,
@@ -81,36 +74,36 @@ impl<'s> ControlledNode<'s> {
             self.nmt_state_machine.process_event(event);
         }
 
-        // 5. Handle application-level logic based on the frame content.
-        match frame {
+        let response = match frame {
             PowerlinkFrame::SoA(soa_frame) => {
-                // Check if this SoA frame is an IdentRequest addressed to us.
                 if soa_frame.target_node_id == self.nmt_state_machine.node_id
                     && soa_frame.req_service_id == RequestedServiceId::IdentRequest
                 {
-                    // If so, build and return an IdentResponse.
-                    return Some(self.build_ident_response(&soa_frame));
+                    Some(self.build_ident_response(&soa_frame))
+                } else {
+                    None
                 }
             }
-            PowerlinkFrame::PReq(preq_frame) => {
-                // If we are polled with a PReq, we must respond with a PRes.
-                return Some(self.build_pres_response(&preq_frame));
-            }
-            _ => {
-                // Other frames are processed by the state machines but don't require
-                // an immediate, direct response from this layer.
+            PowerlinkFrame::PReq(preq_frame) => Some(self.build_pres_response(&preq_frame)),
+            _ => None,
+        };
+
+        if let Some(response_frame) = response {
+            let mut buf = vec![0u8; 1500];
+            if let Ok(size) = response_frame.serialize(&mut buf) {
+                buf.truncate(size);
+                return NodeAction::SendFrame(buf);
             }
         }
 
-        None
+        NodeAction::NoAction
     }
 
-    /// Builds an ASnd frame for the IdentResponse service.
     fn build_ident_response(&self, soa: &crate::frame::SoAFrame) -> PowerlinkFrame {
         let payload = self.build_ident_response_payload();
         let asnd = ASndFrame::new(
             self.mac_address,
-            soa.eth_header.source_mac, // Respond to the MN's MAC
+            soa.eth_header.source_mac,
             NodeId(C_ADR_MN_DEF_NODE_ID),
             self.nmt_state_machine.node_id,
             ServiceId::IdentResponse,
@@ -123,12 +116,11 @@ impl<'s> ControlledNode<'s> {
     fn build_pres_response(&self, _preq: &crate::frame::PReqFrame) -> PowerlinkFrame {
         // TODO: Implement actual PDO payload logic here. For now, it's empty.
         let payload = Vec::new();
-
         let pres = crate::frame::PResFrame::new(
             self.mac_address,
             self.nmt_state_machine.node_id,
             self.nmt_state_machine.current_state,
-            Default::default(), // Default flags
+            Default::default(),
             crate::pdo::PDOVersion(0),
             payload,
         );
@@ -138,52 +130,41 @@ impl<'s> ControlledNode<'s> {
     /// Constructs the detailed payload for an IdentResponse frame by reading from the OD.
     /// The structure is defined in EPSG DS 301, Section 7.3.3.2.1.
     fn build_ident_response_payload(&self) -> Vec<u8> {
-        let mut payload = vec![0u8; 110]; // Minimum size for IdentResponse
-
-        // Helper to read a u32 from OD or default to 0.
-        let read_u32 = |index, sub_index| {
-            self.od
-                .read(index, sub_index)
-                .and_then(|cow| {
-                    // Dereference the Cow to get a reference, then match.
-                    if let ObjectValue::Unsigned32(val) = &*cow {
-                        Some(*val)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(0)
-        };
-
-        // NMTState (Octet 2)
+        let mut payload = vec![0u8; 110];
         payload[2] = self.nmt_state_machine.current_state as u8;
-
-        // EPLVersion (Octet 4)
-        if let Some(Cow::Borrowed(ObjectValue::Unsigned8(val))) = self.od.read(0x1F83, 0) {
-            payload[4] = *val;
+        if let Some(val) = self.od.read_u8(0x1F83, 0) {
+            payload[4] = val;
         }
-
-        // FeatureFlags (Octets 6-9)
         payload[6..10].copy_from_slice(&self.nmt_state_machine.feature_flags.0.to_le_bytes());
-
-        // MTU (Octets 10-11)
-        if let Some(cow) = self.od.read(0x1F98, 8) {
-            if let ObjectValue::Unsigned16(val) = &*cow {
-                payload[10..12].copy_from_slice(&val.to_le_bytes());
-            }
+        if let Some(val) = self.od.read_u16(0x1F98, 8) {
+             payload[10..12].copy_from_slice(&val.to_le_bytes());
         }
-
-        // DeviceType (Octets 22-25) - from 0x1000
-        payload[22..26].copy_from_slice(&read_u32(0x1000, 0).to_le_bytes());
-
-        // Identity Object (Octets 26-41) - from 0x1018
-        payload[26..30].copy_from_slice(&read_u32(0x1018, 1).to_le_bytes()); // VendorID
-        payload[30..34].copy_from_slice(&read_u32(0x1018, 2).to_le_bytes()); // ProductCode
-        payload[34..38].copy_from_slice(&read_u32(0x1018, 3).to_le_bytes()); // RevisionNo
-        payload[38..42].copy_from_slice(&read_u32(0x1018, 4).to_le_bytes()); // SerialNo
-
-        // Other fields like IPAddress, HostName etc. would be populated similarly.
-
+        payload[22..26].copy_from_slice(&self.od.read_u32(0x1000, 0).unwrap_or(0).to_le_bytes());
+        payload[26..30].copy_from_slice(&self.od.read_u32(0x1018, 1).unwrap_or(0).to_le_bytes());
+        payload[30..34].copy_from_slice(&self.od.read_u32(0x1018, 2).unwrap_or(0).to_le_bytes());
+        payload[34..38].copy_from_slice(&self.od.read_u32(0x1018, 3).unwrap_or(0).to_le_bytes());
+        payload[38..42].copy_from_slice(&self.od.read_u32(0x1018, 4).unwrap_or(0).to_le_bytes());
         payload
+    }
+}
+
+impl<'s> Node for ControlledNode<'s> {
+    fn process_raw_frame(&mut self, buffer: &[u8]) -> NodeAction {
+        if let Ok(frame) = deserialize_frame(buffer) {
+            self.process_frame(frame)
+        } else {
+            NodeAction::NoAction
+        }
+    }
+
+    fn tick(&mut self) -> NodeAction {
+        // Future implementation: check for timeouts.
+        // If a timeout occurred, inject an NmtEvent::Timeout.
+        // self.nmt_state_machine.process_event(NmtEvent::Timeout);
+        NodeAction::NoAction
+    }
+
+    fn nmt_state(&self) -> NmtState {
+        self.nmt_state_machine.current_state
     }
 }
