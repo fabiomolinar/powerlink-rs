@@ -1,10 +1,12 @@
 use super::{handler::FrameHandler, Node, NodeAction};
 use crate::frame::basic::MacAddress;
 use crate::frame::{
-    deserialize_frame, error::CnErrorCounters, ASndFrame, Codec, DllCsStateMachine, DllError,
-    DllErrorManager, NoOpErrorHandler, PowerlinkFrame, PResFrame,
+    deserialize_frame,
+    error::{CnErrorCounters, DllErrorManager, NoOpErrorHandler},
+    ASndFrame, Codec, DllCsStateMachine, DllError, NmtAction, PowerlinkFrame, PResFrame,
 };
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
+use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::{NmtEvent, NmtState};
 use crate::od::ObjectDictionary;
 use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
@@ -27,19 +29,18 @@ impl<'s> ControlledNode<'s> {
     ///
     /// The application is responsible for creating and populating the Object Dictionary
     /// with device-specific parameters (e.g., Identity Object 0x1018) before passing
-    /// it to this constructor. This function will then validate the OD, initialize it,
-    /// and read the necessary configuration to initialize the NMT state machine.
+    /// it to this constructor. This function will then read the necessary configuration
+    /// from the OD to initialize the NMT state machine.
     pub fn new(
         mut od: ObjectDictionary<'s>,
         mac_address: MacAddress,
     ) -> Result<Self, PowerlinkError> {
-        // Validate that the application has provided all mandatory objects.
+        // Initialise the OD, which involves loading from storage or applying defaults.
+        od.init()?;
+
+        // Validate that the user-provided OD contains all mandatory objects.
         od.validate_mandatory_objects()?;
 
-        // Initialize the OD: populates protocol objects and either restores
-        // defaults or loads from persistent storage.
-        od.init()?;
-        
         // The NMT state machine's constructor is now fallible because it must
         // read critical parameters from the fully configured OD.
         let nmt_state_machine = CnNmtStateMachine::from_od(&od)?;
@@ -55,27 +56,23 @@ impl<'s> ControlledNode<'s> {
 
     /// Internal function to process a deserialized `PowerlinkFrame`.
     fn process_frame(&mut self, frame: PowerlinkFrame) -> NodeAction {
-        // 1. Update DLL state machine based on the frame type.
-        if let Some(errors) = self.dll_state_machine.process_event(
-            frame.dll_event(),
-            self.nmt_state_machine.current_state,
-        ) {
-            // If the DLL state machine detects an error, pass it to the error manager.
-            for error in errors {
-                self.handle_dll_action(error);
-            }
+        // 1. Update NMT state machine based on the frame type.
+        if let Some(event) = frame.nmt_event() {
+            self.nmt_state_machine.process_event(event, &mut self.od);
         }
 
-        // 2. Update NMT state machine based on the frame type.
-        let mut next_action = NodeAction::NoAction;
-        if let Some(event) = frame.nmt_event() {
-            let old_state = self.nmt_state_machine.current_state;
-            self.nmt_state_machine.process_event(event, &mut self.od);
-            let new_state = self.nmt_state_machine.current_state;
-
-            // If the state transition is to NotActive, start the Basic Ethernet timeout.
-            if old_state != new_state && new_state == NmtState::NmtNotActive {
-                 next_action = NodeAction::SetTimer(self.nmt_state_machine.basic_ethernet_timeout as u64);
+        // 2. Update DLL state machine based on the frame type.
+        if let Some(errors) = self.dll_state_machine.process_event(
+            frame.dll_event(),
+            self.nmt_state_machine.current_state(),
+        ) {
+            // If the DLL detects an error (like a lost frame), pass it to the error manager.
+            for error in errors {
+                if self.dll_error_manager.handle_error(error) != NmtAction::None {
+                    // Per Table 27, most DLL errors on a CN trigger an NMT state change to PreOp1.
+                    self.nmt_state_machine
+                        .process_event(NmtEvent::Error, &mut self.od);
+                }
             }
         }
 
@@ -95,21 +92,8 @@ impl<'s> ControlledNode<'s> {
             }
         }
 
-        next_action
+        NodeAction::NoAction
     }
-
-    /// Handles a DllError by passing it to the error manager and processing the resulting NMT action.
-    fn handle_dll_action(&mut self, error: DllError) {
-        let nmt_action = self.dll_error_manager.handle_error(error);
-        match nmt_action {
-            crate::frame::NmtAction::ResetCommunication => {
-                self.nmt_state_machine.process_event(NmtEvent::Error, &mut self.od);
-            }
-            // Other actions like ResetNode would be handled here if applicable to CN.
-            _ => {}
-        }
-    }
-
 
     /// Builds an `ASnd` frame for the `IdentResponse` service.
     /// This function is typically called by the `FrameHandler` implementation for `SoAFrame`.
@@ -133,7 +117,7 @@ impl<'s> ControlledNode<'s> {
         let pres = PResFrame::new(
             self.mac_address,
             self.nmt_state_machine.node_id,
-            self.nmt_state_machine.current_state,
+            self.nmt_state_machine.current_state(),
             Default::default(),
             crate::pdo::PDOVersion(0),
             payload,
@@ -147,7 +131,7 @@ impl<'s> ControlledNode<'s> {
         let mut payload = vec![0u8; 110]; // Minimum size for IdentResponse
 
         // NMTState (Octet 2)
-        payload[2] = self.nmt_state_machine.current_state as u8;
+        payload[2] = self.nmt_state_machine.current_state() as u8;
 
         // EPLVersion (Octet 4) - from 0x1F83
         if let Some(val) = self.od.read_u8(0x1F83, 0) {
@@ -156,21 +140,26 @@ impl<'s> ControlledNode<'s> {
 
         // FeatureFlags (Octets 6-9) - from 0x1F82
         payload[6..10].copy_from_slice(&self.nmt_state_machine.feature_flags.0.to_le_bytes());
-        
+
         // MTU (Octets 10-11) - from 0x1F98, sub-index 8
         if let Some(val) = self.od.read_u16(0x1F98, 8) {
             payload[10..12].copy_from_slice(&val.to_le_bytes());
         }
 
         // DeviceType (Octets 22-25) - from 0x1000
-        payload[22..26].copy_from_slice(&self.od.read_u32(0x1000, 0).unwrap_or(0).to_le_bytes());
-        
+        payload[22..26]
+            .copy_from_slice(&self.od.read_u32(0x1000, 0).unwrap_or(0).to_le_bytes());
+
         // Identity Object (Octets 26-41) - from 0x1018
-        payload[26..30].copy_from_slice(&self.od.read_u32(0x1018, 1).unwrap_or(0).to_le_bytes()); // VendorID
-        payload[30..34].copy_from_slice(&self.od.read_u32(0x1018, 2).unwrap_or(0).to_le_bytes()); // ProductCode
-        payload[34..38].copy_from_slice(&self.od.read_u32(0x1018, 3).unwrap_or(0).to_le_bytes()); // RevisionNo
-        payload[38..42].copy_from_slice(&self.od.read_u32(0x1018, 4).unwrap_or(0).to_le_bytes()); // SerialNo
-        
+        payload[26..30]
+            .copy_from_slice(&self.od.read_u32(0x1018, 1).unwrap_or(0).to_le_bytes()); // VendorID
+        payload[30..34]
+            .copy_from_slice(&self.od.read_u32(0x1018, 2).unwrap_or(0).to_le_bytes()); // ProductCode
+        payload[34..38]
+            .copy_from_slice(&self.od.read_u32(0x1018, 3).unwrap_or(0).to_le_bytes()); // RevisionNo
+        payload[38..42]
+            .copy_from_slice(&self.od.read_u32(0x1018, 4).unwrap_or(0).to_le_bytes()); // SerialNo
+
         // Other fields like IPAddress, HostName etc. would be populated similarly in a full implementation.
 
         payload
@@ -181,27 +170,36 @@ impl<'s> Node for ControlledNode<'s> {
     fn process_raw_frame(&mut self, buffer: &[u8]) -> NodeAction {
         match deserialize_frame(buffer) {
             Ok(frame) => self.process_frame(frame),
-            Err(e) => {
-                // If the frame can't be deserialized, it's a fundamental error.
-                if let PowerlinkError::InvalidPlFrame = e {
-                    self.handle_dll_action(DllError::InvalidFormat);
+            Err(e @ PowerlinkError::InvalidPlFrame)
+            | Err(e @ PowerlinkError::InvalidEthernetFrame) => {
+                if self
+                    .dll_error_manager
+                    .handle_error(DllError::InvalidFormat)
+                    != NmtAction::None
+                {
+                    self.nmt_state_machine
+                        .process_event(NmtEvent::Error, &mut self.od);
                 }
                 NodeAction::NoAction
             }
+            Err(_) => NodeAction::NoAction,
         }
     }
 
     fn tick(&mut self) -> NodeAction {
-        // This is called when a timer set by the node expires.
-        // Currently, the only timer is for the Basic Ethernet timeout.
         if self.nmt_state() == NmtState::NmtNotActive {
-            self.nmt_state_machine.process_event(NmtEvent::Timeout, &mut self.od);
+            // Check if the BasicEthernetTimeout has expired.
+            // A real implementation would use a timer provided by the HAL.
+            // For now, we simulate this by checking a condition.
+            // If it has expired:
+            self.nmt_state_machine
+                .process_event(NmtEvent::Timeout, &mut self.od);
         }
         NodeAction::NoAction
     }
 
     fn nmt_state(&self) -> NmtState {
-        self.nmt_state_machine.current_state
+        self.nmt_state_machine.current_state()
     }
 }
 

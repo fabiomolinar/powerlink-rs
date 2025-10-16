@@ -144,23 +144,24 @@ pub trait NetworkInterface {
 pub trait ObjectDictionaryStorage {
     /// Loads storable parameters from non-volatile memory.
     /// Returns a map of (Index, SubIndex) -> Value.
-    fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, &'static str>;
+    fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, PowerlinkError>;
 
     /// Saves the given storable parameters to non-volatile memory.
-    fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>) -> Result<(), &'static str>;
+    fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>) -> Result<(), PowerlinkError>;
     
     /// Clears all stored parameters from non-volatile memory.
-    fn clear(&mut self) -> Result<(), &'static str>;
+    fn clear(&mut self) -> Result<(), PowerlinkError>;
 
     /// Checks if a "Restore Defaults" operation has been requested and is pending a reboot.
     /// This should check for a persistent flag set by `request_restore_defaults`.
-    fn is_restore_requested(&mut self) -> Result<bool, &'static str>;
+    fn restore_defaults_requested(&self) -> bool;
 
     /// Sets a persistent flag to indicate that defaults should be restored on the next boot.
     /// This is called when the "load" signature is written to OD entry 0x1011.
-    fn request_restore_defaults(&mut self) -> Result<(), &'static str>;
+    fn request_restore_defaults(&mut self) -> Result<(), PowerlinkError>;
 
     /// Clears the persistent "Restore Defaults" flag. This should be called
     /// after the restore operation has been completed on boot.
-    fn clear_restore_request(&mut self) -> Result<(), &'static str>;
+    fn clear_restore_defaults_flag(&mut self) -> Result<(), PowerlinkError>;
 }
+
