@@ -1,5 +1,3 @@
-// In crates/powerlink-rs/src/sdo/sequence.rs
-
 use crate::frame::Codec;
 use crate::PowerlinkError;
 

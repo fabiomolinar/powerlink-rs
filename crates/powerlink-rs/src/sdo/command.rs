@@ -1,6 +1,4 @@
-// In crates/powerlink-rs/src/sdo/command.rs
 use crate::frame::Codec;
-use crate::od::ObjectValue;
 use crate::types::{UNSIGNED16, UNSIGNED32, UNSIGNED8};
 use crate::PowerlinkError;
 use alloc::vec::Vec;

@@ -33,6 +33,74 @@ pub enum ObjectValue {
     IpAddress(IpAddress),
 }
 
+impl ObjectValue {
+    /// Serializes the inner value into a little-endian byte vector.
+    pub fn serialize(&self) -> Vec<u8> {
+        match self {
+            ObjectValue::Boolean(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Integer8(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Integer16(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Integer32(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Integer64(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Unsigned8(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Unsigned16(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Unsigned32(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Unsigned64(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Real32(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::Real64(v) => v.to_le_bytes().to_vec(),
+            ObjectValue::VisibleString(v) => v.as_bytes().to_vec(),
+            ObjectValue::OctetString(v) => v.clone(),
+            ObjectValue::Domain(v) => v.clone(),
+            // Other types would be serialized here.
+            _ => vec![],
+        }
+    }
+
+    /// Deserializes a byte slice into a new ObjectValue, using an existing
+    /// ObjectValue as a type template.
+    pub fn deserialize(
+        data: &[u8],
+        type_template: &ObjectValue,
+    ) -> Result<ObjectValue, PowerlinkError> {
+        match type_template {
+            ObjectValue::Boolean(_) => Ok(ObjectValue::Boolean(u8::from_le_bytes(
+                data.try_into()?,
+            ))),
+            ObjectValue::Integer8(_) => Ok(ObjectValue::Integer8(i8::from_le_bytes(
+                data.try_into()?,
+            ))),
+            ObjectValue::Integer16(_) => Ok(ObjectValue::Integer16(i16::from_le_bytes(
+                data.try_into()?,
+            ))),
+            ObjectValue::Integer32(_) => Ok(ObjectValue::Integer32(i32::from_le_bytes(
+                data.try_into()?,
+            ))),
+            ObjectValue::Integer64(_) => Ok(ObjectValue::Integer64(i64::from_le_bytes(
+                data.try_into()?,
+            ))),
+            ObjectValue::Unsigned8(_) => Ok(ObjectValue::Unsigned8(u8::from_le_bytes(
+                data.try_into()?,
+            ))),
+            ObjectValue::Unsigned16(_) => Ok(ObjectValue::Unsigned16(u16::from_le_bytes(
+                data.try_into()?,
+            ))),
+            ObjectValue::Unsigned32(_) => Ok(ObjectValue::Unsigned32(u32::from_le_bytes(
+                data.try_into()?,
+            ))),
+            ObjectValue::Unsigned64(_) => Ok(ObjectValue::Unsigned64(u64::from_le_bytes(
+                data.try_into()?,
+            ))),
+            ObjectValue::VisibleString(_) => Ok(ObjectValue::VisibleString(
+                String::from_utf8(data.to_vec()).map_err(|_| PowerlinkError::TypeMismatch)?,
+            )),
+            ObjectValue::OctetString(_) => Ok(ObjectValue::OctetString(data.to_vec())),
+            ObjectValue::Domain(_) => Ok(ObjectValue::Domain(data.to_vec())),
+            // Other types would be deserialized here.
+            _ => Err(PowerlinkError::TypeMismatch),
+        }
+    }
+}
+
 /// Represents a single entry in the Object Dictionary.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Object {
@@ -611,4 +679,3 @@ mod tests {
 
     }
 }
-

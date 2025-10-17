@@ -1,5 +1,3 @@
-// In crates/powerlink-rs/src/sdo/server.rs
-
 use crate::frame::ServiceId;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::command::{
@@ -10,6 +8,8 @@ use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader}
 use crate::types::MessageType;
 use crate::{Codec, PowerlinkError};
 use alloc::vec::Vec;
+use alloc::vec;
+
 
 /// The state of an SDO connection from the server's perspective.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -95,9 +95,7 @@ impl SdoServer {
                 match ReadByIndexRequest::from_payload(&command.payload) {
                     Ok(req) => match od.read(req.index, req.sub_index) {
                         Some(value) => {
-                            // TODO: This is a simplification. A full implementation needs
-                            // to serialize the ObjectValue into a Vec<u8>.
-                            let payload = vec![]; // Placeholder
+                            let payload = value.serialize();
                             SdoCommand {
                                 header: response_header,
                                 data_size: None,
@@ -115,18 +113,32 @@ impl SdoServer {
             CommandId::WriteByIndex => {
                 match WriteByIndexRequest::from_payload(&command.payload) {
                     Ok(req) => {
-                        // TODO: This is a simplification. A full implementation needs
-                        // to deserialize the byte data into the correct ObjectValue type.
-                        let value = ObjectValue::Unsigned32(0); // Placeholder
-                        match od.write(req.index, req.sub_index, value) {
-                            Ok(_) => SdoCommand {
-                                header: response_header,
-                                data_size: None,
-                                payload: Vec::new(),
-                            },
-                            Err(_) => self.abort(
+                        // To write, we must first read the object to know its type,
+                        // then deserialize the request data into that type.
+                        match od.read(req.index, req.sub_index) {
+                            Some(type_template) => {
+                                match ObjectValue::deserialize(req.data, &type_template) {
+                                    Ok(value) => {
+                                        match od.write(req.index, req.sub_index, value) {
+                                            Ok(_) => SdoCommand {
+                                                header: response_header,
+                                                data_size: None,
+                                                payload: Vec::new(),
+                                            },
+                                            Err(_) => self.abort(
+                                                command.header.transaction_id,
+                                                0x0601_0002, // Attempt to write a read-only object
+                                            ),
+                                        }
+                                    }
+                                    Err(_) => {
+                                        self.abort(command.header.transaction_id, 0x0607_0010)
+                                    } // Data type mismatch
+                                }
+                            }
+                            None => self.abort(
                                 command.header.transaction_id,
-                                0x0601_0002, // Attempt to write a read-only object
+                                0x0602_0000, // Object does not exist
                             ),
                         }
                     }
