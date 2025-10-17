@@ -7,17 +7,28 @@ use crate::sdo::command::{
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::types::MessageType;
 use crate::{Codec, PowerlinkError};
-use alloc::vec::Vec;
 use alloc::vec;
-
+use alloc::vec::Vec;
 
 /// The state of an SDO connection from the server's perspective.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 enum SdoServerState {
     #[default]
     Closed,
     Opening,
     Established,
+    SegmentedDownload(SdoTransferState),
+    // SegmentedUpload is a future implementation
+}
+
+/// Holds the context for an ongoing segmented transfer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SdoTransferState {
+    transaction_id: u8,
+    total_size: usize,
+    data_buffer: Vec<u8>,
+    index: u16,
+    sub_index: u8,
 }
 
 /// Manages a single SDO server connection.
@@ -81,11 +92,11 @@ impl SdoServer {
         command: SdoCommand,
         od: &mut ObjectDictionary,
     ) -> SdoCommand {
-        let response_header = CommandLayerHeader {
+        let mut response_header = CommandLayerHeader {
             transaction_id: command.header.transaction_id,
             is_response: true,
             is_aborted: false,
-            segmentation: Segmentation::Expedited, // Assume expedited for now
+            segmentation: Segmentation::Expedited, // Default response is expedited
             command_id: command.header.command_id,
             segment_size: 0,
         };
@@ -96,6 +107,8 @@ impl SdoServer {
                     Ok(req) => match od.read(req.index, req.sub_index) {
                         Some(value) => {
                             let payload = value.serialize();
+                            // TODO: Add support for segmented uploads.
+                            response_header.segment_size = payload.len() as u16;
                             SdoCommand {
                                 header: response_header,
                                 data_size: None,
@@ -111,40 +124,106 @@ impl SdoServer {
                 }
             }
             CommandId::WriteByIndex => {
+                self.handle_write_by_index(command, response_header, od)
+            }
+        }
+    }
+
+    fn handle_write_by_index(
+        &mut self,
+        command: SdoCommand,
+        response_header: CommandLayerHeader,
+        od: &mut ObjectDictionary,
+    ) -> SdoCommand {
+        match command.header.segmentation {
+            Segmentation::Expedited => {
+                // Handle a complete write in a single frame.
+                match WriteByIndexRequest::from_payload(&command.payload) {
+                    Ok(req) => match self.write_to_od(req.index, req.sub_index, req.data, od) {
+                        Ok(_) => SdoCommand {
+                            header: response_header,
+                            data_size: None,
+                            payload: Vec::new(),
+                        },
+                        Err(abort_code) => self.abort(command.header.transaction_id, abort_code),
+                    },
+                    Err(_) => self.abort(command.header.transaction_id, 0x0800_0000), // General error
+                }
+            }
+            Segmentation::Initiate => {
+                // Start a new segmented download.
                 match WriteByIndexRequest::from_payload(&command.payload) {
                     Ok(req) => {
-                        // To write, we must first read the object to know its type,
-                        // then deserialize the request data into that type.
-                        match od.read(req.index, req.sub_index) {
-                            Some(type_template) => {
-                                match ObjectValue::deserialize(req.data, &type_template) {
-                                    Ok(value) => {
-                                        match od.write(req.index, req.sub_index, value) {
-                                            Ok(_) => SdoCommand {
-                                                header: response_header,
-                                                data_size: None,
-                                                payload: Vec::new(),
-                                            },
-                                            Err(_) => self.abort(
-                                                command.header.transaction_id,
-                                                0x0601_0002, // Attempt to write a read-only object
-                                            ),
-                                        }
-                                    }
-                                    Err(_) => {
-                                        self.abort(command.header.transaction_id, 0x0607_0010)
-                                    } // Data type mismatch
-                                }
-                            }
-                            None => self.abort(
-                                command.header.transaction_id,
-                                0x0602_0000, // Object does not exist
-                            ),
+                        self.state = SdoServerState::SegmentedDownload(SdoTransferState {
+                            transaction_id: command.header.transaction_id,
+                            total_size: command.data_size.unwrap_or(0) as usize,
+                            data_buffer: req.data.to_vec(),
+                            index: req.index,
+                            sub_index: req.sub_index,
+                        });
+                        SdoCommand {
+                            header: response_header,
+                            data_size: None,
+                            payload: Vec::new(),
                         }
                     }
                     Err(_) => self.abort(command.header.transaction_id, 0x0800_0000), // General error
                 }
             }
+            Segmentation::Segment | Segmentation::Complete => {
+                if let SdoServerState::SegmentedDownload(ref mut transfer_state) = self.state {
+                    if transfer_state.transaction_id != command.header.transaction_id {
+                        return self.abort(command.header.transaction_id, 0x0800_0000); // Mismatched transaction
+                    }
+
+                    transfer_state.data_buffer.extend_from_slice(&command.payload);
+
+                    if command.header.segmentation == Segmentation::Complete {
+                        // All segments received, finalize the write.
+                        let state = transfer_state.clone();
+                        let result =
+                            self.write_to_od(state.index, state.sub_index, &state.data_buffer, od);
+                        self.state = SdoServerState::Established; // Return to established state
+                        match result {
+                            Ok(_) => SdoCommand {
+                                header: response_header,
+                                data_size: None,
+                                payload: Vec::new(),
+                            },
+                            Err(abort_code) => self.abort(command.header.transaction_id, abort_code),
+                        }
+                    } else {
+                        // Acknowledge the segment.
+                        SdoCommand {
+                            header: response_header,
+                            data_size: None,
+                            payload: Vec::new(),
+                        }
+                    }
+                } else {
+                    self.abort(command.header.transaction_id, 0x0800_0000) // Unexpected segment
+                }
+            }
+        }
+    }
+
+    /// Helper to perform the final write to the Object Dictionary after all data is received.
+    fn write_to_od(
+        &self,
+        index: u16,
+        sub_index: u8,
+        data: &[u8],
+        od: &mut ObjectDictionary,
+    ) -> Result<(), u32> {
+        match od.read(index, sub_index) {
+            Some(type_template) => match ObjectValue::deserialize(data, &type_template) {
+                Ok(value) => match od.write(index, sub_index, value) {
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(0x0601_0002), // Attempt to write a read-only object
+                },
+                Err(_) => Err(0x0607_0010), // Data type mismatch
+            },
+            None => Err(0x0602_0000), // Object does not exist
         }
     }
 
@@ -201,7 +280,7 @@ impl SdoServer {
                     Err(PowerlinkError::SdoSequenceError)
                 }
             }
-            SdoServerState::Established => {
+            SdoServerState::Established | SdoServerState::SegmentedDownload(_) => {
                 // A simplified check for lost frames. A full implementation would be more robust.
                 let expected_seq = self.last_received_sequence_number.wrapping_add(1) % 64;
                 if request.send_sequence_number != expected_seq {
