@@ -1,3 +1,4 @@
+// In crates/powerlink-rs/src/sdo/command.rs
 use crate::frame::Codec;
 use crate::types::{UNSIGNED16, UNSIGNED32, UNSIGNED8};
 use crate::PowerlinkError;
@@ -8,6 +9,7 @@ use alloc::vec::Vec;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CommandId {
+    Nil = 0x00,
     WriteByIndex = 0x01,
     ReadByIndex = 0x02,
     // Other commands can be added here later.
@@ -17,6 +19,7 @@ impl TryFrom<u8> for CommandId {
     type Error = PowerlinkError;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
+            0x00 => Ok(Self::Nil),
             0x01 => Ok(Self::WriteByIndex),
             0x02 => Ok(Self::ReadByIndex),
             _ => Err(PowerlinkError::InvalidEnumValue),

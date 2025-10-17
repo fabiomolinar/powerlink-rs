@@ -1,3 +1,5 @@
+// In crates/powerlink-rs/src/sdo/server.rs
+
 use crate::frame::ServiceId;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::command::{
@@ -18,7 +20,7 @@ enum SdoServerState {
     Opening,
     Established,
     SegmentedDownload(SdoTransferState),
-    // SegmentedUpload is a future implementation
+    SegmentedUpload(SdoTransferState),
 }
 
 /// Holds the context for an ongoing segmented transfer.
@@ -27,6 +29,9 @@ pub struct SdoTransferState {
     transaction_id: u8,
     total_size: usize,
     data_buffer: Vec<u8>,
+    // For uploads, this is the offset of the next byte to be sent.
+    // For downloads, this tracks bytes received.
+    offset: usize,
     index: u16,
     sub_index: u8,
 }
@@ -43,6 +48,8 @@ pub struct SdoServer {
     // The last sequence number the server correctly received from the client.
     last_received_sequence_number: u8,
 }
+
+const MAX_EXPEDITED_PAYLOAD: usize = 1452;
 
 impl SdoServer {
     pub fn new() -> Self {
@@ -92,6 +99,22 @@ impl SdoServer {
         command: SdoCommand,
         od: &mut ObjectDictionary,
     ) -> SdoCommand {
+        // Temporarily take ownership of the state to avoid borrow checker issues.
+        let current_state = core::mem::take(&mut self.state);
+
+        // If we are in a segmented upload, any new valid command from the client
+        // just serves as an ACK to trigger the next segment.
+        if let SdoServerState::SegmentedUpload(state) = current_state {
+            if state.transaction_id == command.header.transaction_id {
+                return self.handle_segmented_upload(state);
+            }
+            // If transaction ID doesn't match, restore state and fall through.
+            self.state = SdoServerState::SegmentedUpload(state);
+        } else {
+            // Not a segmented upload, restore state.
+            self.state = current_state;
+        }
+
         let mut response_header = CommandLayerHeader {
             transaction_id: command.header.transaction_id,
             is_response: true,
@@ -107,12 +130,29 @@ impl SdoServer {
                     Ok(req) => match od.read(req.index, req.sub_index) {
                         Some(value) => {
                             let payload = value.serialize();
-                            // TODO: Add support for segmented uploads.
-                            response_header.segment_size = payload.len() as u16;
-                            SdoCommand {
-                                header: response_header,
-                                data_size: None,
-                                payload,
+                            if payload.len() <= MAX_EXPEDITED_PAYLOAD {
+                                // Expedited transfer
+                                response_header.segment_size = payload.len() as u16;
+                                SdoCommand {
+                                    header: response_header,
+                                    data_size: None,
+                                    payload,
+                                }
+                            } else {
+                                // Initiate segmented transfer
+                                let mut transfer_state = SdoTransferState {
+                                    transaction_id: command.header.transaction_id,
+                                    total_size: payload.len(),
+                                    data_buffer: payload,
+                                    offset: 0,
+                                    index: req.index,
+                                    sub_index: req.sub_index,
+                                };
+                                let response = self.handle_segmented_upload(transfer_state.clone());
+                                // The handle function will set offset, update state.
+                                transfer_state.offset += response.payload.len();
+                                self.state = SdoServerState::SegmentedUpload(transfer_state);
+                                response
                             }
                         }
                         None => self.abort(
@@ -126,6 +166,58 @@ impl SdoServer {
             CommandId::WriteByIndex => {
                 self.handle_write_by_index(command, response_header, od)
             }
+            CommandId::Nil => {
+                // A NIL command acts as an ACK, often used during segmented uploads.
+                // The main logic for handling this is already at the start of this function.
+                // If we reach here, it means we're not in a segmented upload, so just send an empty ack.
+                SdoCommand {
+                    header: response_header,
+                    data_size: None,
+                    payload: Vec::new(),
+                }
+            }
+        }
+    }
+
+    fn handle_segmented_upload(&mut self, mut state: SdoTransferState) -> SdoCommand {
+        let mut response_header = CommandLayerHeader {
+            transaction_id: state.transaction_id,
+            is_response: true,
+            is_aborted: false,
+            segmentation: Segmentation::Segment, // Default
+            command_id: CommandId::ReadByIndex,
+            segment_size: 0,
+        };
+
+        let chunk_size = MAX_EXPEDITED_PAYLOAD;
+        let remaining = state.total_size - state.offset;
+        let current_chunk_size = chunk_size.min(remaining);
+        // Clone the data into an owned Vec to release the borrow on `state`.
+        let chunk = state.data_buffer[state.offset..state.offset + current_chunk_size].to_vec();
+
+        let data_size = if state.offset == 0 {
+            response_header.segmentation = Segmentation::Initiate;
+            Some(state.total_size as u32)
+        } else {
+            None
+        };
+
+        state.offset += current_chunk_size;
+
+        if state.offset >= state.total_size {
+            response_header.segmentation = Segmentation::Complete;
+            self.state = SdoServerState::Established;
+        } else {
+            // Move the updated state back into self.
+            self.state = SdoServerState::SegmentedUpload(state);
+        }
+
+        response_header.segment_size = chunk.len() as u16;
+
+        SdoCommand {
+            header: response_header,
+            data_size,
+            payload: chunk,
         }
     }
 
@@ -158,6 +250,7 @@ impl SdoServer {
                             transaction_id: command.header.transaction_id,
                             total_size: command.data_size.unwrap_or(0) as usize,
                             data_buffer: req.data.to_vec(),
+                            offset: req.data.len(),
                             index: req.index,
                             sub_index: req.sub_index,
                         });
@@ -177,6 +270,7 @@ impl SdoServer {
                     }
 
                     transfer_state.data_buffer.extend_from_slice(&command.payload);
+                    transfer_state.offset += command.payload.len();
 
                     if command.header.segmentation == Segmentation::Complete {
                         // All segments received, finalize the write.
@@ -280,7 +374,9 @@ impl SdoServer {
                     Err(PowerlinkError::SdoSequenceError)
                 }
             }
-            SdoServerState::Established | SdoServerState::SegmentedDownload(_) => {
+            SdoServerState::Established
+            | SdoServerState::SegmentedDownload(_)
+            | SdoServerState::SegmentedUpload(_) => {
                 // A simplified check for lost frames. A full implementation would be more robust.
                 let expected_seq = self.last_received_sequence_number.wrapping_add(1) % 64;
                 if request.send_sequence_number != expected_seq {
