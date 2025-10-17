@@ -589,25 +589,26 @@ mod tests {
             .insert((0x6000, 0), ObjectValue::Unsigned32(999));
         storage.restore_requested = true;
 
-        let mut od = ObjectDictionary::new(Some(&mut storage));
-        od.insert(
-            0x6000,
-            ObjectEntry {
-                object: Object::Variable(ObjectValue::Unsigned32(0)), // Firmware default
-                name: "StorableVar",
-                access: AccessType::ReadWriteStore,
-            },
-        );
+        {
+            let mut od = ObjectDictionary::new(Some(&mut storage));
+            od.insert(
+                0x6000,
+                ObjectEntry {
+                    object: Object::Variable(ObjectValue::Unsigned32(0)), // Firmware default
+                    name: "StorableVar",
+                    access: AccessType::ReadWriteStore,
+                },
+            );
+            od.init().unwrap();
+            assert_eq!(od.read_u32(0x6000, 0).unwrap(), 0); // Back to default
+        }
 
-        od.init().unwrap();
 
-        assert!(!od
-            .storage
-            .as_ref()
-            .unwrap()
-            .restore_defaults_requested()); // Flag should be cleared
+        assert!(storage.clear_called);
+        assert!(!storage.save_called);
+        assert!(!storage.restore_requested);
 
-        assert_eq!(od.read_u32(0x6000, 0).unwrap(), 0); // Back to default
+
     }
 }
 
