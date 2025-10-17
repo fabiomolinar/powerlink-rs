@@ -22,6 +22,7 @@ pub struct ControlledNode<'s> {
     dll_state_machine: DllCsStateMachine,
     dll_error_manager: DllErrorManager<CnErrorCounters, NoOpErrorHandler>,
     mac_address: MacAddress,
+    // TODO: Add a proper SdoServer instance here.
 }
 
 impl<'s> ControlledNode<'s> {
@@ -56,6 +57,16 @@ impl<'s> ControlledNode<'s> {
 
     /// Internal function to process a deserialized `PowerlinkFrame`.
     fn process_frame(&mut self, frame: PowerlinkFrame) -> NodeAction {
+        // Special handling for SDO frames.
+        if let PowerlinkFrame::ASnd(asnd_frame) = &frame {
+            if asnd_frame.service_id == crate::frame::ServiceId::Sdo {
+                // TODO: Delegate this frame to the SdoServer for processing.
+                // let response = self.sdo_server.handle_request(asnd_frame);
+                // return response;
+                return NodeAction::NoAction;
+            }
+        }
+
         // 1. Update NMT state machine based on the frame type.
         if let Some(event) = frame.nmt_event() {
             self.nmt_state_machine.process_event(event, &mut self.od);
@@ -201,4 +212,3 @@ impl<'s> Node for ControlledNode<'s> {
         self.nmt_state_machine.current_state()
     }
 }
-

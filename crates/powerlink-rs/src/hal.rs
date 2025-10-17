@@ -46,6 +46,10 @@ pub enum PowerlinkError {
     StorageError(&'static str),
     /// A mandatory object was missing from the Object Dictionary during validation.
     ValidationError(&'static str),
+    /// SDO Sequence number was unexpected (e.g., a lost frame was detected).
+    SdoSequenceError,
+    /// SDO command layer received an abort message.
+    SdoAborted,
 }
 
 impl fmt::Display for PowerlinkError {
@@ -70,6 +74,8 @@ impl fmt::Display for PowerlinkError {
             Self::InvalidEnumValue => write!(f, "A value in the frame is not a valid enum variant"),
             Self::StorageError(s) => write!(f, "Storage error: {}", s),
             Self::ValidationError(s) => write!(f, "OD Validation Error: {}", s),
+            Self::SdoSequenceError => write!(f, "SDO sequence number mismatch detected"),
+            Self::SdoAborted => write!(f, "SDO transfer was aborted"),
         }
     }
 }
@@ -164,4 +170,3 @@ pub trait ObjectDictionaryStorage {
     /// after the restore operation has been completed on boot.
     fn clear_restore_defaults_flag(&mut self) -> Result<(), PowerlinkError>;
 }
-
