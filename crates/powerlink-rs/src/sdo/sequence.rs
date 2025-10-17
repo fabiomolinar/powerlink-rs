@@ -1,3 +1,5 @@
+// In crates/powerlink-rs/src/sdo/sequence.rs
+
 use crate::frame::Codec;
 use crate::PowerlinkError;
 
@@ -5,10 +7,11 @@ use crate::PowerlinkError;
 ///
 /// These values correspond to the `rcon` fields in the header.
 /// (Reference: EPSG DS 301, Table 53)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum ReceiveConnState {
     /// No connection established.
+    #[default]
     NoConnection = 0,
     /// Connection initialization requested.
     Initialization = 1,
@@ -35,10 +38,11 @@ impl TryFrom<u8> for ReceiveConnState {
 ///
 /// These values correspond to the `scon` fields in the header.
 /// (Reference: EPSG DS 301, Table 53)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum SendConnState {
     /// No connection established.
+    #[default]
     NoConnection = 0,
     /// Connection initialization requested.
     Initialization = 1,
@@ -55,19 +59,20 @@ impl TryFrom<u8> for SendConnState {
             0 => Ok(Self::NoConnection),
             1 => Ok(Self::Initialization),
             2 => Ok(Self::ConnectionValid),
-            3 => Ok(Self::ConnectionValidAckRequest), // Both Error and AckRequest use 3
+            3 => Ok(Self::ConnectionValidAckRequest),
             _ => Err(PowerlinkError::InvalidEnumValue),
         }
     }
 }
 
+
 /// Represents the 4-byte header for the Asynchronous SDO Sequence Layer.
 ///
 /// (Reference: EPSG DS 301, Table 52)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SequenceLayerHeader {
     pub receive_sequence_number: u8, // rsnr (0-63)
-    pub receive_con: ReceiveConnState,    // rcon
+    pub receive_con: ReceiveConnState,   // rcon
     pub send_sequence_number: u8,    // ssnr (0-63)
     pub send_con: SendConnState,       // scon
 }
@@ -131,5 +136,19 @@ mod tests {
 
         let deserialized_header = SequenceLayerHeader::deserialize(&buffer).unwrap();
         assert_eq!(original_header, deserialized_header);
+    }
+
+    #[test]
+    fn test_conn_state_try_from() {
+        assert_eq!(
+            ReceiveConnState::try_from(2),
+            Ok(ReceiveConnState::ConnectionValid)
+        );
+        assert!(ReceiveConnState::try_from(4).is_err());
+        assert_eq!(
+            SendConnState::try_from(3),
+            Ok(SendConnState::ConnectionValidAckRequest)
+        );
+        assert!(SendConnState::try_from(4).is_err());
     }
 }

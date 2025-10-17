@@ -15,6 +15,12 @@ pub enum CommandId {
     // Other commands can be added here later.
 }
 
+impl Default for CommandId {
+    fn default() -> Self {
+        CommandId::Nil
+    }
+}
+
 impl TryFrom<u8> for CommandId {
     type Error = PowerlinkError;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
@@ -29,9 +35,10 @@ impl TryFrom<u8> for CommandId {
 
 /// Defines the segmentation type for SDO transfers.
 /// (Reference: EPSG DS 301, Table 55)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum Segmentation {
+    #[default]
     Expedited = 0,
     Initiate = 1,
     Segment = 2,
@@ -61,6 +68,19 @@ pub struct CommandLayerHeader {
     pub segmentation: Segmentation,
     pub command_id: CommandId,
     pub segment_size: UNSIGNED16,
+}
+
+impl Default for CommandLayerHeader {
+    fn default() -> Self {
+        Self {
+            transaction_id: 0,
+            is_response: false,
+            is_aborted: false,
+            segmentation: Segmentation::default(),
+            command_id: CommandId::default(),
+            segment_size: 0,
+        }
+    }
 }
 
 /// Represents a complete SDO command layer frame, including the header and payload.
@@ -198,5 +218,87 @@ impl Codec for SdoCommand {
             data_size,
             payload,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    #[test]
+    fn test_sdo_command_expedited_roundtrip() {
+        let original = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: 1,
+                is_response: false,
+                is_aborted: false,
+                segmentation: Segmentation::Expedited,
+                command_id: CommandId::WriteByIndex,
+                segment_size: 8,
+            },
+            data_size: None,
+            payload: vec![0x10, 0x18, 0x01, 0x00, 0xDE, 0xAD, 0xBE, 0xEF],
+        };
+
+        let mut buffer = [0u8; 64];
+        let bytes_written = original.serialize(&mut buffer).unwrap();
+        let deserialized = SdoCommand::deserialize(&buffer[..bytes_written]).unwrap();
+
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_sdo_command_segmented_initiate_roundtrip() {
+        let original = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: 2,
+                is_response: false,
+                is_aborted: false,
+                segmentation: Segmentation::Initiate,
+                command_id: CommandId::WriteByIndex,
+                segment_size: 4,
+            },
+            data_size: Some(1000),
+            payload: vec![0x10, 0x60, 0x00, 0x00],
+        };
+
+        let mut buffer = [0u8; 64];
+        let bytes_written = original.serialize(&mut buffer).unwrap();
+        let deserialized = SdoCommand::deserialize(&buffer[..bytes_written]).unwrap();
+
+        assert_eq!(original, deserialized);
+        assert_eq!(deserialized.data_size, Some(1000));
+    }
+
+    #[test]
+    fn test_read_by_index_request_parser() {
+        let payload = vec![0x06, 0x10, 0x01, 0x00]; // Read 0x1006 sub 1
+        let req = ReadByIndexRequest::from_payload(&payload).unwrap();
+        assert_eq!(req.index, 0x1006);
+        assert_eq!(req.sub_index, 1);
+
+        let short_payload = vec![0x06, 0x10, 0x01];
+        assert!(ReadByIndexRequest::from_payload(&short_payload).is_err());
+    }
+
+    #[test]
+    fn test_write_by_index_request_parser() {
+        let payload = vec![0x00, 0x60, 0x00, 0x00, 0xAA, 0xBB]; // Write 0x6000 sub 0 with data
+        let req = WriteByIndexRequest::from_payload(&payload).unwrap();
+        assert_eq!(req.index, 0x6000);
+        assert_eq!(req.sub_index, 0);
+        assert_eq!(req.data, &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn test_enum_try_from() {
+        assert_eq!(CommandId::try_from(0x01), Ok(CommandId::WriteByIndex));
+        assert!(CommandId::try_from(0xFF).is_err());
+        assert_eq!(
+            Segmentation::try_from(0x02),
+            Ok(Segmentation::Segment)
+        );
+        assert!(Segmentation::try_from(0x04).is_err());
     }
 }

@@ -411,3 +411,197 @@ impl Default for SdoServer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::od::{AccessType, Object, ObjectEntry};
+    use alloc::string::ToString;
+
+    // Helper functions and structs for testing.
+    mod test_utils {
+        use super::*;
+
+        pub fn get_test_od() -> ObjectDictionary<'static> {
+            let mut od = ObjectDictionary::new(None);
+            od.insert(
+                0x1008,
+                ObjectEntry {
+                    object: Object::Variable(ObjectValue::VisibleString("Device".to_string())),
+                    name: "NMT_ManufactDevName_VS",
+                    access: AccessType::Constant,
+                },
+            );
+            od.insert(
+                0x2000,
+                ObjectEntry {
+                    object: Object::Variable(ObjectValue::Unsigned32(0x12345678)),
+                    name: "Test_U32",
+                    access: AccessType::ReadWrite,
+                },
+            );
+            od.insert(
+                0x3000,
+                ObjectEntry {
+                    object: Object::Variable(ObjectValue::OctetString(vec![0; 2000])),
+                    name: "Large_Object",
+                    access: AccessType::ReadWrite,
+                },
+            );
+            od
+        }
+
+        pub fn build_sdo_payload(
+            seq_header: SequenceLayerHeader,
+            cmd: SdoCommand,
+        ) -> Vec<u8> {
+            let mut payload = vec![0u8; 1500];
+            payload[0] = MessageType::ASnd as u8;
+            payload[3] = ServiceId::Sdo as u8;
+            seq_header.serialize(&mut payload[4..8]).unwrap();
+            let len = cmd.serialize(&mut payload[8..]).unwrap();
+            payload.truncate(8 + len);
+            payload
+        }
+    }
+
+    #[test]
+    fn test_expedited_read_ok() {
+        let mut server = SdoServer::new();
+        let mut od = test_utils::get_test_od();
+        // Assume connection is established.
+        server.state = SdoServerState::Established;
+
+        let read_cmd = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: 1,
+                command_id: CommandId::ReadByIndex,
+                ..Default::default()
+            },
+            data_size: None,
+            payload: vec![0x00, 0x20, 0x00, 0x00], // Read 0x2000 sub 0
+        };
+
+        let request = test_utils::build_sdo_payload(Default::default(), read_cmd);
+        let response = server.handle_request(&request, &mut od).unwrap();
+
+        // The response payload should start at byte 12 (4 for ASnd header, 8 for SDO headers)
+        let response_cmd = SdoCommand::deserialize(&response[8..]).unwrap();
+        assert!(!response_cmd.header.is_aborted);
+        assert_eq!(
+            response_cmd.payload,
+            0x12345678_u32.to_le_bytes().to_vec()
+        );
+    }
+
+    #[test]
+    fn test_expedited_write_ok() {
+        let mut server = SdoServer::new();
+        let mut od = test_utils::get_test_od();
+        server.state = SdoServerState::Established;
+
+        let write_cmd = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: 2,
+                command_id: CommandId::WriteByIndex,
+                ..Default::default()
+            },
+            data_size: None,
+            payload: {
+                let mut p = vec![0x00, 0x20, 0x00, 0x00]; // Write 0x2000 sub 0
+                p.extend_from_slice(&0xDEADBEEF_u32.to_le_bytes());
+                p
+            },
+        };
+
+        let request = test_utils::build_sdo_payload(Default::default(), write_cmd);
+        server.handle_request(&request, &mut od).unwrap();
+
+        // Verify the value was written
+        let value = od.read_u32(0x2000, 0).unwrap();
+        assert_eq!(value, 0xDEADBEEF);
+    }
+
+    #[test]
+    fn test_read_non_existent_aborts() {
+        let mut server = SdoServer::new();
+        let mut od = test_utils::get_test_od();
+        server.state = SdoServerState::Established;
+
+        let read_cmd = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: 3,
+                command_id: CommandId::ReadByIndex,
+                ..Default::default()
+            },
+            data_size: None,
+            payload: vec![0xFF, 0xFF, 0x00, 0x00], // Read non-existent object
+        };
+
+        let request = test_utils::build_sdo_payload(Default::default(), read_cmd);
+        let response = server.handle_request(&request, &mut od).unwrap();
+        let response_cmd = SdoCommand::deserialize(&response[8..]).unwrap();
+
+        assert!(response_cmd.header.is_aborted);
+        let abort_code = u32::from_le_bytes(response_cmd.payload.try_into().unwrap());
+        assert_eq!(abort_code, 0x0602_0000); // Object does not exist
+    }
+
+    #[test]
+    fn test_segmented_upload() {
+        let mut server = SdoServer::new();
+        let mut od = test_utils::get_test_od();
+        server.state = SdoServerState::Established;
+        server.last_received_sequence_number = 2; // Simulate prior commands
+
+        // 1. Client requests to read a large object
+        let read_cmd = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: 10,
+                command_id: CommandId::ReadByIndex,
+                ..Default::default()
+            },
+            data_size: None,
+            payload: vec![0x00, 0x30, 0x00, 0x00], // Read 0x3000
+        };
+        let request1 = test_utils::build_sdo_payload(
+            SequenceLayerHeader {
+                send_sequence_number: 3,
+                ..Default::default()
+            },
+            read_cmd,
+        );
+
+        // --- Server sends INITIATE response ---
+        let response1_payload = server.handle_request(&request1, &mut od).unwrap();
+        let response1_cmd = SdoCommand::deserialize(&response1_payload[8..]).unwrap();
+        assert_eq!(response1_cmd.header.segmentation, Segmentation::Initiate);
+        assert_eq!(response1_cmd.data_size, Some(2000));
+        assert_eq!(response1_cmd.payload.len(), MAX_EXPEDITED_PAYLOAD);
+
+        // 2. Client acknowledges by sending a NIL command
+        let nil_cmd = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: 10,
+                command_id: CommandId::Nil,
+                ..Default::default()
+            },
+            data_size: None,
+            payload: Vec::new(),
+        };
+        let request2 = test_utils::build_sdo_payload(
+            SequenceLayerHeader {
+                send_sequence_number: 4,
+                ..Default::default()
+            },
+            nil_cmd,
+        );
+
+        // --- Server sends COMPLETE response ---
+        let response2_payload = server.handle_request(&request2, &mut od).unwrap();
+        let response2_cmd = SdoCommand::deserialize(&response2_payload[8..]).unwrap();
+        assert_eq!(response2_cmd.header.segmentation, Segmentation::Complete);
+        assert_eq!(response2_cmd.payload.len(), 2000 - MAX_EXPEDITED_PAYLOAD);
+        assert_eq!(server.state, SdoServerState::Established); // Server should be back to established state
+    }
+}
