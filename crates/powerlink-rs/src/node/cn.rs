@@ -9,6 +9,7 @@ use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::{NmtEvent, NmtState};
 use crate::od::ObjectDictionary;
+use crate::sdo::server::SdoServer;
 use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
 use crate::PowerlinkError;
 use alloc::vec;
@@ -22,7 +23,7 @@ pub struct ControlledNode<'s> {
     dll_state_machine: DllCsStateMachine,
     dll_error_manager: DllErrorManager<CnErrorCounters, NoOpErrorHandler>,
     mac_address: MacAddress,
-    // TODO: Add a proper SdoServer instance here.
+    sdo_server: SdoServer,
 }
 
 impl<'s> ControlledNode<'s> {
@@ -52,6 +53,7 @@ impl<'s> ControlledNode<'s> {
             dll_state_machine: DllCsStateMachine::new(),
             dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), NoOpErrorHandler),
             mac_address,
+            sdo_server: SdoServer::new(),
         })
     }
 
@@ -60,9 +62,29 @@ impl<'s> ControlledNode<'s> {
         // Special handling for SDO frames.
         if let PowerlinkFrame::ASnd(asnd_frame) = &frame {
             if asnd_frame.service_id == crate::frame::ServiceId::Sdo {
-                // TODO: Delegate this frame to the SdoServer for processing.
-                // let response = self.sdo_server.handle_request(asnd_frame);
-                // return response;
+                match self
+                    .sdo_server
+                    .handle_request(&asnd_frame.payload, &mut self.od)
+                {
+                    Ok(response_payload) => {
+                        let response_asnd = ASndFrame::new(
+                            self.mac_address,
+                            asnd_frame.eth_header.source_mac,
+                            asnd_frame.source,
+                            self.nmt_state_machine.node_id,
+                            crate::frame::ServiceId::Sdo,
+                            response_payload,
+                        );
+                        let mut buf = vec![0u8; 1500];
+                        if let Ok(size) = response_asnd.serialize(&mut buf) {
+                            buf.truncate(size);
+                            return NodeAction::SendFrame(buf);
+                        }
+                    }
+                    Err(_) => {
+                        // TODO: Handle SDO error properly (e.g., log it).
+                    }
+                }
                 return NodeAction::NoAction;
             }
         }
