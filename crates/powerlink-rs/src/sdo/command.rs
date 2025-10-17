@@ -1,5 +1,6 @@
 // In crates/powerlink-rs/src/sdo/command.rs
 use crate::frame::Codec;
+use crate::od::ObjectValue;
 use crate::types::{UNSIGNED16, UNSIGNED32, UNSIGNED8};
 use crate::PowerlinkError;
 use alloc::vec::Vec;
@@ -69,6 +70,46 @@ pub struct SdoCommand {
     pub data_size: Option<UNSIGNED32>,
     /// The payload, which contains command-specific data.
     pub payload: Vec<u8>,
+}
+
+/// Specific data for a "Read by Index" request.
+/// (Reference: EPSG DS 301, Table 61)
+pub struct ReadByIndexRequest {
+    pub index: u16,
+    pub sub_index: u8,
+}
+
+impl ReadByIndexRequest {
+    pub fn from_payload(payload: &[u8]) -> Result<Self, PowerlinkError> {
+        if payload.len() < 4 {
+            return Err(PowerlinkError::BufferTooShort);
+        }
+        Ok(Self {
+            index: u16::from_le_bytes(payload[0..2].try_into()?),
+            sub_index: payload[2],
+        })
+    }
+}
+
+/// Specific data for a "Write by Index" request.
+/// (Reference: EPSG DS 301, Table 59)
+pub struct WriteByIndexRequest<'a> {
+    pub index: u16,
+    pub sub_index: u8,
+    pub data: &'a [u8],
+}
+
+impl<'a> WriteByIndexRequest<'a> {
+    pub fn from_payload(payload: &'a [u8]) -> Result<Self, PowerlinkError> {
+        if payload.len() < 4 {
+            return Err(PowerlinkError::BufferTooShort);
+        }
+        Ok(Self {
+            index: u16::from_le_bytes(payload[0..2].try_into()?),
+            sub_index: payload[2],
+            data: &payload[4..],
+        })
+    }
 }
 
 impl Codec for SdoCommand {
