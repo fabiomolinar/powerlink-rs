@@ -539,3 +539,36 @@ The parameter MessageType defined by Ethernet POWERLINK shall be in conformance 
 ![UDP/IP framestructure](upd_p_frame_structure.png)
 
 ### Application Layer (6)
+
+#### Data Types and Enconding Rules (6.1)
+
+Ethernet POWERLINK syntax (EtherType = 88ABh). The rules apply to the POWERLINK-Content, service specific header and data payload embedded into the Ethernet frame. The encoding of the Ethernet frame follows the rules of IEEE 802.3. MAC-Frame Header + Powerlink Frame (header + payload) + CRC.
+
+The rules also apply to POWERLINK specific payloads that are embedded into non-POWERLINK frame types (EtherType ≠ 88ABh), e.g. SDO-Transfer via UDP/IP etc. The Ethertype specific encoding of these frames are described by RFC 791 (IP) and RFC 768 (UDP). Mac-Frame Header (EtherType = 0800h) + IP Header + UDP Header + Powerlink Frame (header + payload) + CRC.
+
+For numerical data types the encoding is **little endian** style.
+
+In the SDO model, two sublayers are distinguished in the POWERLINK Protocol:
+
+- POWERLINK Sequence Layer (6.3.2.3, 6.3.3.1):
+  - The Sequence Layer is responsible for sorting the segments of a segmented transfer command so that a correct byte stream is offered to the POWERLINK Command Layer.
+- POWERLINK Command Layer (6.3.2.4, 6.3.3.2)
+  - The Command Layer defines commands to access the parameters of the object dictionary. This layer distinguishes between an expedited and a segmented transfer.
+
+![SDO Payload](SDO_payload.png)
+
+Ethernet POWERLINK provides three SDO transfer methods:
+
+1. SDO transfer via UDP/IP frames in asynchronous phase.
+2. SDO transfer via POWERLINK ASnd frames in asynchronous phase.
+3. SDO embedded in PDO in isochronous phase.
+
+The methods 1 (6.3.2.1) and 2 (6.3.2.2) share a common Sequence (6.3.2.3) and Command Layer (6.3.2.4). At method 3 (6.3.3), SDO data are packed to a compact container to be inserted to the PDO data. The Sequence and Command Layer are adapted to the compact layout of the container. On an MN, support of methods 1 and 2 shall be mandatory.
+
+Support of method 1 shall be indicated at the object dictionary by NMT_FeatureFlags_U32 Bit 1 and and in the device description by D_SDO_SupportUdpIp_BOOL. Support of method 2 shall be indicated by NMT_FeatureFlags_U32 Bit 2 and D_SDO_SupportASnd_BOOL. Support of method 3 is optional at MN and CN. Support of method 3 shall be indicated at the object dictionary by NMT_FeatureFlags_U32 Bit 3 and in the device description by D_SDO_SupportPDO_BOOL.
+
+#### SDO in Asynchronous Phase
+
+The parameter transfer is based on a UDP/IP frame, allowing data transfer via a standard IP-router. Because UDP does not support a reliable connection oriented data transfer, this task must be supported by the sequence and command services. The Command Layer is defined in the application layer, whereas the sequence layer is defined at the transport layer. 
+
+[Stopped at page 133]
