@@ -33,7 +33,7 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
 
 ## Testing
 
-Some integration tests requiring access to the network layer. `#[ignore]` is used with these tests as they require root privileges, so these are ignored by default. They can still be ran, for example with Linux, by using `sudo` and using the full path to the cargo executable (example: `sudo -E /home/<user_name>/.cargo/bin/cargo test --package powerlink-io-linux --test loopback_test -- test_cn_responds_to_preq_on_loopback --exact --show-output --ignored`)
+Some integration tests requiring access to the network layer. `#[ignore]` is used with these tests as they require root privileges, so these are ignored by default. They can still be ran, for example with Linux, by using `sudo` and using the full path to the cargo executable (example: `sudo -E /home/<user_name>/.cargo/bin/cargo test --package powerlink-io-linux --test loopback_test -- test_cn_responds_to_preq_on_loopback --exact --show-output --ignored`).
 
 ## Roadmap
 
