@@ -128,15 +128,49 @@ pub enum AccessType {
     Conditional,
 }
 
+/// Defines if an object is mandatory or optional.
+/// (Reference: EPSG DS 301, Section 6.2.1)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Category {
+    Mandatory,
+    Optional,
+    Conditional,
+}
+
+/// Defines the PDO mapping options for an object.
+/// (Reference: EPSG DS 301, Table 39)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdoMapping {
+    No,
+    Optional,
+    Default,
+}
+
+/// Represents a range of valid values for an object.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueRange {
+    pub min: ObjectValue,
+    pub max: ObjectValue,
+}
+
 /// A complete entry in the Object Dictionary, containing both the data and its metadata.
+/// (Reference: EPSG DS 301, Section 6.2.1)
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObjectEntry {
     /// The actual data, stored in the existing Object enum.
     pub object: Object,
     /// A descriptive name for the object.
     pub name: &'static str,
-    /// The access rights for this object.
-    pub access: AccessType,
+    /// The category of the object (Mandatory, Optional, etc.).
+    pub category: Category,
+    /// The access rights for this object. `None` for complex types.
+    pub access: Option<AccessType>,
+    /// The default value for this object. `None` for complex types.
+    pub default_value: Option<ObjectValue>,
+    /// The valid value range for this object. `None` for complex types.
+    pub value_range: Option<ValueRange>,
+    /// The PDO mapping possibility for this object. `None` for complex types.
+    pub pdo_mapping: Option<PdoMapping>,
 }
 
 /// The main Object Dictionary structure.
@@ -210,7 +244,11 @@ impl<'a> ObjectDictionary<'a> {
                     ObjectValue::Unsigned32(1), // Sub-index 3: Save Application Parameters
                 ]),
                 name: "NMT_StoreParam_REC",
-                access: AccessType::ReadWrite,
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
             },
         );
 
@@ -224,7 +262,11 @@ impl<'a> ObjectDictionary<'a> {
                     ObjectValue::Unsigned32(1), // Sub-index 3: Restore Application Parameters
                 ]),
                 name: "NMT_RestoreDefParam_REC",
-                access: AccessType::ReadWrite,
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
             },
         );
 
@@ -234,7 +276,11 @@ impl<'a> ObjectDictionary<'a> {
             ObjectEntry {
                 object: Object::Variable(ObjectValue::Unsigned8(0)),
                 name: "NMT_CurrNMTState_U8",
-                access: AccessType::ReadOnly,
+                category: Category::Mandatory,
+                access: Some(AccessType::ReadOnly),
+                default_value: Some(ObjectValue::Unsigned8(0)),
+                value_range: None,
+                pdo_mapping: Some(PdoMapping::No),
             },
         );
     }
@@ -374,10 +420,12 @@ impl<'a> ObjectDictionary<'a> {
         self.entries
             .get_mut(&index)
             .map_or(Err(PowerlinkError::ObjectNotFound), |entry| {
-                if check_access
-                    && matches!(entry.access, AccessType::ReadOnly | AccessType::Constant)
-                {
-                    return Err(PowerlinkError::StorageError("Object is read-only"));
+                if check_access {
+                    if let Some(access) = entry.access {
+                        if matches!(access, AccessType::ReadOnly | AccessType::Constant) {
+                            return Err(PowerlinkError::StorageError("Object is read-only"));
+                        }
+                    }
                 }
                 match &mut entry.object {
                     Object::Variable(v) => {
@@ -418,19 +466,20 @@ impl<'a> ObjectDictionary<'a> {
                     _ => false, // Other sub-indices are manufacturer-specific
                 };
 
-                if should_save
-                    && matches!(
-                        entry.access,
-                        AccessType::ReadWriteStore | AccessType::WriteOnlyStore
-                    )
-                {
-                    match &entry.object {
-                        Object::Variable(val) => {
-                            storable_params.insert((index, 0), val.clone());
-                        }
-                        Object::Record(vals) | Object::Array(vals) => {
-                            for (i, val) in vals.iter().enumerate() {
-                                storable_params.insert((index, (i + 1) as u8), val.clone());
+                if should_save {
+                    if let Some(access) = entry.access {
+                        if matches!(access, AccessType::ReadWriteStore | AccessType::WriteOnlyStore)
+                        {
+                            match &entry.object {
+                                Object::Variable(val) => {
+                                    storable_params.insert((index, 0), val.clone());
+                                }
+                                Object::Record(vals) | Object::Array(vals) => {
+                                    for (i, val) in vals.iter().enumerate() {
+                                        storable_params
+                                            .insert((index, (i + 1) as u8), val.clone());
+                                    }
+                                }
                             }
                         }
                     }
@@ -528,7 +577,11 @@ mod tests {
             ObjectEntry {
                 object: Object::Variable(ObjectValue::Unsigned32(12345)),
                 name: "TestVar",
-                access: AccessType::ReadWrite,
+                category: Category::Mandatory,
+                access: Some(AccessType::ReadWrite),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
             },
         );
 
@@ -544,7 +597,11 @@ mod tests {
             ObjectEntry {
                 object: Object::Array(vec![ObjectValue::Unsigned16(100)]),
                 name: "TestArray",
-                access: AccessType::ReadWrite,
+                category: Category::Mandatory,
+                access: None, // Access is per-element for arrays
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
             },
         );
 
@@ -564,7 +621,11 @@ mod tests {
                     ObjectValue::Unsigned16(200),
                 ]),
                 name: "TestArray",
-                access: AccessType::ReadWrite,
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
             },
         );
 
@@ -581,7 +642,11 @@ mod tests {
             ObjectEntry {
                 object: Object::Variable(ObjectValue::Unsigned8(10)),
                 name: "ReadOnlyVar",
-                access: AccessType::ReadOnly,
+                category: Category::Mandatory,
+                access: Some(AccessType::ReadOnly),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
             },
         );
 
@@ -600,7 +665,11 @@ mod tests {
                 ObjectEntry {
                     object: Object::Variable(ObjectValue::Unsigned32(123)),
                     name: "StorableVar",
-                    access: AccessType::ReadWriteStore,
+                    category: Category::Optional,
+                    access: Some(AccessType::ReadWriteStore),
+                    default_value: None,
+                    value_range: None,
+                    pdo_mapping: None,
                 },
             );
 
@@ -640,7 +709,11 @@ mod tests {
             ObjectEntry {
                 object: Object::Variable(ObjectValue::Unsigned32(0)),
                 name: "StorableVar",
-                access: AccessType::ReadWriteStore,
+                category: Category::Optional,
+                access: Some(AccessType::ReadWriteStore),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
             },
         );
 
@@ -664,18 +737,19 @@ mod tests {
                 ObjectEntry {
                     object: Object::Variable(ObjectValue::Unsigned32(0)), // Firmware default
                     name: "StorableVar",
-                    access: AccessType::ReadWriteStore,
+                    category: Category::Optional,
+                    access: Some(AccessType::ReadWriteStore),
+                    default_value: None,
+                    value_range: None,
+                    pdo_mapping: None,
                 },
             );
             od.init().unwrap();
             assert_eq!(od.read_u32(0x6000, 0).unwrap(), 0); // Back to default
         }
 
-
         assert!(storage.clear_called);
         assert!(!storage.save_called);
         assert!(!storage.restore_requested);
-
-
     }
 }

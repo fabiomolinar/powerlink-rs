@@ -185,23 +185,39 @@ mod tests {
                 ObjectValue::Boolean(0),
             ]),
             name: "NMT_EPLNodeID_REC",
-            access: AccessType::ReadWrite,
+            access: Some(AccessType::ReadWrite),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+            category: crate::od::Category::Optional,
         });
         let flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND | FeatureFlags::SDO_UDP;
         od.insert(0x1F82, ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(flags.0)),
             name: "NMT_FeatureFlags_U32",
-            access: AccessType::Constant,
+            access: Some(AccessType::Constant),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+            category: crate::od::Category::Optional,
         });
         od.insert(0x1F99, ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(5_000_000)),
             name: "NMT_CNBasicEthernetTimeout_U32",
-            access: AccessType::ReadWrite,
+            access: Some(AccessType::ReadWrite),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+            category: crate::od::Category::Optional,
         });
         od.insert(0x1F8C, ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned8(0)),
             name: "NMT_CurrNMTState_U8",
-            access: AccessType::ReadOnly,
+            access: Some(AccessType::ReadOnly),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+            category: crate::od::Category::Optional,
         });
         od
     }

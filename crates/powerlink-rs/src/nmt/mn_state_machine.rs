@@ -170,12 +170,20 @@ mod tests {
         od.insert(0x1F82, ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(flags.0)),
             name: "NMT_FeatureFlags_U32",
-            access: AccessType::Constant,
+            access: Some(AccessType::Constant),
+            default_value: Some(ObjectValue::Unsigned32(flags.0)),
+            value_range: None,
+            pdo_mapping: None,
+            category: crate::od::Category::Optional,
         });
         od.insert(0x1F80, ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(0)), // Default: Bit 13 is 0
             name: "NMT_StartUp_U32",
-            access: AccessType::ReadWrite,
+            access: Some(AccessType::ReadWrite),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+            category: crate::od::Category::Optional,
         });
         od.insert(0x1F89, ObjectEntry {
             object: Object::Record(vec![
@@ -183,12 +191,20 @@ mod tests {
                 ObjectValue::Unsigned32(500_000),  // MNTimeoutPreOp1_U32
             ]),
             name: "NMT_BootTime_REC",
-            access: AccessType::ReadWrite,
+            access: Some(AccessType::ReadWrite),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+            category: crate::od::Category::Optional,
         });
          od.insert(0x1F8C, ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned8(0)),
             name: "NMT_CurrNMTState_U8",
-            access: AccessType::ReadOnly,
+            access: Some(AccessType::ReadOnly),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+            category: crate::od::Category::Optional,
         });
         od
     }

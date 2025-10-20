@@ -425,6 +425,8 @@ mod tests {
 
     // Helper functions and structs for testing.
     mod test_utils {
+        use crate::od::Category;
+
         use super::*;
 
         pub fn get_test_od() -> ObjectDictionary<'static> {
@@ -434,7 +436,11 @@ mod tests {
                 ObjectEntry {
                     object: Object::Variable(ObjectValue::VisibleString("Device".to_string())),
                     name: "NMT_ManufactDevName_VS",
-                    access: AccessType::Constant,
+                    category: Category::Optional,
+                    access: Some(AccessType::Constant),
+                    default_value: None,
+                    value_range: None,
+                    pdo_mapping: None,
                 },
             );
             od.insert(
@@ -442,7 +448,11 @@ mod tests {
                 ObjectEntry {
                     object: Object::Variable(ObjectValue::Unsigned32(0x12345678)),
                     name: "Test_U32",
-                    access: AccessType::ReadWrite,
+                    category: Category::Optional,
+                    access: Some(AccessType::ReadWrite),
+                    default_value: None,
+                    value_range: None,
+                    pdo_mapping: None,
                 },
             );
             od.insert(
@@ -450,7 +460,11 @@ mod tests {
                 ObjectEntry {
                     object: Object::Variable(ObjectValue::OctetString(vec![0; 2000])),
                     name: "Large_Object",
-                    access: AccessType::ReadWrite,
+                    category: Category::Optional,
+                    access: Some(AccessType::ReadWrite),
+                    default_value: None,
+                    value_range: None,
+                    pdo_mapping: None,
                 },
             );
             od
