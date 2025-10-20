@@ -11,16 +11,16 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
     - [x] 4.6 Frame Structures (SoC, PReq, PRes, SoA, ASnd)
     - [x] 4.2.4 Cycle State Machines (MN and CN)
     - [x] 4.7 DLL Error Handling
-    - [ ] Other DLL concepts
+    - [x] Other DLL concepts
   - **Chapter 5 (Network/Transport Layer): 0%**
-  - **Chapter 6 (Application Layer): 5%**
+  - **Chapter 6 (Application Layer): 80%**
     - [x] 6.1 Basic Data Types (`NetTime`, `RelativeTime`)
-    - [ ] 6.2 Object Dictionary Structure
-    - [ ] 6.3 Service Data Objects (SDO)
+    - [x] 6.2 Object Dictionary Structure
+    - [x] 6.3 Service Data Objects (SDO)
     - [ ] 6.4 Process Data Objects (PDO)
-  - **Chapter 7 (NMT): 5%**
+  - **Chapter 7 (NMT): 80%**
     - [x] Basic NMT data structures (`NMTState`)
-    - [ ] 7.1 NMT State Machines
+    - [x] 7.1 NMT State Machines
     - [ ] 7.3 NMT Services
   - **Chapter 8 (Diagnostics): 0%**
   - **Chapter 9 (Routing): 0%**
@@ -30,6 +30,10 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
 - **EPSG 302-D (Multiple PReq/PRes)**: 0% (for the future)
 - **EPSG 302-E (Dynamic Node Allocation)**: 0% (for the future)
 - **EPSG 311 (Device Description)**: 0% (for the future)
+
+## Testing
+
+Some integration tests requiring access to the network layer. `#[ignore]` is used with these tests as they require root privileges, so these are ignored by default. They can still be ran, for example with Linux, by using `sudo` and using the full path to the cargo executable (example: `sudo -E /home/<user_name>/.cargo/bin/cargo test --package powerlink-io-linux --test loopback_test -- test_cn_responds_to_preq_on_loopback --exact --show-output --ignored`)
 
 ## Roadmap
 
