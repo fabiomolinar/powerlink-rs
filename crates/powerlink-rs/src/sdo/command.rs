@@ -10,9 +10,22 @@ use alloc::vec::Vec;
 #[repr(u8)]
 pub enum CommandId {
     Nil = 0x00,
+    // SDO protocol
     WriteByIndex = 0x01,
     ReadByIndex = 0x02,
-    // Other commands can be added here later.
+    WriteAllByIndex = 0x03,
+    ReadAllByIndex = 0x04,
+    WriteByName = 0x05,
+    ReadByName = 0x06,
+    // File transfer
+    FileWrite = 0x20,
+    FileRead = 0x21,
+    // Variable groups
+    WriteMultipleParamByIndex = 0x31,
+    ReadMultipleParamByIndex = 0x32,
+    // Parameter service
+    MaxSegmentSize = 0x70,
+    // Manufacturer specific from 0x80 to 0xFF
 }
 
 impl Default for CommandId {
@@ -28,6 +41,15 @@ impl TryFrom<u8> for CommandId {
             0x00 => Ok(Self::Nil),
             0x01 => Ok(Self::WriteByIndex),
             0x02 => Ok(Self::ReadByIndex),
+            0x03 => Ok(Self::WriteAllByIndex),
+            0x04 => Ok(Self::ReadAllByIndex),
+            0x05 => Ok(Self::WriteByName),
+            0x06 => Ok(Self::ReadByName),
+            0x20 => Ok(Self::FileWrite),
+            0x21 => Ok(Self::FileRead),
+            0x31 => Ok(Self::WriteMultipleParamByIndex),
+            0x32 => Ok(Self::ReadMultipleParamByIndex),
+            0x70 => Ok(Self::MaxSegmentSize),
             _ => Err(PowerlinkError::InvalidEnumValue),
         }
     }
@@ -121,7 +143,7 @@ pub struct WriteByIndexRequest<'a> {
 }
 
 impl<'a> WriteByIndexRequest<'a> {
-    pub fn from_payload(payload: &'a [u8]) -> Result<Self, PowerlinkError> {
+    pub fn from_payload(payload: &'a [u8]) -> Result<Self, PowerlinkError> {        
         if payload.len() < 4 {
             return Err(PowerlinkError::BufferTooShort);
         }

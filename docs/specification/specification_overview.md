@@ -588,3 +588,13 @@ When via POWERLINK ASnd, the payload section of the ASnd frame are used to send 
 The SDO `Sequence Layer` frame is defined as follows:
 
 ![SDO sequence layer frame](SDO_sequence_layer_frame.png)
+
+#### SDO Embedded in PDO (6.3.3)
+
+It is possible to embed the SDO in the cyclic PDO. The embedded SDO is used as a container mapped into the PDO.
+
+The Read/Write by Index command layer protocol is used to access the data. The Header of the container starts with a shortened Sequence Layer (1 Byte). The fixed part of the following POWERLINK Command Layer protocol is adopted in the following points: as the container has a fixed length, the valid data length has to be indicated. Therefore the field “valid payload length” is inserted. Up to 255 bytes of payload data may be transferred in a container.
+
+![SDO fram in PDO](SDO_frame_in_PDO.png)
+
+#### Process Data Object (6.4)
