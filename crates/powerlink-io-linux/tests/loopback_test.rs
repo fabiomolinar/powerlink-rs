@@ -2,12 +2,12 @@
 
 use powerlink_io_linux::LinuxPnetInterface;
 use powerlink_rs::{
-    frame::{PReqFrame, PReqFlags, PowerlinkFrame},
+    frame::{poll::PReqFlags, PReqFrame, PowerlinkFrame},
     nmt::flags::FeatureFlags,
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
     pdo::PDOVersion,
     types::{NodeId, C_ADR_MN_DEF_NODE_ID},
-    Codec, ControlledNode, Node, NodeAction,
+    Codec, ControlledNode, NetworkInterface, Node, NodeAction,
 };
 use pnet::datalink::interfaces;
 use std::{thread, time::Duration};
@@ -43,6 +43,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
         ObjectEntry {
             object: Object::Record(vec![
                 ObjectValue::Unsigned32(0), // VendorId
+                ObjectValue::Unsigned32(0), // ProductCode
+                ObjectValue::Unsigned32(0), // RevisionNo
+                ObjectValue::Unsigned32(0), // SerialNo
             ]),
             name: "NMT_IdentityObject_REC",
             category: Category::Mandatory,
@@ -107,19 +110,20 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
     od
 }
 
+
 #[test]
 #[ignore] // This test requires root privileges, so ignore it by default.
 fn test_cn_responds_to_preq_on_loopback() {
     let loopback_name = find_loopback().expect("No loopback interface found for testing.");
     let cn_node_id = 42;
 
-    // The MAC address for loopback is usually 00:00:00:00:00:00.
-    // We use a placeholder here as pnet will get the real one.
     let placeholder_mac = [0u8; 6];
+
+    let loopback_name_for_thread = loopback_name.clone();
 
     // --- Setup the Controlled Node in a separate thread ---
     let cn_thread = thread::spawn(move || {
-        let mut cn_interface = LinuxPnetInterface::new(&loopback_name, cn_node_id).unwrap();
+        let mut cn_interface = LinuxPnetInterface::new(&loopback_name_for_thread, cn_node_id).unwrap();
         let od = get_test_od(cn_node_id);
 
         let mut node = ControlledNode::new(od, placeholder_mac.into()).unwrap();
@@ -133,7 +137,7 @@ fn test_cn_responds_to_preq_on_loopback() {
                     if let NodeAction::SendFrame(response) = node.process_raw_frame(&buffer[..bytes]) {
                         cn_interface.send_frame(&response).unwrap();
                     }
-                    return; // Exit thread after handling the frame.
+                    return;
                 }
             }
             thread::sleep(Duration::from_millis(50));
@@ -148,7 +152,6 @@ fn test_cn_responds_to_preq_on_loopback() {
     let mut mn_interface =
         LinuxPnetInterface::new(&loopback_name, C_ADR_MN_DEF_NODE_ID).unwrap();
     let mn_mac = mn_interface.local_mac_address();
-    // On loopback, the destination MAC is often the same as the source.
     let cn_mac = mn_mac;
 
     // Create and serialize a PReq frame.
@@ -160,7 +163,7 @@ fn test_cn_responds_to_preq_on_loopback() {
         PDOVersion(0),
         vec![0x01, 0x02],
     );
-    let mut send_buffer = vec![0u8; 64]; // Ensure at least minimum Ethernet size.
+    let mut send_buffer = vec![0u8; 64];
     let size = preq.serialize(&mut send_buffer).unwrap();
     send_buffer.truncate(size);
 
@@ -178,7 +181,7 @@ fn test_cn_responds_to_preq_on_loopback() {
                 if let Ok(PowerlinkFrame::PRes(pres)) = powerlink_rs::deserialize_frame(&receive_buffer[..bytes]) {
                     // Assert that we received a valid PRes from the correct CN.
                     assert_eq!(pres.source, NodeId(cn_node_id));
-                    return; // Test successful!
+                    return;
                 }
             }
         }

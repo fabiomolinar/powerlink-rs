@@ -40,6 +40,14 @@ impl fmt::Display for MacAddress {
     }
 }
 
+impl From<[u8; 6]> for MacAddress {
+    /// Allows for ergonomic conversion from a raw byte array.
+    /// E.g., `let my_array = [0u8; 6]; let mac: MacAddress = my_array.into();`
+    fn from(bytes: [u8; 6]) -> Self {
+        MacAddress(bytes)
+    }
+}
+
 // --- Ethernet Header ---
 
 /// Represents a standard 14-byte Ethernet Header (Layer 2).
