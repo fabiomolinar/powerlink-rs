@@ -176,6 +176,11 @@ impl SdoServer {
                     payload: Vec::new(),
                 }
             }
+            _ => {
+                // Unsupported command
+                // TODO: Implement other commands as needed.
+                self.abort(command.header.transaction_id, 0x0504_0001) // Command specifier not valid
+            }
         }
     }
 
