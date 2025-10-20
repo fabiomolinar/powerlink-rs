@@ -1,6 +1,7 @@
 use crate::nmt::states::NmtState;
 use crate::frame::error::DllError;
 use alloc::vec::Vec;
+use log::debug;
 
 /// States for the Data Link Layer Cycle State Machine (DLL_CS) of a CN.
 ///
@@ -49,6 +50,10 @@ impl DllCsStateMachine {
     /// Processes an incoming event and transitions the state based on the current NMT state.
     /// The logic follows the state diagram in Figure 30 of the specification.
     pub fn process_event(&mut self, event: DllCsEvent, nmt_state: NmtState) -> Option<Vec<DllError>>{
+        debug!(
+            "DLL_CS processing event {:?} in state {:?} (NMT state: {:?})",
+            event, self.state, nmt_state
+        );
         let mut errors: Vec<DllError> = Vec::new();
         // The DLL_CS is active only in specific NMT states.
         match nmt_state {

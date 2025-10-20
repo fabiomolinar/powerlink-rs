@@ -1,5 +1,6 @@
 use crate::{frame::error::DllError, nmt::states::NmtState, NodeId};
 use alloc::vec::Vec;
+use log::debug;
 
 /// States for the Data Link Layer Cycle State Machine (DLL_MS) of a MN.
 /// (Reference: EPSG DS 301, Section 4.2.4.6.2)
@@ -52,6 +53,10 @@ impl DllMsStateMachine {
         &mut self, event: DllMsEvent, nmt_state: NmtState, response_expected: bool, 
         async_in: bool, async_out: bool, isochr: bool, isochr_out: bool, dest_node_id: NodeId
     ) -> Option<Vec<DllError>> {
+        debug!(
+            "DLL_MS processing event {:?} in state {:?} (NMT state: {:?})",
+            event, self.state, nmt_state
+        );
         let mut errors : Vec<DllError> = Vec::new();
         match nmt_state {
             NmtState::NmtPreOperational1 => {

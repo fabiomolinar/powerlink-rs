@@ -8,6 +8,7 @@ use crate::PowerlinkError;
 use super::flags::FeatureFlags;
 use super::states::{NmtEvent, NmtState};
 use alloc::vec::Vec;
+use log::{info, debug};
 
 /// Manages the NMT state for a Controlled Node.
 pub struct CnNmtStateMachine {
@@ -34,6 +35,7 @@ impl CnNmtStateMachine {
 
     /// A fallible constructor that reads its configuration from an Object Dictionary.
     pub fn from_od(od: &ObjectDictionary) -> Result<Self, PowerlinkError> {
+        debug!("Initializing CN NMT state machine from Object Dictionary.");
         // Read Node ID from OD entry 0x1F93, sub-index 1.
         let node_id_val = od.read(0x1F93, 1).ok_or(PowerlinkError::ObjectNotFound)?;
         let node_id = if let ObjectValue::Unsigned8(val) = &*node_id_val {
@@ -57,6 +59,11 @@ impl CnNmtStateMachine {
         } else {
             return Err(PowerlinkError::TypeMismatch);
         };
+        
+        info!(
+            "CN NMT configured with NodeId: {}, FeatureFlags: {:?}, BasicEthTimeout: {}",
+            node_id.0, feature_flags, basic_ethernet_timeout
+        );
 
         Ok(Self::new(node_id, feature_flags, basic_ethernet_timeout))
     }
@@ -81,7 +88,9 @@ impl NmtStateMachine for CnNmtStateMachine {
     /// This should be called in a loop after `process_event`.
     fn run_internal_initialisation(&mut self, od: &mut ObjectDictionary) {
         let mut transition = true;
+        info!("Starting internal NMT initialisation sequence.");
         while transition {
+            let old_state = self.current_state;
             let next_state = match self.current_state {
                 // After basic init, automatically move to reset the application.
                 NmtState::NmtGsInitialising => NmtState::NmtGsResetApplication,
@@ -97,8 +106,9 @@ impl NmtStateMachine for CnNmtStateMachine {
                     self.current_state
                 }
             };
-            if self.current_state != next_state {
+            if old_state != next_state {
                 self.current_state = next_state;
+                info!("NMT internal transition: {:?} -> {:?}", old_state, next_state);
                 self.update_od_state(od);
             } else {
                 transition = false;
@@ -127,9 +137,12 @@ impl NmtStateMachine for CnNmtStateMachine {
             // (NMT_CT4) Receiving a SoC in PreOp1 signals the start of the isochronous phase.
             (NmtState::NmtPreOperational1, NmtEvent::SocReceived) => NmtState::NmtPreOperational2,
             
-            // (NMT_CT5) The MN enables the next state, and the application confirms readiness.
-            (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => NmtState::NmtPreOperational2,
-            // (NMT_CT6) The MN enables the next state, and the application confirms readiness.
+            // (NMT_CT5) The MN enables the next state, but we wait for application readiness.
+            (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => {
+                debug!("Received EnableReadyToOperate, waiting for application confirmation.");
+                NmtState::NmtPreOperational2
+            },
+            // (NMT_CT6) The application signals it's ready, moving to ReadyToOperate.
             (NmtState::NmtPreOperational2, NmtEvent::CnConfigurationComplete) => NmtState::NmtReadyToOperate,            
             // (NMT_CT7) The MN commands the CN to start full operation.
             (NmtState::NmtReadyToOperate, NmtEvent::StartNode) => NmtState::NmtOperational,
@@ -157,6 +170,7 @@ impl NmtStateMachine for CnNmtStateMachine {
         };
         
         if old_state != next_state {
+            info!("NMT state transition: {:?} -> {:?} (on event: {:?})", old_state, next_state, event);
             self.current_state = next_state;
             self.update_od_state(od);
         }
@@ -301,4 +315,3 @@ mod tests {
         assert_eq!(nmt.current_state(), NmtState::NmtPreOperational2);
     }
 }
-

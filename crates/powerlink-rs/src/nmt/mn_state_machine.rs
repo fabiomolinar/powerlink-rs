@@ -8,6 +8,7 @@ use crate::PowerlinkError;
 use super::flags::FeatureFlags;
 use super::states::{NmtEvent, NmtState};
 use alloc::vec::Vec;
+use log::{debug, info};
 
 /// Manages the NMT state for a Managing Node.
 pub struct MnNmtStateMachine {
@@ -37,6 +38,7 @@ impl MnNmtStateMachine {
 
     /// A fallible constructor that reads its configuration from an Object Dictionary.
     pub fn from_od(od: &ObjectDictionary) -> Result<Self, PowerlinkError> {
+        debug!("Initializing MN NMT state machine from Object Dictionary.");
         // Feature Flags from OD entry 0x1F82, sub-index 0.
         let feature_flags_val = od.read(0x1F82, 0).ok_or(PowerlinkError::ObjectNotFound)?;
         let feature_flags = if let ObjectValue::Unsigned32(val) = &*feature_flags_val {
@@ -60,6 +62,11 @@ impl MnNmtStateMachine {
         } else {
             return Err(PowerlinkError::TypeMismatch);
         };
+        
+        info!(
+            "MN NMT configured with FeatureFlags: {:?}, WaitNotActiveTimeout: {}, StartupFlags: {:#010x}",
+            feature_flags, wait_not_active_timeout, startup_flags
+        );
 
         Ok(Self::new(
             NodeId(C_ADR_MN_DEF_NODE_ID),
@@ -88,6 +95,7 @@ impl NmtStateMachine for MnNmtStateMachine {
     fn run_internal_initialisation(&mut self, od: &mut ObjectDictionary) {
         // The MN follows the same initial reset sequence as the CN.
         if self.current_state == NmtState::NmtGsInitialising {
+            info!("Starting internal MN NMT initialisation sequence.");
             self.current_state = NmtState::NmtGsResetApplication;
             self.update_od_state(od);
             self.current_state = NmtState::NmtGsResetCommunication;
@@ -96,6 +104,7 @@ impl NmtStateMachine for MnNmtStateMachine {
             self.update_od_state(od);
             self.current_state = NmtState::NmtNotActive;
             self.update_od_state(od);
+            info!("Internal MN NMT initialisation sequence complete. State is now NotActive.");
         }
     }
 
@@ -146,6 +155,7 @@ impl NmtStateMachine for MnNmtStateMachine {
         };
 
         if old_state != next_state {
+            info!("MN NMT state transition: {:?} -> {:?} (on event: {:?})", old_state, next_state, event);
             self.current_state = next_state;
             self.update_od_state(od);
         }
@@ -273,4 +283,3 @@ mod tests {
         assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtPreOperational1 as u8));
     }
 }
-

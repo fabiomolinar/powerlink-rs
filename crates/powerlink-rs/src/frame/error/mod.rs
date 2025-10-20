@@ -8,7 +8,7 @@ pub mod types;
 pub mod counters;
 pub mod manager;
 
-pub use traits::{ErrorHandler, ErrorCounters};
+pub use traits::{ErrorHandler, ErrorCounters, LoggingErrorHandler};
 pub use types::{DllError, NmtAction};
 pub use counters::{CnErrorCounters, MnErrorCounters, ThresholdCounter};
 pub use manager::DllErrorManager;

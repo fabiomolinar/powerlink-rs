@@ -1,4 +1,5 @@
 use super::types::{DllError, NmtAction};
+use log::error;
 
 /// A trait that defines how DLL errors are reported or logged.
 pub trait ErrorHandler {
@@ -9,6 +10,15 @@ pub trait ErrorHandler {
 pub struct NoOpErrorHandler;
 impl ErrorHandler for NoOpErrorHandler {
     fn log_error(&mut self, _error: &DllError) {}
+}
+
+/// An error handler that logs all errors using the `log` facade.
+pub struct LoggingErrorHandler;
+impl ErrorHandler for LoggingErrorHandler {
+    fn log_error(&mut self, error: &DllError) {
+        // Use the error! macro from the `log` crate.
+        error!("[DLL Error]: {:?}", error);
+    }
 }
 
 /// An example `std`-based error handler that prints errors to the console.

@@ -11,6 +11,7 @@ use powerlink_rs::{
 };
 use pnet::datalink::interfaces;
 use std::{thread, time::Duration};
+use log::info;
 
 /// Helper function to find the loopback network interface by name.
 fn find_loopback() -> Option<String> {
@@ -29,7 +30,7 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
     od.insert(
         0x1000,
         ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned32(0)),
+            object: Object::Variable(ObjectValue::Unsigned32(0x12345678)),
             name: "NMT_DeviceType_U32",
             category: Category::Mandatory,
             access: Some(AccessType::Constant),
@@ -42,10 +43,10 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
         0x1018,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned32(0), // VendorId
-                ObjectValue::Unsigned32(0), // ProductCode
-                ObjectValue::Unsigned32(0), // RevisionNo
-                ObjectValue::Unsigned32(0), // SerialNo
+                ObjectValue::Unsigned32(1), // VendorId
+                ObjectValue::Unsigned32(2), // ProductCode
+                ObjectValue::Unsigned32(3), // RevisionNo
+                ObjectValue::Unsigned32(4), // SerialNo
             ]),
             name: "NMT_IdentityObject_REC",
             category: Category::Mandatory,
@@ -114,6 +115,10 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
 #[test]
 #[ignore] // This test requires root privileges, so ignore it by default.
 fn test_cn_responds_to_preq_on_loopback() {
+    // Initialize the logger.
+    // Run the test with `RUST_LOG=trace cargo test -- --ignored` to see all logs.
+    let _ = env_logger::builder().is_test(true).try_init();
+
     let loopback_name = find_loopback().expect("No loopback interface found for testing.");
     let cn_node_id = 42;
 
@@ -122,6 +127,7 @@ fn test_cn_responds_to_preq_on_loopback() {
     let loopback_name_for_thread = loopback_name.clone();
 
     // --- Setup the Controlled Node in a separate thread ---
+    info!("Setting up CN thread on interface '{}'...", loopback_name_for_thread);
     let cn_thread = thread::spawn(move || {
         let mut cn_interface = LinuxPnetInterface::new(&loopback_name_for_thread, cn_node_id).unwrap();
         let od = get_test_od(cn_node_id);
@@ -129,12 +135,14 @@ fn test_cn_responds_to_preq_on_loopback() {
         let mut node = ControlledNode::new(od, placeholder_mac.into()).unwrap();
 
         let mut buffer = [0u8; 1518];
+        info!("CN is now listening for frames...");
         // Wait for one frame, process it, and send the response.
         // Loop briefly to handle potential timeouts from the interface.
         for _ in 0..5 {
             if let Ok(bytes) = cn_interface.receive_frame(&mut buffer) {
                 if bytes > 0 {
                     if let NodeAction::SendFrame(response) = node.process_raw_frame(&buffer[..bytes]) {
+                        info!("CN sending response.");
                         cn_interface.send_frame(&response).unwrap();
                     }
                     return;
@@ -152,6 +160,7 @@ fn test_cn_responds_to_preq_on_loopback() {
     let mut mn_interface =
         LinuxPnetInterface::new(&loopback_name, C_ADR_MN_DEF_NODE_ID).unwrap();
     let mn_mac = mn_interface.local_mac_address();
+    // On loopback, source and destination MAC can be the same.
     let cn_mac = mn_mac;
 
     // Create and serialize a PReq frame.
@@ -168,20 +177,23 @@ fn test_cn_responds_to_preq_on_loopback() {
     send_buffer.truncate(size);
 
     // Send the PReq.
+    info!("MN sending PReq to Node {}", cn_node_id);
     mn_interface.send_frame(&send_buffer).unwrap();
 
     // Wait for the CN to process and send its response.
     cn_thread.join().expect("CN thread panicked");
 
     // Receive the response on the MN's interface. Loop to handle timeouts.
+    info!("MN waiting for PRes...");
     let mut receive_buffer = [0u8; 1518];
     for _ in 0..5 {
         if let Ok(bytes) = mn_interface.receive_frame(&mut receive_buffer) {
             if bytes > 0 {
                 if let Ok(PowerlinkFrame::PRes(pres)) = powerlink_rs::deserialize_frame(&receive_buffer[..bytes]) {
+                    info!("Successfully received PRes from Node {}", pres.source.0);
                     // Assert that we received a valid PRes from the correct CN.
                     assert_eq!(pres.source, NodeId(cn_node_id));
-                    return;
+                    return; // Test success
                 }
             }
         }

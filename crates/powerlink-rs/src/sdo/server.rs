@@ -11,6 +11,7 @@ use crate::types::MessageType;
 use crate::{Codec, PowerlinkError};
 use alloc::vec;
 use alloc::vec::Vec;
+use log::{debug, error, info, trace};
 
 /// The state of an SDO connection from the server's perspective.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -69,14 +70,20 @@ impl SdoServer {
         if request_payload.len() < 8 {
             return Err(PowerlinkError::BufferTooShort);
         }
+        trace!("Handling SDO request payload: {:?}", request_payload);
         let sequence_header = SequenceLayerHeader::deserialize(&request_payload[4..8])?;
         let command_payload = &request_payload[8..];
+        
+        debug!("Parsed SDO sequence header: {:?}", sequence_header);
 
         let mut response_header = self.process_sequence_layer(sequence_header)?;
         let sdo_command = SdoCommand::deserialize(command_payload)?;
+        
+        debug!("Parsed SDO command: {:?}", sdo_command);
 
         // Process the command and generate a response command.
         let response_command = self.process_command_layer(sdo_command, od);
+        debug!("Generated SDO response command: {:?}", response_command);
 
         // Acknowledge the received sequence number.
         response_header.receive_sequence_number = self.last_received_sequence_number;
@@ -106,6 +113,7 @@ impl SdoServer {
         // just serves as an ACK to trigger the next segment.
         if let SdoServerState::SegmentedUpload(state) = current_state {
             if state.transaction_id == command.header.transaction_id {
+                debug!("Client ACK received, continuing segmented upload.");
                 return self.handle_segmented_upload(state);
             }
             // If transaction ID doesn't match, restore state and fall through.
@@ -127,38 +135,43 @@ impl SdoServer {
         match command.header.command_id {
             CommandId::ReadByIndex => {
                 match ReadByIndexRequest::from_payload(&command.payload) {
-                    Ok(req) => match od.read(req.index, req.sub_index) {
-                        Some(value) => {
-                            let payload = value.serialize();
-                            if payload.len() <= MAX_EXPEDITED_PAYLOAD {
-                                // Expedited transfer
-                                response_header.segment_size = payload.len() as u16;
-                                SdoCommand {
-                                    header: response_header,
-                                    data_size: None,
-                                    payload,
+                    Ok(req) => {
+                        info!("Processing SDO Read request for 0x{:04X}/{}", req.index, req.sub_index);
+                        match od.read(req.index, req.sub_index) {
+                            Some(value) => {
+                                let payload = value.serialize();
+                                if payload.len() <= MAX_EXPEDITED_PAYLOAD {
+                                    // Expedited transfer
+                                    info!("Responding with expedited read of {} bytes.", payload.len());
+                                    response_header.segment_size = payload.len() as u16;
+                                    SdoCommand {
+                                        header: response_header,
+                                        data_size: None,
+                                        payload,
+                                    }
+                                } else {
+                                    // Initiate segmented transfer
+                                    info!("Initiating segmented upload of {} bytes.", payload.len());
+                                    let mut transfer_state = SdoTransferState {
+                                        transaction_id: command.header.transaction_id,
+                                        total_size: payload.len(),
+                                        data_buffer: payload,
+                                        offset: 0,
+                                        index: req.index,
+                                        sub_index: req.sub_index,
+                                    };
+                                    let response = self.handle_segmented_upload(transfer_state.clone());
+                                    // The handle function will set offset, update state.
+                                    transfer_state.offset += response.payload.len();
+                                    self.state = SdoServerState::SegmentedUpload(transfer_state);
+                                    response
                                 }
-                            } else {
-                                // Initiate segmented transfer
-                                let mut transfer_state = SdoTransferState {
-                                    transaction_id: command.header.transaction_id,
-                                    total_size: payload.len(),
-                                    data_buffer: payload,
-                                    offset: 0,
-                                    index: req.index,
-                                    sub_index: req.sub_index,
-                                };
-                                let response = self.handle_segmented_upload(transfer_state.clone());
-                                // The handle function will set offset, update state.
-                                transfer_state.offset += response.payload.len();
-                                self.state = SdoServerState::SegmentedUpload(transfer_state);
-                                response
                             }
+                            None => self.abort(
+                                command.header.transaction_id,
+                                0x0602_0000, // Object does not exist
+                            ),
                         }
-                        None => self.abort(
-                            command.header.transaction_id,
-                            0x0602_0000, // Object does not exist
-                        ),
                     },
                     Err(_) => self.abort(command.header.transaction_id, 0x0800_0000), // General error
                 }
@@ -170,6 +183,7 @@ impl SdoServer {
                 // A NIL command acts as an ACK, often used during segmented uploads.
                 // The main logic for handling this is already at the start of this function.
                 // If we reach here, it means we're not in a segmented upload, so just send an empty ack.
+                debug!("Received NIL command, sending empty ACK.");
                 SdoCommand {
                     header: response_header,
                     data_size: None,
@@ -178,7 +192,7 @@ impl SdoServer {
             }
             _ => {
                 // Unsupported command
-                // TODO: Implement other commands as needed.
+                error!("Unsupported SDO command received: {:?}", command.header.command_id);
                 self.abort(command.header.transaction_id, 0x0504_0001) // Command specifier not valid
             }
         }
@@ -208,8 +222,11 @@ impl SdoServer {
         };
 
         state.offset += current_chunk_size;
+        
+        debug!("Sending upload segment: offset={}, size={}", state.offset, current_chunk_size);
 
         if state.offset >= state.total_size {
+            info!("Segmented upload complete.");
             response_header.segmentation = Segmentation::Complete;
             self.state = SdoServerState::Established;
         } else {
@@ -234,6 +251,7 @@ impl SdoServer {
     ) -> SdoCommand {
         match command.header.segmentation {
             Segmentation::Expedited => {
+                info!("Processing expedited SDO Write.");
                 // Handle a complete write in a single frame.
                 match WriteByIndexRequest::from_payload(&command.payload) {
                     Ok(req) => match self.write_to_od(req.index, req.sub_index, req.data, od) {
@@ -248,6 +266,7 @@ impl SdoServer {
                 }
             }
             Segmentation::Initiate => {
+                info!("Initiating segmented SDO download.");
                 // Start a new segmented download.
                 match WriteByIndexRequest::from_payload(&command.payload) {
                     Ok(req) => {
@@ -276,8 +295,11 @@ impl SdoServer {
 
                     transfer_state.data_buffer.extend_from_slice(&command.payload);
                     transfer_state.offset += command.payload.len();
+                    
+                    debug!("Received download segment: new offset={}", transfer_state.offset);
 
                     if command.header.segmentation == Segmentation::Complete {
+                        info!("Segmented download complete, writing to OD.");
                         // All segments received, finalize the write.
                         let state = transfer_state.clone();
                         let result =
@@ -314,6 +336,7 @@ impl SdoServer {
         data: &[u8],
         od: &mut ObjectDictionary,
     ) -> Result<(), u32> {
+        info!("Writing {} bytes to OD 0x{:04X}/{}", data.len(), index, sub_index);
         match od.read(index, sub_index) {
             Some(type_template) => match ObjectValue::deserialize(data, &type_template) {
                 Ok(value) => match od.write(index, sub_index, value) {
@@ -328,6 +351,7 @@ impl SdoServer {
 
     /// Creates an SDO Abort command.
     fn abort(&self, transaction_id: u8, abort_code: u32) -> SdoCommand {
+        error!("Aborting SDO transaction {}, code: {:#010X}", transaction_id, abort_code);
         SdoCommand {
             header: CommandLayerHeader {
                 transaction_id,
@@ -348,12 +372,14 @@ impl SdoServer {
         &mut self,
         request: SequenceLayerHeader,
     ) -> Result<SequenceLayerHeader, PowerlinkError> {
+        debug!("Processing sequence layer in state {:?}", self.state);
         match self.state {
             SdoServerState::Closed => {
                 if request.send_con == SendConnState::Initialization {
                     self.state = SdoServerState::Opening;
                     self.send_sequence_number = request.send_sequence_number;
                     self.last_received_sequence_number = request.send_sequence_number;
+                    info!("SDO connection initializing.");
                     Ok(SequenceLayerHeader {
                         receive_con: ReceiveConnState::Initialization,
                         receive_sequence_number: self.last_received_sequence_number,
@@ -369,6 +395,7 @@ impl SdoServer {
                 if request.send_con == SendConnState::ConnectionValid {
                     self.state = SdoServerState::Established;
                     self.last_received_sequence_number = request.send_sequence_number;
+                    info!("SDO connection established.");
                     Ok(SequenceLayerHeader {
                         receive_con: ReceiveConnState::ConnectionValid,
                         receive_sequence_number: self.last_received_sequence_number,
@@ -385,6 +412,10 @@ impl SdoServer {
                 // A simplified check for lost frames. A full implementation would be more robust.
                 let expected_seq = self.last_received_sequence_number.wrapping_add(1) % 64;
                 if request.send_sequence_number != expected_seq {
+                    error!(
+                        "SDO sequence number mismatch. Expected {}, got {}. Requesting retransmission.",
+                        expected_seq, request.send_sequence_number
+                    );
                     // Request retransmission.
                     return Ok(SequenceLayerHeader {
                         receive_con: ReceiveConnState::ErrorResponse,

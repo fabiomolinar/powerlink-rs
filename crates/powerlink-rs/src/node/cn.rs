@@ -2,7 +2,7 @@ use super::{handler::FrameHandler, Node, NodeAction};
 use crate::frame::basic::MacAddress;
 use crate::frame::{
     deserialize_frame,
-    error::{CnErrorCounters, DllErrorManager, NoOpErrorHandler},
+    error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler},
     ASndFrame, Codec, DllCsStateMachine, DllError, NmtAction, PowerlinkFrame, PResFrame,
 };
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
@@ -14,6 +14,7 @@ use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
 use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
+use log::{debug, error, info, trace, warn};
 
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct owns and manages all protocol layers and state machines.
@@ -21,7 +22,7 @@ pub struct ControlledNode<'s> {
     pub(super) od: ObjectDictionary<'s>,
     pub(super) nmt_state_machine: CnNmtStateMachine,
     dll_state_machine: DllCsStateMachine,
-    dll_error_manager: DllErrorManager<CnErrorCounters, NoOpErrorHandler>,
+    dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
     mac_address: MacAddress,
     sdo_server: SdoServer,
 }
@@ -37,6 +38,7 @@ impl<'s> ControlledNode<'s> {
         mut od: ObjectDictionary<'s>,
         mac_address: MacAddress,
     ) -> Result<Self, PowerlinkError> {
+        info!("Creating new Controlled Node.");
         // Initialise the OD, which involves loading from storage or applying defaults.
         od.init()?;
 
@@ -51,7 +53,7 @@ impl<'s> ControlledNode<'s> {
             od,
             nmt_state_machine,
             dll_state_machine: DllCsStateMachine::new(),
-            dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), NoOpErrorHandler),
+            dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
             mac_address,
             sdo_server: SdoServer::new(),
         })
@@ -62,6 +64,7 @@ impl<'s> ControlledNode<'s> {
         // Special handling for SDO frames.
         if let PowerlinkFrame::ASnd(asnd_frame) = &frame {
             if asnd_frame.service_id == crate::frame::ServiceId::Sdo {
+                debug!("Received SDO/ASnd frame for processing.");
                 match self
                     .sdo_server
                     .handle_request(&asnd_frame.payload, &mut self.od)
@@ -78,11 +81,13 @@ impl<'s> ControlledNode<'s> {
                         let mut buf = vec![0u8; 1500];
                         if let Ok(size) = response_asnd.serialize(&mut buf) {
                             buf.truncate(size);
+                            info!("Sending SDO response.");
+                            trace!("SDO response payload: {:?}", &buf);
                             return NodeAction::SendFrame(buf);
                         }
                     }
-                    Err(_) => {
-                        // TODO: Handle SDO error properly (e.g., log it).
+                    Err(e) => {
+                        error!("SDO server error: {:?}", e);
                     }
                 }
                 return NodeAction::NoAction;
@@ -101,6 +106,7 @@ impl<'s> ControlledNode<'s> {
         ) {
             // If the DLL detects an error (like a lost frame), pass it to the error manager.
             for error in errors {
+                warn!("DLL state machine reported error: {:?}", error);
                 if self.dll_error_manager.handle_error(error) != NmtAction::None {
                     // Per Table 27, most DLL errors on a CN trigger an NMT state change to PreOp1.
                     self.nmt_state_machine
@@ -112,7 +118,7 @@ impl<'s> ControlledNode<'s> {
         // 3. Delegate response logic to the frame handler.
         if let Some(response_frame) = frame.handle_cn(self) {
             let mut buf = vec![0u8; 1500];
-            let serialize_result = match response_frame {
+            let serialize_result = match &response_frame {
                 PowerlinkFrame::Soc(frame) => frame.serialize(&mut buf),
                 PowerlinkFrame::PReq(frame) => frame.serialize(&mut buf),
                 PowerlinkFrame::PRes(frame) => frame.serialize(&mut buf),
@@ -121,6 +127,7 @@ impl<'s> ControlledNode<'s> {
             };
             if let Ok(size) = serialize_result {
                 buf.truncate(size);
+                info!("Sending response frame: {:?}", response_frame);
                 return NodeAction::SendFrame(buf);
             }
         }
@@ -131,6 +138,7 @@ impl<'s> ControlledNode<'s> {
     /// Builds an `ASnd` frame for the `IdentResponse` service.
     /// This function is typically called by the `FrameHandler` implementation for `SoAFrame`.
     pub(super) fn build_ident_response(&self, soa: &crate::frame::SoAFrame) -> PowerlinkFrame {
+        debug!("Building IdentResponse for SoA from node {}", soa.source.0);
         let payload = self.build_ident_response_payload();
         let asnd = ASndFrame::new(
             self.mac_address,
@@ -145,7 +153,9 @@ impl<'s> ControlledNode<'s> {
 
     /// Builds a `PRes` frame in response to being polled by a `PReq`.
     /// This function is typically called by the `FrameHandler` implementation for `PReqFrame`.
-    pub(super) fn build_pres_response(&self, _preq: &crate::frame::PReqFrame) -> PowerlinkFrame {
+    pub(super) fn build_pres_response(&self, preq: &crate::frame::PReqFrame) -> PowerlinkFrame {
+        debug!("Building PRes in response to PReq for node {}", preq.destination.0);
+        // TODO: Map PDOs to the payload here.
         let payload = Vec::new();
         let pres = PResFrame::new(
             self.mac_address,
@@ -201,29 +211,25 @@ impl<'s> ControlledNode<'s> {
 
 impl<'s> Node for ControlledNode<'s> {
     fn process_raw_frame(&mut self, buffer: &[u8]) -> NodeAction {
+        trace!("Received {} raw bytes.", buffer.len());
         match deserialize_frame(buffer) {
             Ok(frame) => self.process_frame(frame),
-            Err(PowerlinkError::InvalidPlFrame) | Err(PowerlinkError::InvalidEthernetFrame) => {
-                if self
-                    .dll_error_manager
-                    .handle_error(DllError::InvalidFormat)
-                    != NmtAction::None
-                {
-                    self.nmt_state_machine
-                        .process_event(NmtEvent::Error, &mut self.od);
-                }
+            Err(e) => {
+                debug!("Failed to deserialize frame: {:?}", e);
+                // Don't trigger a full NMT reset for simple parsing errors unless a threshold is met.
+                // The error manager will decide if an NMT action is needed.
+                self.dll_error_manager
+                    .handle_error(DllError::InvalidFormat);
                 NodeAction::NoAction
             }
-            Err(_) => NodeAction::NoAction,
         }
     }
 
     fn tick(&mut self) -> NodeAction {
         if self.nmt_state() == NmtState::NmtNotActive {
-            // Check if the BasicEthernetTimeout has expired.
             // A real implementation would use a timer provided by the HAL.
-            // For now, we simulate this by checking a condition.
-            // If it has expired:
+            // When the timer expires, the application calls tick(), which triggers the event.
+            info!("BasicEthernetTimeout expired, triggering NMT Timeout event.");
             self.nmt_state_machine
                 .process_event(NmtEvent::Timeout, &mut self.od);
         }

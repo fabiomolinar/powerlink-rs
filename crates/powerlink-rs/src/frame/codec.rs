@@ -6,6 +6,7 @@ use crate::frame::{
 };
 use crate::types::{MessageType, NodeId};
 use crate::PowerlinkError;
+use log::debug;
 
 /// A trait for objects that can be serialized into and deserialized from a byte buffer.
 pub trait Codec: Sized {
@@ -70,12 +71,18 @@ pub fn deserialize_frame(buffer: &[u8]) -> Result<PowerlinkFrame, PowerlinkError
     // The message type is in the lower 7 bits of the 15th byte (index 14).
     let message_type_byte = buffer[14] & 0x7F;
     
-    match MessageType::try_from(message_type_byte) {
+    let result = match MessageType::try_from(message_type_byte) {
         Ok(MessageType::SoC) => SocFrame::deserialize(buffer).map(PowerlinkFrame::Soc),
         Ok(MessageType::PReq) => PReqFrame::deserialize(buffer).map(PowerlinkFrame::PReq),
         Ok(MessageType::PRes) => PResFrame::deserialize(buffer).map(PowerlinkFrame::PRes),
         Ok(MessageType::SoA) => SoAFrame::deserialize(buffer).map(PowerlinkFrame::SoA),
         Ok(MessageType::ASnd) => ASndFrame::deserialize(buffer).map(PowerlinkFrame::ASnd),
         Err(_) => Err(PowerlinkError::InvalidPlFrame),
+    };
+
+    if let Ok(frame) = &result {
+        debug!("Successfully deserialized frame: {:?}", frame);
     }
+    
+    result
 }
