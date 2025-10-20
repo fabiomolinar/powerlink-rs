@@ -11,6 +11,4 @@ edition.workspace = true
 
 [dependencies]
 powerlink-rs = { path = "../powerlink-rs", version = "0.1.0", features = ["std"] }
-# Placeholder dependency for raw socket access (e.g., libpcap wrapper, or standard sockets)
-# Could assume standard OS sockets using the standard library:
-# socket2 = { version = "0.5", optional = true } 
+pnet = "0.35"

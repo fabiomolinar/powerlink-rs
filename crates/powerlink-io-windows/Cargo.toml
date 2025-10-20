@@ -12,5 +12,4 @@ edition.workspace = true
 
 [dependencies]
 powerlink-rs = { path = "../powerlink-rs", version = "0.1.0", features = ["std"] }
-# Windows raw packet handling often requires specific bindings or wrappers (like WinPcap/Npcap),
-# but we leave placeholders here as direct standard Rust net APIs usually aren't sufficient for raw Ethernet.
+pnet = "0.35"
