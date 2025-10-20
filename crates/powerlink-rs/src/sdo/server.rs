@@ -420,13 +420,11 @@ impl Default for SdoServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::od::{AccessType, Object, ObjectEntry};
+    use crate::od::{AccessType, Category, Object, ObjectEntry};
     use alloc::string::ToString;
 
     // Helper functions and structs for testing.
     mod test_utils {
-        use crate::od::Category;
-
         use super::*;
 
         pub fn get_test_od() -> ObjectDictionary<'static> {
@@ -475,11 +473,11 @@ mod tests {
             cmd: SdoCommand,
         ) -> Vec<u8> {
             let mut payload = vec![0u8; 1500];
-            payload[0] = MessageType::ASnd as u8;
-            payload[3] = ServiceId::Sdo as u8;
-            seq_header.serialize(&mut payload[4..8]).unwrap();
-            let len = cmd.serialize(&mut payload[8..]).unwrap();
-            payload.truncate(8 + len);
+            // The ASnd payload IS the SDO data.
+            let mut offset = 0;
+            offset += seq_header.serialize(&mut payload[offset..]).unwrap();
+            offset += cmd.serialize(&mut payload[offset..]).unwrap();
+            payload.truncate(offset);
             payload
         }
     }
@@ -501,10 +499,18 @@ mod tests {
             payload: vec![0x00, 0x20, 0x00, 0x00], // Read 0x2000 sub 0
         };
 
-        let request = test_utils::build_sdo_payload(Default::default(), read_cmd);
-        let response = server.handle_request(&request, &mut od).unwrap();
+        // This payload only contains the SDO data (Seq + Cmd)
+        let request_sdo_payload =
+            test_utils::build_sdo_payload(Default::default(), read_cmd);
+        // The server expects the ASnd payload, which is just the SDO data.
+        let mut full_request_payload = vec![0u8; 4];
+        full_request_payload.extend_from_slice(&request_sdo_payload);
 
-        // The response payload should start at byte 12 (4 for ASnd header, 8 for SDO headers)
+        let response = server
+            .handle_request(&full_request_payload, &mut od)
+            .unwrap();
+
+        // The response payload should contain the SDO response.
         let response_cmd = SdoCommand::deserialize(&response[8..]).unwrap();
         assert!(!response_cmd.header.is_aborted);
         assert_eq!(
@@ -533,8 +539,14 @@ mod tests {
             },
         };
 
-        let request = test_utils::build_sdo_payload(Default::default(), write_cmd);
-        server.handle_request(&request, &mut od).unwrap();
+        let request_sdo_payload =
+            test_utils::build_sdo_payload(Default::default(), write_cmd);
+        let mut full_request_payload = vec![0u8; 4];
+        full_request_payload.extend_from_slice(&request_sdo_payload);
+
+        server
+            .handle_request(&full_request_payload, &mut od)
+            .unwrap();
 
         // Verify the value was written
         let value = od.read_u32(0x2000, 0).unwrap();
@@ -557,12 +569,19 @@ mod tests {
             payload: vec![0xFF, 0xFF, 0x00, 0x00], // Read non-existent object
         };
 
-        let request = test_utils::build_sdo_payload(Default::default(), read_cmd);
-        let response = server.handle_request(&request, &mut od).unwrap();
+        let request_sdo_payload =
+            test_utils::build_sdo_payload(Default::default(), read_cmd);
+        let mut full_request_payload = vec![0u8; 4];
+        full_request_payload.extend_from_slice(&request_sdo_payload);
+
+        let response = server
+            .handle_request(&full_request_payload, &mut od)
+            .unwrap();
         let response_cmd = SdoCommand::deserialize(&response[8..]).unwrap();
 
         assert!(response_cmd.header.is_aborted);
-        let abort_code = u32::from_le_bytes(response_cmd.payload.try_into().unwrap());
+        let abort_code =
+            u32::from_le_bytes(response_cmd.payload.try_into().unwrap());
         assert_eq!(abort_code, 0x0602_0000); // Object does not exist
     }
 
@@ -583,18 +602,23 @@ mod tests {
             data_size: None,
             payload: vec![0x00, 0x30, 0x00, 0x00], // Read 0x3000
         };
-        let request1 = test_utils::build_sdo_payload(
+        let request1_sdo = test_utils::build_sdo_payload(
             SequenceLayerHeader {
                 send_sequence_number: 3,
                 ..Default::default()
             },
             read_cmd,
         );
+        let mut request1_full = vec![0u8; 4];
+        request1_full.extend_from_slice(&request1_sdo);
 
         // --- Server sends INITIATE response ---
-        let response1_payload = server.handle_request(&request1, &mut od).unwrap();
+        let response1_payload = server.handle_request(&request1_full, &mut od).unwrap();
         let response1_cmd = SdoCommand::deserialize(&response1_payload[8..]).unwrap();
-        assert_eq!(response1_cmd.header.segmentation, Segmentation::Initiate);
+        assert_eq!(
+            response1_cmd.header.segmentation,
+            Segmentation::Initiate
+        );
         assert_eq!(response1_cmd.data_size, Some(2000));
         assert_eq!(response1_cmd.payload.len(), MAX_EXPEDITED_PAYLOAD);
 
@@ -608,19 +632,27 @@ mod tests {
             data_size: None,
             payload: Vec::new(),
         };
-        let request2 = test_utils::build_sdo_payload(
+        let request2_sdo = test_utils::build_sdo_payload(
             SequenceLayerHeader {
                 send_sequence_number: 4,
                 ..Default::default()
             },
             nil_cmd,
         );
+        let mut request2_full = vec![0u8; 4];
+        request2_full.extend_from_slice(&request2_sdo);
 
         // --- Server sends COMPLETE response ---
-        let response2_payload = server.handle_request(&request2, &mut od).unwrap();
+        let response2_payload = server.handle_request(&request2_full, &mut od).unwrap();
         let response2_cmd = SdoCommand::deserialize(&response2_payload[8..]).unwrap();
-        assert_eq!(response2_cmd.header.segmentation, Segmentation::Complete);
-        assert_eq!(response2_cmd.payload.len(), 2000 - MAX_EXPEDITED_PAYLOAD);
+        assert_eq!(
+            response2_cmd.header.segmentation,
+            Segmentation::Complete
+        );
+        assert_eq!(
+            response2_cmd.payload.len(),
+            2000 - MAX_EXPEDITED_PAYLOAD
+        );
         assert_eq!(server.state, SdoServerState::Established); // Server should be back to established state
     }
 }
