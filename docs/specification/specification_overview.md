@@ -384,7 +384,6 @@ SoC frame data fields:
 
 PReq frame data fields:
 
-
 | Field                 | Abbr | Description                                                                          | Value                     |
 | --------------------- | ---- | ------------------------------------------------------------------------------------ | ------------------------- |
 | Message Type          | mtyp | POWERLINK message type identification                                                | PReq                      |
@@ -492,7 +491,7 @@ The following error sources are handled by the MN and the CN. Details are explai
 
 ### Network/Transport Layer (5)
 
-The Internet Protocol version 4 (IPv4) and its referred transport layer protocols UDP and TCP are the preferred protocols in the asynchronous phase. 
+The Internet Protocol version 4 (IPv4) and its referred transport layer protocols UDP and TCP are the preferred protocols in the asynchronous phase.
 
 MNs shall support IP communication. CNs that don’t support SDO via UDP/IP do not need an IP stack.
 
@@ -504,7 +503,7 @@ Each IP-capable POWERLINK node possesses an IPv4 address, a subnet mask and defa
 
 #### IP Addressing (5.1.2)
 
-The private class C Net ID 192.168.100.0 shall be used for a POWERLINK network – see RFC1918. A class C network provides 254 (1-254) IP addresses, which matches the number of valid POWERLINK Node ID’s. Hence the last byte of the IP address (Host ID) has the same value as the POWERLINK Node ID. Hence, a POWERLINK node with an IP address of `192.168.100.<ID>` belongs to the 192.168.100.0 class C network and has an ID of `<ID>`. **Knowing the Node ID of a POWERLINK node, its IP address and vice versa can be determined easily without any communication overhead**. 
+The private class C Net ID 192.168.100.0 shall be used for a POWERLINK network – see RFC1918. A class C network provides 254 (1-254) IP addresses, which matches the number of valid POWERLINK Node ID’s. Hence the last byte of the IP address (Host ID) has the same value as the POWERLINK Node ID. Hence, a POWERLINK node with an IP address of `192.168.100.<ID>` belongs to the 192.168.100.0 class C network and has an ID of `<ID>`. **Knowing the Node ID of a POWERLINK node, its IP address and vice versa can be determined easily without any communication overhead**.
 
 **The subnet mask of a POWERLINK node shall be 255.255.255.0. This is the subnet mask of a class C net**.
 
@@ -512,7 +511,7 @@ The Default Gateway preset shall use the IP address 192.168.100.254. The value m
 
 #### Address Resolution (5.1.3)
 
-The Address Resolution Protocol (ARP) specified in RFC 826 shall be used to obtain the IP to Ethernet MAC relation of a POWERLINK node. Depending on the POWERLINK node state: 
+The Address Resolution Protocol (ARP) specified in RFC 826 shall be used to obtain the IP to Ethernet MAC relation of a POWERLINK node. Depending on the POWERLINK node state:
 
 - NMT_CS_EPL_MODE and NMT_MS_EPL_MODE state: ARP shall be performed in the asynchronous phase. To reduce the traffic in the asynchronus phase, the MN may determine the IP to MAC address relation from the ident process.
 - NMT_CS_BASIC_ETHERNET state: ARP shall be performed like an IEEE802.3 compliant node does, using CSMA/CD.
@@ -567,8 +566,25 @@ The methods 1 (6.3.2.1) and 2 (6.3.2.2) share a common Sequence (6.3.2.3) and Co
 
 Support of method 1 shall be indicated at the object dictionary by NMT_FeatureFlags_U32 Bit 1 and and in the device description by D_SDO_SupportUdpIp_BOOL. Support of method 2 shall be indicated by NMT_FeatureFlags_U32 Bit 2 and D_SDO_SupportASnd_BOOL. Support of method 3 is optional at MN and CN. Support of method 3 shall be indicated at the object dictionary by NMT_FeatureFlags_U32 Bit 3 and in the device description by D_SDO_SupportPDO_BOOL.
 
-#### SDO in Asynchronous Phase
+#### SDO in Asynchronous Phase (6.3.2)
 
-The parameter transfer is based on a UDP/IP frame, allowing data transfer via a standard IP-router. Because UDP does not support a reliable connection oriented data transfer, this task must be supported by the sequence and command services. The Command Layer is defined in the application layer, whereas the sequence layer is defined at the transport layer. 
+Below is a list of modes that can be used to transfer SDOs:
 
-[Stopped at page 133]
+- Via UDP/IP
+- Via POWERLINK ASnd
+
+When via UDP/IP, the parameter transfer is based on a UDP/IP frame, allowing data transfer via a standard IP-router. Because UDP does not support a reliable connection oriented data transfer, this task must be supported by the sequence and command services. The Command Layer is defined in the application layer, whereas the sequence layer is defined at the transport layer.
+
+![SDO in UDP/IP frame](SDO_UDP_IP_in_asynch.png)
+
+SDO frame during UDP/IP asynchronous communication:
+
+![SDO frame in UDP/IP](SDO_UDP_IP_frame.png)
+
+When via POWERLINK ASnd, the payload section of the ASnd frame are used to send the `Sequence Layer Protocol`, the `Command Layer Protocol`, plus the SDO payload.
+
+![SDO frame in POWERLINK](SDO_POWERLINK_frame.png)
+
+The SDO `Sequence Layer` frame is defined as follows:
+
+![SDO sequence layer frame](SDO_sequence_layer_frame.png)

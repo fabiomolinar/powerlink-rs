@@ -135,15 +135,12 @@ impl<'a> WriteByIndexRequest<'a> {
 
 impl Codec for SdoCommand {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        let mut offset = 0;
         if buffer.len() < 8 {
             return Err(PowerlinkError::BufferTooShort);
         }
 
-        buffer[offset] = 0; // Reserved
-        offset += 1;
-        buffer[offset] = self.header.transaction_id;
-        offset += 1;
+        buffer[0] = 0; // Reserved
+        buffer[1] = self.header.transaction_id;        
 
         let mut flags = 0u8;
         if self.header.is_response {
@@ -153,31 +150,25 @@ impl Codec for SdoCommand {
             flags |= 1 << 6;
         }
         flags |= (self.header.segmentation as u8) << 4;
-        buffer[offset] = flags;
-        offset += 1;
+        buffer[2] = flags;       
 
-        buffer[offset] = self.header.command_id as u8;
-        offset += 1;
-        buffer[offset..offset + 2].copy_from_slice(&self.header.segment_size.to_le_bytes());
-        offset += 2;
-        buffer[offset..offset + 2].copy_from_slice(&[0, 0]); // Reserved
-        offset += 2;
+        buffer[3] = self.header.command_id as u8;
+        buffer[4..6].copy_from_slice(&self.header.segment_size.to_le_bytes());        
+        buffer[6..8].copy_from_slice(&[0, 0]); // Reserved        
 
         if let Some(data_size) = self.data_size {
-            if buffer.len() < offset + 4 {
+            if buffer.len() < 12 {
                 return Err(PowerlinkError::BufferTooShort);
             }
-            buffer[offset..offset + 4].copy_from_slice(&data_size.to_le_bytes());
-            offset += 4;
+            buffer[8..12].copy_from_slice(&data_size.to_le_bytes());            
         }
 
-        if buffer.len() < offset + self.payload.len() {
+        if buffer.len() < 12 + self.payload.len() {
             return Err(PowerlinkError::BufferTooShort);
         }
-        buffer[offset..offset + self.payload.len()].copy_from_slice(&self.payload);
-        offset += self.payload.len();
-
-        Ok(offset)
+        buffer[12..12 + self.payload.len()].copy_from_slice(&self.payload);
+        
+        Ok(12 + self.payload.len())
     }
 
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {

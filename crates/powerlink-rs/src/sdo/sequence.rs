@@ -68,7 +68,7 @@ impl TryFrom<u8> for SendConnState {
 
 /// Represents the 4-byte header for the Asynchronous SDO Sequence Layer.
 ///
-/// (Reference: EPSG DS 301, Table 52)
+/// (Reference: EPSG DS 301, Table 52 and 53)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SequenceLayerHeader {
     pub receive_sequence_number: u8, // rsnr (0-63)
