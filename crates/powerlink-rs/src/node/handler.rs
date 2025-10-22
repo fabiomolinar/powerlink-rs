@@ -49,35 +49,42 @@ impl FrameHandler for PowerlinkFrame {
         }
     }
 
+    /// Processes the frame within the context of a `ControlledNode` and
+    /// builds a response frame if required.
     fn handle_cn(&self, node: &ControlledNode) -> Option<PowerlinkFrame> {
-        // A CN should only respond to PReq or specific SoA frames when it's
-        // in a state that is part of the isochronous cycle [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Table 108].
-        match node.nmt_state() {
-            NmtState::NmtPreOperational2
-            | NmtState::NmtReadyToOperate
-            | NmtState::NmtOperational => {
-                // Existing logic for handling frames in a valid state
-                match self {
-                    PowerlinkFrame::PReq(frame) => Some(node.build_pres_response(frame)),
-                    _ => None, // Other frames like SoC don't require a direct response
+        match self {
+            // Handle SoA frames, specifically IdentRequest.
+            PowerlinkFrame::SoA(frame) => {
+                match node.nmt_state() {
+                    // Per Table 108, IdentRequest can be handled in PreOp1 and PreOp2.
+                    NmtState::NmtPreOperational1 | NmtState::NmtPreOperational2 => {
+                        if frame.target_node_id == node.nmt_state_machine.node_id
+                            && frame.req_service_id == RequestedServiceId::IdentRequest
+                        {
+                            Some(node.build_ident_response(frame))
+                        } else {
+                            None
+                        }
+                    }
+                    // In other states, a CN does not respond to SoA.
+                    _ => None,
                 }
             }
-            // In PreOp1, the node only responds to specific asynchronous invites like IdentRequest.
-            NmtState::NmtPreOperational1 => match self {
-                PowerlinkFrame::SoA(frame) => {
-                    if frame.target_node_id == node.nmt_state_machine.node_id
-                        && frame.req_service_id == RequestedServiceId::IdentRequest
-                    {
-                        Some(node.build_ident_response(frame))
-                    } else {
-                        None
-                    }
+            // Handle PReq frames.
+            PowerlinkFrame::PReq(frame) => {
+                match node.nmt_state() {
+                    // A CN only responds to PReq when in isochronous states.
+                    NmtState::NmtPreOperational2
+                    | NmtState::NmtReadyToOperate
+                    | NmtState::NmtOperational => Some(node.build_pres_response(frame)),
+                    // In other states, a CN does not respond to PReq.
+                    _ => None,
                 }
-                _ => None,
-            },
-            // In all other states (NotActive, Initialising, etc.), do not respond.
+            }
+            // Other frames like SoC, PRes, ASnd do not require a direct response from a CN
+            // in this handler logic. SDO/ASnd is handled earlier in the node.
             _ => None,
         }
     }
-
 }
+

@@ -11,7 +11,7 @@ use powerlink_rs::{
 };
 use pnet::datalink::interfaces;
 use std::sync::mpsc;
-use std::{thread, time::Duration};
+use std::{thread, time::{Duration, Instant}};
 
 /// Helper function to find the loopback network interface by name.
 fn find_loopback() -> Option<String> {
@@ -182,6 +182,7 @@ fn test_loopback_send_and_receive() {
 #[test]
 #[ignore] // This test requires root privileges, so ignore it by default.
 fn test_cn_responds_to_ident_request() {
+    let _ = env_logger::builder().is_test(true).try_init();
     let loopback_name = find_loopback().expect("No loopback interface found for testing.");
     let cn_node_id = 42;
     let placeholder_mac = [0u8; 6];
@@ -197,30 +198,33 @@ fn test_cn_responds_to_ident_request() {
         println!("[CN] Initial NMT state: {:?}", node.nmt_state());
 
         let mut buffer = [0u8; 1518];
-        let mut frames_processed = 0;
-        // The CN needs to process 2 frames: SoC, then SoA.
-        while frames_processed < 2 {
+        let start_time = Instant::now();
+
+        // Run for up to 2 seconds, waiting for frames to process.
+        while start_time.elapsed() < Duration::from_secs(2) {
             match cn_interface.receive_frame(&mut buffer) {
                 Ok(bytes) if bytes > 0 => {
                     println!("[CN] Received {} bytes.", bytes);
-                    let frame_result = powerlink_rs::deserialize_frame(&buffer[..bytes]);
-                    println!("[CN] Deserialized frame: {:?}", frame_result);
-
+                    // process_raw_frame will now correctly ignore non-POWERLINK frames.
                     if let NodeAction::SendFrame(response) =
                         node.process_raw_frame(&buffer[..bytes])
                     {
-                        println!("[CN] Sending response of {} bytes.", response.len());
+                        println!("[CN] Sending IdentResponse of {} bytes.", response.len());
                         cn_interface.send_frame(&response).unwrap();
+                        println!("[CN] Response sent. Thread finished.");
+                        return; // The job is done, exit the thread.
                     }
                     println!("[CN] New NMT state: {:?}", node.nmt_state());
-                    frames_processed += 1;
                 }
-                _ => {} // Ignore timeouts and empty reads
+                _ => {
+                    // This branch is taken on receive timeout or error.
+                    // Continue looping without printing anything.
+                }
             }
-            thread::sleep(Duration::from_millis(10));
         }
-        println!("[CN] Thread finished.");
+        println!("[CN] Thread timed out without sending a response.");
     });
+
 
     thread::sleep(Duration::from_millis(200));
 
@@ -262,8 +266,6 @@ fn test_cn_responds_to_ident_request() {
     println!("[MN] Sending SoA(IdentRequest)...");
     mn_interface.send_frame(&soa_buffer).unwrap();
 
-    cn_thread.join().expect("CN thread panicked");
-
     // 3. Receive the ASnd(IdentResponse) from the CN
     let mut receive_buffer = [0u8; 1518];
     println!("[MN] Waiting for IdentResponse...");
@@ -278,6 +280,8 @@ fn test_cn_responds_to_ident_request() {
                         && asnd.service_id == ServiceId::IdentResponse
                     {
                         println!("[MN] Success! Received valid IdentResponse.");
+                        // Wait for the CN thread to finish to see all its logs.
+                        cn_thread.join().expect("CN thread panicked");
                         return; // Test successful!
                     }
                 }
@@ -286,6 +290,7 @@ fn test_cn_responds_to_ident_request() {
         thread::sleep(Duration::from_millis(50));
     }
 
+    // If the loop finishes, the test has failed. Wait for the thread to see its final output.
+    cn_thread.join().expect("CN thread panicked");
     panic!("Did not receive a valid ASnd(IdentResponse) frame from the CN.");
 }
-

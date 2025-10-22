@@ -219,30 +219,36 @@ impl<'s> ControlledNode<'s> {
 
 impl<'s> Node for ControlledNode<'s> {
     fn process_raw_frame(&mut self, buffer: &[u8]) -> NodeAction {
-        if let Ok(frame) = deserialize_frame(buffer) {
-            // Update last seen SoC time to prevent BasicEthernet timeout
-            if matches!(frame, PowerlinkFrame::Soc(_)) {
-                // In a real implementation, `current_time` would come from the HAL.
-                // For now, we'll just reset a flag. This part of the logic is simplified.
-                self.last_soc_time = 0; // Represents "recently seen"
+        match deserialize_frame(buffer) {
+            Ok(frame) => {
+                // Update last seen SoC time to prevent BasicEthernet timeout
+                if matches!(frame, PowerlinkFrame::Soc(_)) {
+                    // In a real implementation, `current_time` would come from the HAL.
+                    // For now, we'll just reset a flag. This part of the logic is simplified.
+                    self.last_soc_time = 0; // Represents "recently seen"
+                }
+                self.process_frame(frame)
             }
-            self.process_frame(frame)
-        } else {
-            // Even non-POWERLINK frames can move the node from BasicEthernet to PreOp1.
-            if self.nmt_state() == NmtState::NmtBasicEthernet {
-                self.nmt_state_machine
-                    .process_event(NmtEvent::PowerlinkFrameReceived, &mut self.od);
+            Err(PowerlinkError::InvalidEthernetFrame) => {
+                // This is not a POWERLINK frame (e.g., ARP, IP), so we ignore it.
+                // This is expected on a shared network interface.
+                trace!("Ignoring non-POWERLINK frame (wrong EtherType).");
+                NodeAction::NoAction
             }
-
-            if self
-                .dll_error_manager
-                .handle_error(DllError::InvalidFormat)
-                != NmtAction::None
-            {
-                self.nmt_state_machine
-                    .process_event(NmtEvent::Error, &mut self.od);
+            Err(e) => {
+                // This looked like a POWERLINK frame (correct EtherType) but was malformed.
+                // This is an error condition.
+                warn!("[CN] Deserialized frame: Err({:?})", e);
+                if self
+                    .dll_error_manager
+                    .handle_error(DllError::InvalidFormat)
+                    != NmtAction::None
+                {
+                    self.nmt_state_machine
+                        .process_event(NmtEvent::Error, &mut self.od);
+                }
+                NodeAction::NoAction
             }
-            NodeAction::NoAction
         }
     }
 

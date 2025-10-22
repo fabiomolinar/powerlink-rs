@@ -68,6 +68,13 @@ pub fn deserialize_frame(buffer: &[u8]) -> Result<PowerlinkFrame, PowerlinkError
         return Err(PowerlinkError::InvalidPlFrame);
     }
     
+    // Check if it's a POWERLINK frame by looking at the EtherType.
+    let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
+    if !eth_header.is_powerlink() {
+        // This is a valid Ethernet frame, but not for us.
+        return Err(PowerlinkError::InvalidEthernetFrame);
+    }
+    
     // The message type is in the lower 7 bits of the 15th byte (index 14).
     let message_type_byte = buffer[14] & 0x7F;
     
