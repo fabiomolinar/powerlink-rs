@@ -89,7 +89,7 @@ fn run_docker_integration_test() {
 
     // Build and run the docker-compose setup.
     let mut command;
-    let mut args;
+    let args;
 
     if compose_command == "docker-compose" {
         command = Command::new("docker-compose");
