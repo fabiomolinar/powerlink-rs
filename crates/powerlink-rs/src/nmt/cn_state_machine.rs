@@ -8,7 +8,7 @@ use crate::PowerlinkError;
 use super::flags::FeatureFlags;
 use super::states::{NmtEvent, NmtState};
 use alloc::vec::Vec;
-use log::{info, debug};
+use log::{info, debug, trace};
 
 /// Manages the NMT state for a Controlled Node.
 pub struct CnNmtStateMachine {
@@ -106,9 +106,9 @@ impl NmtStateMachine for CnNmtStateMachine {
                     self.current_state
                 }
             };
-            if old_state != next_state {
+            if self.current_state != next_state {
+                info!("[NMT] Internal transition from {:?} to {:?}", old_state, next_state);
                 self.current_state = next_state;
-                info!("NMT internal transition: {:?} -> {:?}", old_state, next_state);
                 self.update_od_state(od);
             } else {
                 transition = false;
@@ -120,6 +120,7 @@ impl NmtStateMachine for CnNmtStateMachine {
     fn process_event(&mut self, event: NmtEvent, od: &mut ObjectDictionary) -> Option<Vec<DllError>> {
         let mut errors: Vec<DllError> = Vec::new();
         let old_state = self.current_state;
+        trace!("[NMT] Processing event {:?} in state {:?}", event, old_state);
         let next_state = match (self.current_state, event) {
             // --- Reset and Initialisation Transitions ---
             (_, NmtEvent::Reset) => NmtState::NmtGsInitialising,
@@ -129,8 +130,8 @@ impl NmtStateMachine for CnNmtStateMachine {
 
             // --- CN Boot-up Sequence ---
 
-            // (NMT_CT2) Any POWERLINK frame moves the node from NotActive to PreOp1.
-            (NmtState::NmtNotActive, NmtEvent::SocSoAReceived) => NmtState::NmtPreOperational1,
+            // (NMT_CT2) A SoC or SoA frame moves the node from NotActive to PreOp1.
+            (NmtState::NmtNotActive, NmtEvent::SocReceived | NmtEvent::SocSoAReceived) => NmtState::NmtPreOperational1,
             // (NMT_CT3) A timeout in NotActive leads to BasicEthernet mode.
             (NmtState::NmtNotActive, NmtEvent::Timeout) => NmtState::NmtBasicEthernet,
             
@@ -170,7 +171,7 @@ impl NmtStateMachine for CnNmtStateMachine {
         };
         
         if old_state != next_state {
-            info!("NMT state transition: {:?} -> {:?} (on event: {:?})", old_state, next_state, event);
+            info!("[NMT] State changed from {:?} to {:?}", old_state, next_state);
             self.current_state = next_state;
             self.update_od_state(od);
         }
@@ -315,3 +316,4 @@ mod tests {
         assert_eq!(nmt.current_state(), NmtState::NmtPreOperational2);
     }
 }
+

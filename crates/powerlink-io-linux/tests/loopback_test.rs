@@ -2,16 +2,16 @@
 
 use powerlink_io_linux::LinuxPnetInterface;
 use powerlink_rs::{
-    frame::{poll::PReqFlags, PReqFrame, PowerlinkFrame},
+    common::{NetTime, RelativeTime},
+    frame::{PowerlinkFrame, SocFrame, SoAFrame, RequestedServiceId, ServiceId},
     nmt::flags::FeatureFlags,
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
-    pdo::PDOVersion,
-    types::{NodeId, C_ADR_MN_DEF_NODE_ID},
+    types::{NodeId, C_ADR_MN_DEF_NODE_ID, EPLVersion},
     Codec, ControlledNode, NetworkInterface, Node, NodeAction,
 };
 use pnet::datalink::interfaces;
+use std::sync::mpsc;
 use std::{thread, time::Duration};
-use log::info;
 
 /// Helper function to find the loopback network interface by name.
 fn find_loopback() -> Option<String> {
@@ -30,7 +30,7 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
     od.insert(
         0x1000,
         ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned32(0x12345678)),
+            object: Object::Variable(ObjectValue::Unsigned32(0)),
             name: "NMT_DeviceType_U32",
             category: Category::Mandatory,
             access: Some(AccessType::Constant),
@@ -43,10 +43,10 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
         0x1018,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned32(1), // VendorId
-                ObjectValue::Unsigned32(2), // ProductCode
-                ObjectValue::Unsigned32(3), // RevisionNo
-                ObjectValue::Unsigned32(4), // SerialNo
+                ObjectValue::Unsigned32(0), // VendorId
+                ObjectValue::Unsigned32(0), // ProductCode
+                ObjectValue::Unsigned32(0), // RevisionNo
+                ObjectValue::Unsigned32(0), // SerialNo
             ]),
             name: "NMT_IdentityObject_REC",
             category: Category::Mandatory,
@@ -107,98 +107,185 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             pdo_mapping: Some(PdoMapping::No),
         },
     );
+     od.insert(
+        0x1F83,
+        ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned8(0x15)), // V1.5
+            name: "NMT_EPLVersion_U8",
+            category: Category::Mandatory,
+            access: Some(AccessType::Constant),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
 
     od
 }
 
-
 #[test]
 #[ignore] // This test requires root privileges, so ignore it by default.
-fn test_cn_responds_to_preq_on_loopback() {
-    // Initialize the logger.
-    // Run the test with `RUST_LOG=trace cargo test -- --ignored` to see all logs.
-    let _ = env_logger::builder().is_test(true).try_init();
-
+fn test_loopback_send_and_receive() {
     let loopback_name = find_loopback().expect("No loopback interface found for testing.");
-    let cn_node_id = 42;
 
-    let placeholder_mac = [0u8; 6];
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
 
-    let loopback_name_for_thread = loopback_name.clone();
+    // A unique payload to identify our test frame among other loopback traffic.
+    const TEST_PAYLOAD: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
 
-    // --- Setup the Controlled Node in a separate thread ---
-    info!("Setting up CN thread on interface '{}'...", loopback_name_for_thread);
-    let cn_thread = thread::spawn(move || {
-        let mut cn_interface = LinuxPnetInterface::new(&loopback_name_for_thread, cn_node_id).unwrap();
-        let od = get_test_od(cn_node_id);
-
-        let mut node = ControlledNode::new(od, placeholder_mac.into()).unwrap();
-
+    // --- Spawn a Receiver Thread ---
+    let receiver_thread = thread::spawn(move || {
+        let mut receiver_interface = LinuxPnetInterface::new(&loopback_name, 2).unwrap();
         let mut buffer = [0u8; 1518];
-        info!("CN is now listening for frames...");
-        // Wait for one frame, process it, and send the response.
-        // Loop briefly to handle potential timeouts from the interface.
-        for _ in 0..5 {
-            if let Ok(bytes) = cn_interface.receive_frame(&mut buffer) {
-                if bytes > 0 {
-                    if let NodeAction::SendFrame(response) = node.process_raw_frame(&buffer[..bytes]) {
-                        info!("CN sending response.");
-                        cn_interface.send_frame(&response).unwrap();
-                    }
+
+        // Loop until we find our specific frame.
+        for _ in 0..20 {
+            if let Ok(bytes_received) = receiver_interface.receive_frame(&mut buffer) {
+                // Check if it's our frame by looking for the EtherType and unique payload.
+                if bytes_received >= 18
+                    && &buffer[12..14] == &[0x88, 0xAB]
+                    && &buffer[14..18] == &TEST_PAYLOAD
+                {
+                    tx.send(buffer[..bytes_received].to_vec()).unwrap();
                     return;
                 }
             }
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(10));
         }
-        panic!("CN thread timed out waiting for a frame.");
     });
 
-    // Give the CN thread a moment to initialize the interface.
+    thread::sleep(Duration::from_millis(50));
+
+    // --- Main Thread Acts as the Sender ---
+    let mut sender_interface = LinuxPnetInterface::new("lo", 1).unwrap();
+
+    let mut dummy_frame = [0u8; 60];
+    let frame_header: [u8; 14] = [
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Destination MAC
+        0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, // Source MAC
+        0x88, 0xAB, // POWERLINK EtherType
+    ];
+    dummy_frame[..14].copy_from_slice(&frame_header);
+    dummy_frame[14..18].copy_from_slice(&TEST_PAYLOAD);
+
+    sender_interface.send_frame(&dummy_frame).unwrap();
+
+    let received_frame = rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Test timed out waiting for the receiver thread to send back the packet.");
+
+    receiver_thread.join().expect("Receiver thread panicked.");
+
+    assert_eq!(dummy_frame.as_slice(), received_frame.as_slice());
+}
+
+#[test]
+#[ignore] // This test requires root privileges, so ignore it by default.
+fn test_cn_responds_to_ident_request() {
+    let loopback_name = find_loopback().expect("No loopback interface found for testing.");
+    let cn_node_id = 42;
+    let placeholder_mac = [0u8; 6];
+    let loopback_name_for_thread = loopback_name.clone();
+
+    // --- Setup the Controlled Node in a separate thread ---
+    let cn_thread = thread::spawn(move || {
+        println!("[CN] Thread started.");
+        let mut cn_interface =
+            LinuxPnetInterface::new(&loopback_name_for_thread, cn_node_id).unwrap();
+        let od = get_test_od(cn_node_id);
+        let mut node = ControlledNode::new(od, placeholder_mac.into()).unwrap();
+        println!("[CN] Initial NMT state: {:?}", node.nmt_state());
+
+        let mut buffer = [0u8; 1518];
+        let mut frames_processed = 0;
+        // The CN needs to process 2 frames: SoC, then SoA.
+        while frames_processed < 2 {
+            match cn_interface.receive_frame(&mut buffer) {
+                Ok(bytes) if bytes > 0 => {
+                    println!("[CN] Received {} bytes.", bytes);
+                    let frame_result = powerlink_rs::deserialize_frame(&buffer[..bytes]);
+                    println!("[CN] Deserialized frame: {:?}", frame_result);
+
+                    if let NodeAction::SendFrame(response) =
+                        node.process_raw_frame(&buffer[..bytes])
+                    {
+                        println!("[CN] Sending response of {} bytes.", response.len());
+                        cn_interface.send_frame(&response).unwrap();
+                    }
+                    println!("[CN] New NMT state: {:?}", node.nmt_state());
+                    frames_processed += 1;
+                }
+                _ => {} // Ignore timeouts and empty reads
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        println!("[CN] Thread finished.");
+    });
+
     thread::sleep(Duration::from_millis(200));
 
     // --- Setup the "Tester" (simulating the MN) ---
     let mut mn_interface =
         LinuxPnetInterface::new(&loopback_name, C_ADR_MN_DEF_NODE_ID).unwrap();
     let mn_mac = mn_interface.local_mac_address();
-    // On loopback, source and destination MAC can be the same.
-    let cn_mac = mn_mac;
+    let _cn_mac = mn_mac; // On loopback, the destination is self. Prefix with _ to ignore warning.
 
-    // Create and serialize a PReq frame.
-    let preq = PReqFrame::new(
+    // 1. Send SoC to move CN from NotActive -> PreOperational1
+    let net_time = NetTime {
+        seconds: 1761159900, // Corresponds to 2025-10-22 13:05:00 in CEST (UTC+2)
+        nanoseconds: 123456789,
+    };
+    let relative_time = RelativeTime {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+    let soc_frame = SocFrame::new(mn_mac.into(), Default::default(), net_time, relative_time);
+    let mut soc_buffer = vec![0u8; 64];
+    let soc_size = soc_frame.serialize(&mut soc_buffer).unwrap();
+    soc_buffer.truncate(soc_size);
+    println!("[MN] Sending SoC...");
+    mn_interface.send_frame(&soc_buffer).unwrap();
+    thread::sleep(Duration::from_millis(50));
+
+    // 2. Send SoA(IdentRequest) to the CN
+    let soa = SoAFrame::new(
         mn_mac.into(),
-        cn_mac.into(),
+        powerlink_rs::nmt::states::NmtState::NmtPreOperational1,
+        Default::default(),
+        RequestedServiceId::IdentRequest,
         NodeId(cn_node_id),
-        PReqFlags { rd: true, ..Default::default() },
-        PDOVersion(0),
-        vec![0x01, 0x02],
+        EPLVersion(0),
     );
-    let mut send_buffer = vec![0u8; 64];
-    let size = preq.serialize(&mut send_buffer).unwrap();
-    send_buffer.truncate(size);
+    let mut soa_buffer = vec![0u8; 64];
+    let soa_size = soa.serialize(&mut soa_buffer).unwrap();
+    soa_buffer.truncate(soa_size);
+    println!("[MN] Sending SoA(IdentRequest)...");
+    mn_interface.send_frame(&soa_buffer).unwrap();
 
-    // Send the PReq.
-    info!("MN sending PReq to Node {}", cn_node_id);
-    mn_interface.send_frame(&send_buffer).unwrap();
-
-    // Wait for the CN to process and send its response.
     cn_thread.join().expect("CN thread panicked");
 
-    // Receive the response on the MN's interface. Loop to handle timeouts.
-    info!("MN waiting for PRes...");
+    // 3. Receive the ASnd(IdentResponse) from the CN
     let mut receive_buffer = [0u8; 1518];
-    for _ in 0..5 {
+    println!("[MN] Waiting for IdentResponse...");
+    for i in 0..20 {
         if let Ok(bytes) = mn_interface.receive_frame(&mut receive_buffer) {
             if bytes > 0 {
-                if let Ok(PowerlinkFrame::PRes(pres)) = powerlink_rs::deserialize_frame(&receive_buffer[..bytes]) {
-                    info!("Successfully received PRes from Node {}", pres.source.0);
-                    // Assert that we received a valid PRes from the correct CN.
-                    assert_eq!(pres.source, NodeId(cn_node_id));
-                    return; // Test success
+                println!("[MN] Received {} bytes on attempt {}.", bytes, i);
+                if let Ok(PowerlinkFrame::ASnd(asnd)) =
+                    powerlink_rs::deserialize_frame(&receive_buffer[..bytes])
+                {
+                    if asnd.source == NodeId(cn_node_id)
+                        && asnd.service_id == ServiceId::IdentResponse
+                    {
+                        println!("[MN] Success! Received valid IdentResponse.");
+                        return; // Test successful!
+                    }
                 }
             }
         }
         thread::sleep(Duration::from_millis(50));
     }
 
-    panic!("Did not receive a valid PRes frame from the CN.");
+    panic!("Did not receive a valid ASnd(IdentResponse) frame from the CN.");
 }
+

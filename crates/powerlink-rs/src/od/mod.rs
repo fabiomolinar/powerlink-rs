@@ -4,7 +4,7 @@ use crate::types::{
     BOOLEAN, INTEGER16, INTEGER32, INTEGER64, INTEGER8, REAL32, REAL64, UNSIGNED16, UNSIGNED32,
     UNSIGNED64, UNSIGNED8, IpAddress, MacAddress,
 };
-use crate::PowerlinkError;
+use crate::{NodeId, PowerlinkError};
 use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec, vec::Vec};
 use core::fmt;
 
@@ -231,6 +231,20 @@ impl<'a> ObjectDictionary<'a> {
         Ok(())
     }
 
+    /// Loads values from the persistent storage backend and overwrites any
+    /// matching existing entries in the OD. This is called by `init()`.
+    fn load(&mut self) -> Result<(), PowerlinkError> {
+        if let Some(s) = &mut self.storage {
+            let stored_params = s.load()?;
+            for ((index, sub_index), value) in stored_params {
+                // Attempt to write the loaded value. Ignore errors for objects
+                // that might exist in storage but not in the current firmware.
+                let _ = self.write_internal(index, sub_index, value, false);
+            }
+        }
+        Ok(())
+    }
+
     /// Populates the OD with mandatory objects that define protocol mechanisms.
     /// Device-specific identification objects are left to the user to insert.
     fn populate_protocol_objects(&mut self) {
@@ -286,37 +300,62 @@ impl<'a> ObjectDictionary<'a> {
     }
 
     /// Validates that the OD contains all mandatory objects required for a node to function.
-    /// Should be called from the node's constructor.
-    pub fn validate_mandatory_objects(&self) -> Result<(), PowerlinkError> {
-        const MANDATORY_OBJECTS: &[u16] = &[
+    pub fn validate_mandatory_objects(&self, is_mn: bool) -> Result<(), PowerlinkError> {
+        const COMMON_MANDATORY_OBJECTS: &[u16] = &[
             0x1000, // NMT_DeviceType_U32
             0x1018, // NMT_IdentityObject_REC
             0x1F82, // NMT_FeatureFlags_U32
-            0x1F93, // NMT_EPLNodeID_REC
-            0x1F99, // NMT_CNBasicEthernetTimeout_U32
         ];
-        for &index in MANDATORY_OBJECTS {
+        for &index in COMMON_MANDATORY_OBJECTS {
             if !self.entries.contains_key(&index) {
-                return Err(PowerlinkError::ObjectNotFound);
+                return Err(PowerlinkError::ValidationError("Missing common mandatory object"));
+            }
+        }
+
+        if is_mn {
+            const MN_MANDATORY_OBJECTS: &[u16] = &[
+                0x1006, // NMT_CycleLen_U32
+                0x1F81, // NMT_NodeAssignment_AU32
+                0x1F89, // NMT_BootTime_REC
+            ];
+            for &index in MN_MANDATORY_OBJECTS {
+                if !self.entries.contains_key(&index) {
+                    return Err(PowerlinkError::ValidationError("Missing MN-specific mandatory object"));
+                }
+            }
+        } else {
+            const CN_MANDATORY_OBJECTS: &[u16] = &[
+                0x1F93, // NMT_EPLNodeID_REC
+                0x1F99, // NMT_CNBasicEthernetTimeout_U32
+            ];
+            for &index in CN_MANDATORY_OBJECTS {
+                if !self.entries.contains_key(&index) {
+                    return Err(PowerlinkError::ValidationError("Missing CN-specific mandatory object"));
+                }
             }
         }
         Ok(())
     }
 
-    /// Loads values from the persistent storage backend and overwrites any
-    /// matching existing entries in the OD. This is called by `init()`.
-    fn load(&mut self) -> Result<(), PowerlinkError> {
-        if let Some(s) = &mut self.storage {
-            let stored_params = s.load()?;
-            for ((index, sub_index), value) in stored_params {
-                // Attempt to write the loaded value. Ignore errors for objects
-                // that might exist in storage but not in the current firmware.
-                let _ = self.write_internal(index, sub_index, value, false);
+    /// Gets a list of configured isochronous CNs from object 0x1F81.
+    pub fn get_configured_cns(&self) -> Vec<NodeId> {
+        let mut cn_list = Vec::new();
+        if let Some(entry) = self.entries.get(&0x1F81) {
+            if let Object::Array(values) = &entry.object {
+                // Sub-index 0 holds the count, so we iterate from the actual data.
+                for (i, value) in values.iter().enumerate().skip(1) {
+                    if let ObjectValue::Unsigned32(assignment) = value {
+                        // Bit 0: Node exists
+                        // Bit 8: Node is isochronous
+                        if (assignment & (1 << 0)) != 0 && (assignment & (1 << 8)) == 0 {
+                            cn_list.push(NodeId(i as u8));
+                        }
+                    }
+                }
             }
         }
-        Ok(())
+        cn_list
     }
-
     /// Inserts a new object entry into the dictionary at a given index.
     pub fn insert(&mut self, index: u16, entry: ObjectEntry) {
         self.entries.insert(index, entry);

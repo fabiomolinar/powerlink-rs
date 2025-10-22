@@ -22,8 +22,12 @@ pub trait Node {
     /// Processes a raw byte buffer received from the network.
     fn process_raw_frame(&mut self, buffer: &[u8]) -> NodeAction;
     /// Called periodically by the application to handle time-based events, like timeouts.
-    fn tick(&mut self) -> NodeAction;
+    ///
+    /// For a Managing Node, this method drives the entire POWERLINK cycle. For a
+    /// Controlled Node, it handles internal timeouts. The application is responsible
+    /// for calling this method frequently, ideally triggered by the timers requested
+    /// via `NodeAction::SetTimer`.
+    fn tick(&mut self, current_time_us: u64) -> NodeAction;
     /// Returns the current NMT state of the node.
     fn nmt_state(&self) -> NmtState;
 }
-

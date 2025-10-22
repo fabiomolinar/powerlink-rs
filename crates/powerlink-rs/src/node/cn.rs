@@ -25,6 +25,7 @@ pub struct ControlledNode<'s> {
     dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
     mac_address: MacAddress,
     sdo_server: SdoServer,
+    last_soc_time: u64,
 }
 
 impl<'s> ControlledNode<'s> {
@@ -43,20 +44,26 @@ impl<'s> ControlledNode<'s> {
         od.init()?;
 
         // Validate that the user-provided OD contains all mandatory objects.
-        od.validate_mandatory_objects()?;
+        od.validate_mandatory_objects(false)?; // false for CN validation
 
         // The NMT state machine's constructor is now fallible because it must
         // read critical parameters from the fully configured OD.
         let nmt_state_machine = CnNmtStateMachine::from_od(&od)?;
 
-        Ok(Self {
+        let mut node = Self {
             od,
             nmt_state_machine,
             dll_state_machine: DllCsStateMachine::new(),
             dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
             mac_address,
             sdo_server: SdoServer::new(),
-        })
+            last_soc_time: 0,
+        };
+
+        // Run the initial state transitions to get to NmtNotActive.
+        node.nmt_state_machine.run_internal_initialisation(&mut node.od);
+
+        Ok(node)
     }
 
     /// Internal function to process a deserialized `PowerlinkFrame`.
@@ -101,14 +108,14 @@ impl<'s> ControlledNode<'s> {
 
         // 2. Update DLL state machine based on the frame type.
         if let Some(errors) = self.dll_state_machine.process_event(
-            frame.dll_event(),
+            frame.dll_cn_event(),
             self.nmt_state_machine.current_state(),
         ) {
             // If the DLL detects an error (like a lost frame), pass it to the error manager.
             for error in errors {
                 warn!("DLL state machine reported error: {:?}", error);
                 if self.dll_error_manager.handle_error(error) != NmtAction::None {
-                    // Per Table 27, most DLL errors on a CN trigger an NMT state change to PreOp1.
+                    // Per Table 27, most DLL errors on a CN trigger an NMT state change to PreOp1 [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Table 27].
                     self.nmt_state_machine
                         .process_event(NmtEvent::Error, &mut self.od);
                 }
@@ -157,6 +164,7 @@ impl<'s> ControlledNode<'s> {
         debug!("Building PRes in response to PReq for node {}", preq.destination.0);
         // TODO: Map PDOs to the payload here.
         let payload = Vec::new();
+        // TODO: Set RS flag based on pending SDO/NMT requests.
         let pres = PResFrame::new(
             self.mac_address,
             self.nmt_state_machine.node_id,
@@ -211,27 +219,48 @@ impl<'s> ControlledNode<'s> {
 
 impl<'s> Node for ControlledNode<'s> {
     fn process_raw_frame(&mut self, buffer: &[u8]) -> NodeAction {
-        trace!("Received {} raw bytes.", buffer.len());
-        match deserialize_frame(buffer) {
-            Ok(frame) => self.process_frame(frame),
-            Err(e) => {
-                debug!("Failed to deserialize frame: {:?}", e);
-                // Don't trigger a full NMT reset for simple parsing errors unless a threshold is met.
-                // The error manager will decide if an NMT action is needed.
-                self.dll_error_manager
-                    .handle_error(DllError::InvalidFormat);
-                NodeAction::NoAction
+        if let Ok(frame) = deserialize_frame(buffer) {
+            // Update last seen SoC time to prevent BasicEthernet timeout
+            if matches!(frame, PowerlinkFrame::Soc(_)) {
+                // In a real implementation, `current_time` would come from the HAL.
+                // For now, we'll just reset a flag. This part of the logic is simplified.
+                self.last_soc_time = 0; // Represents "recently seen"
             }
+            self.process_frame(frame)
+        } else {
+            // Even non-POWERLINK frames can move the node from BasicEthernet to PreOp1.
+            if self.nmt_state() == NmtState::NmtBasicEthernet {
+                self.nmt_state_machine
+                    .process_event(NmtEvent::PowerlinkFrameReceived, &mut self.od);
+            }
+
+            if self
+                .dll_error_manager
+                .handle_error(DllError::InvalidFormat)
+                != NmtAction::None
+            {
+                self.nmt_state_machine
+                    .process_event(NmtEvent::Error, &mut self.od);
+            }
+            NodeAction::NoAction
         }
     }
 
-    fn tick(&mut self) -> NodeAction {
+    fn tick(&mut self, current_time_us: u64) -> NodeAction {
         if self.nmt_state() == NmtState::NmtNotActive {
-            // A real implementation would use a timer provided by the HAL.
-            // When the timer expires, the application calls tick(), which triggers the event.
-            info!("BasicEthernetTimeout expired, triggering NMT Timeout event.");
-            self.nmt_state_machine
-                .process_event(NmtEvent::Timeout, &mut self.od);
+            if self.last_soc_time == 0 {
+                // If we've seen a SoC recently, set the timeout start time.
+                self.last_soc_time = current_time_us;
+            }
+            let timeout = self.nmt_state_machine.basic_ethernet_timeout as u64;
+            if current_time_us.saturating_sub(self.last_soc_time) > timeout {
+                // Timeout expired, transition to BasicEthernet [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Section 7.1.4.1.1].
+                self.nmt_state_machine
+                    .process_event(NmtEvent::Timeout, &mut self.od);
+                self.last_soc_time = 0; // Reset timer
+            } else {
+                return NodeAction::SetTimer(self.last_soc_time + timeout);
+            }
         }
         NodeAction::NoAction
     }
