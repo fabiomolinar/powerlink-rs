@@ -1,137 +1,69 @@
-use std::path::Path;
 use std::process::Command;
 
-/// A simple RAII guard to ensure `docker compose down` is called.
-/// When an instance of this struct goes out of scope (at the end of the test function,
-/// either by success or panic), its `drop` implementation will be called,
-/// automatically cleaning up the Docker environment.
-struct DockerComposeGuard<'a> {
-    compose_command: &'a str,
-    compose_file_path: &'a str,
+/// A guard struct to ensure `docker-compose down` is always called to clean up.
+/// It runs when the struct goes out of scope at the end of the test function.
+struct DockerComposeGuard {
+    compose_file_path: String,
 }
 
-impl<'a> Drop for DockerComposeGuard<'a> {
+impl Drop for DockerComposeGuard {
     fn drop(&mut self) {
         println!("\n--- Tearing down Docker environment ---");
-
-        let mut command;
-        let args;
-
-        if self.compose_command == "docker-compose" {
-            command = Command::new("docker-compose");
-            args = vec!["-f", self.compose_file_path, "down", "-v"];
-        } else {
-            command = Command::new("docker");
-            args = vec!["compose", "-f", self.compose_file_path, "down", "-v"];
-        }
-
-        let down_output = command
-            .args(&args)
-            .output()
-            .expect("Failed to execute docker compose down command.");
-
-        if !down_output.status.success() {
-            eprintln!(
-                "--- docker compose down stderr ---\n{}",
-                String::from_utf8_lossy(&down_output.stderr)
-            );
-        }
+        // This command runs regardless of test success or failure, ensuring cleanup.
+        // The `-v` flag removes volumes, ensuring a completely clean state.
+        let _ = Command::new("docker")
+            .args(["compose", "-f", &self.compose_file_path, "down", "-v"])
+            .status(); // We don't panic here to ensure cleanup is best-effort.
     }
 }
 
-/// This test acts as a wrapper to run the Docker-based integration test.
-/// It uses `std::process::Command` to execute `docker compose`.
+/// This test orchestrates the Docker environment. It builds and runs the
+/// containers in the foreground, captures all their logs, and ensures
+/// everything is torn down afterward.
 #[test]
 fn run_docker_integration_test() {
-    // Ensure Docker is installed.
-    if Command::new("docker").arg("--version").output().is_err() {
-        panic!("Docker is not installed or not in PATH. Skipping Docker test.");
-    }
-
-    // Use `docker compose` which is the current standard, but fall back to `docker-compose`.
-    let compose_command = if Command::new("docker")
-        .arg("compose")
-        .arg("--version")
-        .output()
-        .map_or(false, |out| out.status.success())
-    {
-        "compose"
-    } else if Command::new("docker-compose")
-        .arg("--version")
-        .output()
-        .map_or(false, |out| out.status.success())
-    {
-        "docker-compose"
-    } else {
-        panic!("Neither 'docker compose' nor 'docker-compose' found in PATH.");
-    };
-
-    println!(
-        "--- Starting Docker Integration Test via 'docker {}' ---",
-        compose_command
-    );
-
-    // Path is relative to the crate root, which is the CWD for `cargo test`.
+    // Path is relative to the crate's root where `cargo test` is executed.
     let compose_file_path = "tests/loopback_test_resources/docker-compose.yml";
 
-    // Check that the compose file exists before trying to run it.
-    assert!(
-        Path::new(compose_file_path).exists(),
-        "docker-compose.yml not found at expected path: {}",
-        compose_file_path
-    );
-
-    // This guard will automatically call `docker compose down` when the test function finishes.
+    // Create the guard. When `_guard` goes out of scope at the end of this
+    // function, its `drop` method will automatically run `docker-compose down`.
     let _guard = DockerComposeGuard {
-        compose_command,
-        compose_file_path,
+        compose_file_path: compose_file_path.to_string(),
     };
 
-    // Build and run the docker-compose setup.
-    let mut command;
-    let args;
+    println!("--- Starting Docker Integration Test via 'docker compose' ---");
 
-    if compose_command == "docker-compose" {
-        command = Command::new("docker-compose");
-        args = vec![
-            "-f",
-            compose_file_path,
-            "up",
-            "--build",
-            "--abort-on-container-exit",
-            "--exit-code-from",
-            "mn",
-        ];
-    } else {
-        command = Command::new("docker");
-        args = vec![
+    // Execute `docker compose up`. This command will:
+    // 1. Build the image if it's not already built.
+    // 2. Start both the `cn` and `mn` containers.
+    // 3. Stream the logs from BOTH containers to this command's stdout/stderr.
+    // 4. Wait for the `mn` container to exit (due to `--exit-code-from`).
+    // 5. Exit with the same code as the `mn` container.
+    let output = Command::new("docker")
+        .args([
             "compose",
             "-f",
             compose_file_path,
             "up",
             "--build",
-            "--abort-on-container-exit",
-            "--exit-code-from",
+            "--exit-code-from", // Tells compose to return the exit code of one service
             "mn",
-        ];
-    }
-
-    let output = command
-        .args(&args)
-        .output()
+        ])
+        .output() // Capture stdout and stderr
         .expect("Failed to execute docker compose up command.");
 
-    // Print the stdout and stderr from the docker-compose command.
+    // Print the captured, interleaved logs from both containers.
     println!(
-        "--- docker compose stdout ---\n{}",
+        "--- docker-compose stdout ---\n{}",
         String::from_utf8_lossy(&output.stdout)
     );
     eprintln!(
-        "--- docker compose stderr ---\n{}",
+        "--- docker-compose stderr ---\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Assert that the `mn` container (and thus the test) exited with a success code.
+    // Assert that the `docker-compose up` command itself was successful.
+    // This will be true if the test running inside the `mn` container exited with code 0.
     assert!(
         output.status.success(),
         "The Docker integration test failed. Check the logs above."
