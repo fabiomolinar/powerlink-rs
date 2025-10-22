@@ -1,0 +1,44 @@
+services:
+  # The Controlled Node (CN) service
+  cn:
+    build:
+      # The build context is now the workspace root, 4 levels up.
+      context: ../../../../
+      # The Dockerfile path is relative to the new context.
+      dockerfile: crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
+    container_name: powerlink-cn
+    command: ["--test-threads=1", "test_cn_responds_to_ident_request", "--exact", "--nocapture"]
+    environment:
+      POWERLINK_TEST_ROLE: "CN"
+      RUST_LOG: "info,powerlink_rs=debug"
+    networks:
+      - powerlink_net
+    cap_add:
+      - NET_RAW
+    depends_on:
+      - mn
+
+  # The Managing Node (MN) service
+  mn:
+    build:
+      context: ../../../../
+      dockerfile: crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
+    container_name: powerlink-mn
+    command: ["--test-threads=1", "test_cn_responds_to_ident_request", "--exact", "--nocapture"]
+    environment:
+      POWERLINK_TEST_ROLE: "MN"
+      RUST_LOG: "info,powerlink_rs=debug"
+    networks:
+      # The static ipv4_address has been removed to prevent conflicts.
+      # Docker will now assign an available IP automatically.
+      - powerlink_net
+    cap_add:
+      - NET_RAW
+
+networks:
+  powerlink_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.1.0/24
+

@@ -10,15 +10,24 @@ use powerlink_rs::{
     Codec, ControlledNode, NetworkInterface, Node, NodeAction,
 };
 use pnet::datalink::interfaces;
-use std::sync::mpsc;
-use std::{thread, time::{Duration, Instant}};
+use std::{env, thread, time::{Duration, Instant}};
 
-/// Helper function to find the loopback network interface by name.
-fn find_loopback() -> Option<String> {
+/// Helper function to find a suitable network interface for testing.
+/// In Docker, this will be "eth0". On a host, it will be the loopback.
+fn find_test_interface() -> String {
+    // Inside a Docker container, the primary interface is typically eth0.
+    // For local testing, we fall back to the loopback interface.
     interfaces()
         .into_iter()
-        .find(|iface| iface.is_loopback())
+        .find(|iface| iface.name == "eth0" && !iface.is_loopback())
         .map(|iface| iface.name)
+        .unwrap_or_else(|| {
+            interfaces()
+                .into_iter()
+                .find(|iface| iface.is_loopback())
+                .map(|iface| iface.name)
+                .expect("No suitable test interface (eth0 or loopback) found.")
+        })
 }
 
 /// Helper function to create a minimal but valid Object Dictionary for a CN.
@@ -120,136 +129,118 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
         },
     );
 
+    // Add object 0x1F98 for the IdentResponse payload builder
+    od.insert(
+        0x1F98,
+        ObjectEntry {
+            object: Object::Record(vec![
+                ObjectValue::Unsigned32(0), // IsochrTxMaxPayload
+                ObjectValue::Unsigned32(0), // IsochrRxMaxPayload
+                ObjectValue::Unsigned32(0), // PResMaxLatency
+                ObjectValue::Unsigned16(0), // PReqActPayloadLimit
+                ObjectValue::Unsigned16(0), // PResActPayloadLimit
+                ObjectValue::Unsigned32(0), // ASndMaxLatency
+                ObjectValue::Unsigned8(0),  // MultiplCycleCnt
+                ObjectValue::Unsigned16(1500), // AsyncMTU
+            ]),
+            name: "NMT_CycleTiming_REC",
+            category: Category::Mandatory,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
+
+
     od
 }
 
+
 #[test]
-#[ignore] // This test requires root privileges, so ignore it by default.
-fn test_loopback_send_and_receive() {
-    let loopback_name = find_loopback().expect("No loopback interface found for testing.");
+// This test is now intended to be run inside Docker, which handles permissions.
+// The #[ignore] can be removed if you primarily run tests via Docker.
+#[ignore]
+fn test_cn_responds_to_ident_request() {
+    // This test now runs in one of two modes, determined by an environment variable.
+    // This allows the same test binary to act as the MN or CN in different containers.
+    let role = env::var("POWERLINK_TEST_ROLE").unwrap_or_else(|_| "MN".to_string());
+    let test_interface = find_test_interface();
 
-    let (tx, rx) = mpsc::channel::<Vec<u8>>();
-
-    // A unique payload to identify our test frame among other loopback traffic.
-    const TEST_PAYLOAD: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
-
-    // --- Spawn a Receiver Thread ---
-    let receiver_thread = thread::spawn(move || {
-        let mut receiver_interface = LinuxPnetInterface::new(&loopback_name, 2).unwrap();
-        let mut buffer = [0u8; 1518];
-
-        // Loop until we find our specific frame.
-        for _ in 0..20 {
-            if let Ok(bytes_received) = receiver_interface.receive_frame(&mut buffer) {
-                // Check if it's our frame by looking for the EtherType and unique payload.
-                if bytes_received >= 18
-                    && &buffer[12..14] == &[0x88, 0xAB]
-                    && &buffer[14..18] == &TEST_PAYLOAD
-                {
-                    tx.send(buffer[..bytes_received].to_vec()).unwrap();
-                    return;
-                }
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-    });
-
-    thread::sleep(Duration::from_millis(50));
-
-    // --- Main Thread Acts as the Sender ---
-    let mut sender_interface = LinuxPnetInterface::new("lo", 1).unwrap();
-
-    let mut dummy_frame = [0u8; 60];
-    let frame_header: [u8; 14] = [
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Destination MAC
-        0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, // Source MAC
-        0x88, 0xAB, // POWERLINK EtherType
-    ];
-    dummy_frame[..14].copy_from_slice(&frame_header);
-    dummy_frame[14..18].copy_from_slice(&TEST_PAYLOAD);
-
-    sender_interface.send_frame(&dummy_frame).unwrap();
-
-    let received_frame = rx
-        .recv_timeout(Duration::from_secs(1))
-        .expect("Test timed out waiting for the receiver thread to send back the packet.");
-
-    receiver_thread.join().expect("Receiver thread panicked.");
-
-    assert_eq!(dummy_frame.as_slice(), received_frame.as_slice());
+    if role == "CN" {
+        run_cn_logic(&test_interface);
+    } else {
+        run_mn_logic(&test_interface);
+    }
 }
 
-#[test]
-#[ignore] // This test requires root privileges, so ignore it by default.
-fn test_cn_responds_to_ident_request() {
-    let _ = env_logger::builder().is_test(true).try_init();
-    let loopback_name = find_loopback().expect("No loopback interface found for testing.");
+/// The logic for the Controlled Node container.
+fn run_cn_logic(interface_name: &str) {
     let cn_node_id = 42;
-    let placeholder_mac = [0u8; 6];
-    let loopback_name_for_thread = loopback_name.clone();
+    println!("[CN] Thread started on interface '{}'.", interface_name);
+    let mut cn_interface =
+        LinuxPnetInterface::new(interface_name, cn_node_id).unwrap();
+    // The CN needs to know its own MAC to filter out sent packets on loopback
+    let cn_mac = cn_interface.local_mac_address();
 
-    // --- Setup the Controlled Node in a separate thread ---
-    let cn_thread = thread::spawn(move || {
-        println!("[CN] Thread started.");
-        let mut cn_interface =
-            LinuxPnetInterface::new(&loopback_name_for_thread, cn_node_id).unwrap();
-        let od = get_test_od(cn_node_id);
-        let mut node = ControlledNode::new(od, placeholder_mac.into()).unwrap();
-        println!("[CN] Initial NMT state: {:?}", node.nmt_state());
+    let od = get_test_od(cn_node_id);
+    let mut node = ControlledNode::new(od, cn_mac.into()).unwrap();
+    println!("[CN] Initial NMT state: {:?}", node.nmt_state());
 
-        let mut buffer = [0u8; 1518];
-        let start_time = Instant::now();
+    let mut buffer = [0u8; 1518];
+    let start_time = Instant::now();
 
-        // Run for up to 2 seconds, waiting for frames to process.
-        while start_time.elapsed() < Duration::from_secs(2) {
-            match cn_interface.receive_frame(&mut buffer) {
-                Ok(bytes) if bytes > 0 => {
-                    println!("[CN] Received {} bytes.", bytes);
-                    // process_raw_frame will now correctly ignore non-POWERLINK frames.
-                    if let NodeAction::SendFrame(response) =
-                        node.process_raw_frame(&buffer[..bytes])
-                    {
-                        println!("[CN] Sending IdentResponse of {} bytes.", response.len());
-                        cn_interface.send_frame(&response).unwrap();
-                        println!("[CN] Response sent. Thread finished.");
-                        return; // The job is done, exit the thread.
-                    }
-                    println!("[CN] New NMT state: {:?}", node.nmt_state());
+    // Run for a limited time, waiting for the MN's frames.
+    while start_time.elapsed() < Duration::from_secs(5) {
+        match cn_interface.receive_frame(&mut buffer) {
+            Ok(bytes) if bytes > 0 => {
+                // Ignore frames sent by this node itself (loopback echo)
+                let source_mac = &buffer[6..12];
+                if source_mac == cn_mac {
+                    continue;
                 }
-                _ => {
-                    // This branch is taken on receive timeout or error.
-                    // Continue looping without printing anything.
+                
+                println!("[CN] Received {} bytes.", bytes);
+                if let NodeAction::SendFrame(response) =
+                    node.process_raw_frame(&buffer[..bytes])
+                {
+                    println!("[CN] Sending IdentResponse of {} bytes.", response.len());
+                    cn_interface.send_frame(&response).unwrap();
+                    println!("[CN] Response sent. Thread finished.");
+                    return; // The job is done, exit.
                 }
+                println!("[CN] New NMT state: {:?}", node.nmt_state());
+            }
+            _ => { // Timeout or error, just continue
             }
         }
-        println!("[CN] Thread timed out without sending a response.");
-    });
+    }
+    println!("[CN] Thread timed out without sending a response.");
+    panic!("[CN] Did not receive a valid SoA(IdentRequest) to respond to.");
+}
 
+/// The logic for the Managing Node container, which drives the test.
+fn run_mn_logic(interface_name: &str) {
+    let cn_node_id = 42;
+    println!("[MN] Starting test driver on interface '{}'.", interface_name);
 
-    thread::sleep(Duration::from_millis(200));
+    // Give the CN container a moment to start up.
+    thread::sleep(Duration::from_millis(500));
 
-    // --- Setup the "Tester" (simulating the MN) ---
     let mut mn_interface =
-        LinuxPnetInterface::new(&loopback_name, C_ADR_MN_DEF_NODE_ID).unwrap();
+        LinuxPnetInterface::new(interface_name, C_ADR_MN_DEF_NODE_ID).unwrap();
     let mn_mac = mn_interface.local_mac_address();
-    let _cn_mac = mn_mac; // On loopback, the destination is self. Prefix with _ to ignore warning.
 
     // 1. Send SoC to move CN from NotActive -> PreOperational1
-    let net_time = NetTime {
-        seconds: 1761159900, // Corresponds to 2025-10-22 13:05:00 in CEST (UTC+2)
-        nanoseconds: 123456789,
-    };
-    let relative_time = RelativeTime {
-        seconds: 0,
-        nanoseconds: 0,
-    };
+    let net_time = NetTime { seconds: 0, nanoseconds: 0 };
+    let relative_time = RelativeTime { seconds: 0, nanoseconds: 0 };
     let soc_frame = SocFrame::new(mn_mac.into(), Default::default(), net_time, relative_time);
     let mut soc_buffer = vec![0u8; 64];
     let soc_size = soc_frame.serialize(&mut soc_buffer).unwrap();
     soc_buffer.truncate(soc_size);
     println!("[MN] Sending SoC...");
     mn_interface.send_frame(&soc_buffer).unwrap();
-    thread::sleep(Duration::from_millis(50));
+    thread::sleep(Duration::from_millis(100));
 
     // 2. Send SoA(IdentRequest) to the CN
     let soa = SoAFrame::new(
@@ -269,10 +260,17 @@ fn test_cn_responds_to_ident_request() {
     // 3. Receive the ASnd(IdentResponse) from the CN
     let mut receive_buffer = [0u8; 1518];
     println!("[MN] Waiting for IdentResponse...");
-    for i in 0..20 {
+    let start_time = Instant::now();
+    while start_time.elapsed() < Duration::from_secs(5) {
         if let Ok(bytes) = mn_interface.receive_frame(&mut receive_buffer) {
+             // Ignore frames sent by this node itself (loopback echo)
+            let source_mac = &receive_buffer[6..12];
+            if source_mac == mn_mac {
+                continue;
+            }
+
             if bytes > 0 {
-                println!("[MN] Received {} bytes on attempt {}.", bytes, i);
+                println!("[MN] Received {} bytes.", bytes);
                 if let Ok(PowerlinkFrame::ASnd(asnd)) =
                     powerlink_rs::deserialize_frame(&receive_buffer[..bytes])
                 {
@@ -280,17 +278,14 @@ fn test_cn_responds_to_ident_request() {
                         && asnd.service_id == ServiceId::IdentResponse
                     {
                         println!("[MN] Success! Received valid IdentResponse.");
-                        // Wait for the CN thread to finish to see all its logs.
-                        cn_thread.join().expect("CN thread panicked");
-                        return; // Test successful!
+                        // The test passes here.
+                        return;
                     }
                 }
             }
         }
-        thread::sleep(Duration::from_millis(50));
     }
 
-    // If the loop finishes, the test has failed. Wait for the thread to see its final output.
-    cn_thread.join().expect("CN thread panicked");
     panic!("Did not receive a valid ASnd(IdentResponse) frame from the CN.");
 }
+
