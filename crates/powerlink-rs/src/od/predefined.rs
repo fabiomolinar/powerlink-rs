@@ -3,8 +3,8 @@
 use super::entry::{AccessType, Category, Object, ObjectEntry, PdoMapping};
 use super::value::ObjectValue;
 use super::ObjectDictionary;
-use crate::{NodeId, PowerlinkError};
-use alloc::{vec, vec::Vec};
+use crate::PowerlinkError;
+use alloc::vec;
 
 /// Populates the OD with mandatory objects that define protocol mechanisms.
 /// Device-specific identification objects are left to the user to insert.

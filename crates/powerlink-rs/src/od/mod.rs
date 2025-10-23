@@ -9,7 +9,7 @@ pub use value::ObjectValue;
 
 use crate::hal::ObjectDictionaryStorage;
 use crate::{NodeId, PowerlinkError};
-use alloc::{borrow::Cow, collections::BTreeMap, string::String, vec::Vec};
+use alloc::{borrow::Cow, collections::BTreeMap, vec::Vec};
 use core::fmt;
 
 /// The main Object Dictionary structure.
