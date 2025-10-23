@@ -1,42 +1,55 @@
-# --- Builder Stage ---
-# Use the official nightly Rust image based on Debian Bookworm for 2024 edition support.
-# This is more explicit than the generic 'nightly' tag.
-# The --platform flag ensures we build for x86_64, even on ARM hosts (e.g., Apple M1/M2).
+# Stage 1: Build the test binary using the nightly Rust toolchain on Debian Bookworm
+# Use the official rustlang image for nightly on bookworm, specifying amd64 platform
 FROM --platform=linux/amd64 rustlang/rust:nightly-bookworm as builder
 
-# Create a working directory.
+# Install necessary build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpcap-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set the working directory inside the builder container
 WORKDIR /powerlink-test
 
-# Copy over your Cargo manifest files.
-COPY ./Cargo.toml ./Cargo.toml
-COPY ./Cargo.lock ./Cargo.lock
-# Copy the source code.
-COPY ./crates ./crates
+# Copy the entire workspace context
+# This allows Cargo to cache dependencies effectively
+COPY ../../../.. .
 
-# Add the standard Linux x86_64 target to the toolchain to ensure cross-compilation.
+# Add the required target for cross-compilation (even if host is already x86_64)
 RUN rustup target add x86_64-unknown-linux-gnu
 
-# Build the test binary for the x86_64 Linux target without running it.
-RUN cargo test -p powerlink-io-linux --test loopback_test --no-run --target x86_64-unknown-linux-gnu
+# Compile the specific integration test binary for the target architecture.
+# Using `cargo test --no-run` compiles the test executable without running it.
+# We specify the package and the test name.
+# Removed --ignored flag as it's not valid for `cargo test --no-run`
+RUN cargo test \
+    --package powerlink-io-linux \
+    --test loopback_test \
+    --target x86_64-unknown-linux-gnu \
+    --no-run
 
-# Find the compiled test binary and move it to a predictable path.
-# This is more robust than using wildcards in the final COPY command.
-RUN find ./target/x86_64-unknown-linux-gnu/debug/deps -name 'loopback_test-*' -type f -executable -exec mv {} /usr/local/bin/powerlink-loopback-test \;
+# Use find to locate the exact test binary and move it to a known location
+# Cargo adds a hash to the test binary name in the deps directory.
+RUN mkdir -p /app && \
+    find target/x86_64-unknown-linux-gnu/debug/deps/ -maxdepth 1 -type f -name 'loopback_test-*' -executable -exec mv {} /app/powerlink-loopback-test \;
 
 
-# --- Final Stage ---
-# Use a minimal Debian base image for a small and secure final image.
+# Stage 2: Create the minimal final runtime image
+# Use the slim debian image, specifying amd64 platform
 FROM --platform=linux/amd64 debian:bookworm-slim
 
-# Install the pcap library, which is a runtime dependency for pnet.
-RUN apt-get update && apt-get install -y libpcap-dev --no-install-recommends && rm -rf /var/lib/apt/lists/*
+# Install only runtime dependencies (libpcap0.8 for pnet)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy the compiled test binary from the builder stage.
-COPY --from=builder /usr/local/bin/powerlink-loopback-test /usr/local/bin/powerlink-loopback-test
+# Copy the built test binary from the builder stage's known location.
+COPY --from=builder /app/powerlink-loopback-test /usr/local/bin/powerlink-loopback-test
 
 # Set the execute permission on the test binary.
 RUN chmod +x /usr/local/bin/powerlink-loopback-test
 
-# Set the entrypoint for the container.
+# Define the default command to run when the container starts.
+# This can be overridden by docker-compose.
 ENTRYPOINT ["/usr/local/bin/powerlink-loopback-test"]
 

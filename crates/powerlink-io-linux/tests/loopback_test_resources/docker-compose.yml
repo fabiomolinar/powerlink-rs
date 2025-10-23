@@ -1,43 +1,49 @@
+# Orchestrates the MN and CN containers for integration testing.
 services:
-  # The Controlled Node (CN) service
   cn:
-    build:
-      context: ../../../../
-      dockerfile: crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
     container_name: powerlink-cn
-    cap_add:
-      - NET_RAW # Needed for pnet raw sockets
-    environment:
-      POWERLINK_TEST_ROLE: "CN"
-      RUST_LOG: debug # Enable logging inside the container
-    networks:
-      powerlink_net:
-        # Assign a static IP corresponding to the Node ID used in the test
-        ipv4_address: 192.168.100.42
-    # Ensure CN waits for MN to be ready (optional but good practice)
-    depends_on:
-      - mn
-
-  # The Managing Node (MN) service
-  mn:
     build:
-      context: ../../../../
-      dockerfile: crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
-    container_name: powerlink-mn
-    cap_add:
-      - NET_RAW # Needed for pnet raw sockets
+      context: ../../../.. # Workspace root relative to this file
+      dockerfile: ./crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
     environment:
-      POWERLINK_TEST_ROLE: "MN"
-      RUST_LOG: debug # Enable logging inside the container
+      POWERLINK_TEST_ROLE: "CN" # Role for the test binary
+      RUST_LOG: debug # Enable debug logging
+      RUST_BACKTRACE: 1 # Provide backtraces on panic
     networks:
       powerlink_net:
-        # Assign the standard POWERLINK MN IP address
-        ipv4_address: 192.168.100.240
+        ipv4_address: 192.168.100.42 # Assign static IP based on Node ID
+    cap_add:
+      - NET_RAW # Allow opening raw sockets
+    depends_on: # Ensure MN starts first (optional but good practice)
+      - mn
+    # Use the ENTRYPOINT defined in the Dockerfile
+    # Command override to pass test flags:
+    command: ["--ignored", "--nocapture"]
+
+  mn:
+    container_name: powerlink-mn
+    build:
+      context: ../../../.. # Workspace root relative to this file
+      dockerfile: ./crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
+    environment:
+      POWERLINK_TEST_ROLE: "MN" # Role for the test binary
+      RUST_LOG: debug # Enable debug logging
+      RUST_BACKTRACE: 1 # Provide backtraces on panic
+    networks:
+      powerlink_net:
+        ipv4_address: 192.168.100.240 # Assign static IP for MN
+    cap_add:
+      - NET_RAW # Allow opening raw sockets
+    # Use the ENTRYPOINT defined in the Dockerfile
+    # Command override to pass test flags:
+    command: ["--ignored", "--nocapture"]
+
 
 networks:
   powerlink_net:
     driver: bridge
     ipam:
+      driver: default
       config:
-        - subnet: 192.168.100.0/24 # Define the POWERLINK subnet
+        - subnet: 192.168.100.0/24 # Define the POWERLINK standard subnet
 
