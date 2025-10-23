@@ -1,6 +1,10 @@
 pub mod cn;
 pub mod mn;
-pub mod handler;
+pub mod pdo_handler;
+
+pub use cn::ControlledNode;
+pub use mn::ManagingNode;
+pub use pdo_handler::PdoHandler;
 
 use crate::nmt::states::NmtState;
 use alloc::vec::Vec;
