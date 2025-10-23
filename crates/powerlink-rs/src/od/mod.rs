@@ -362,6 +362,68 @@ impl<'a> ObjectDictionary<'a> {
                 pdo_mapping: Some(PdoMapping::No),
             },
         );
+
+        // --- Add default PDO Communication Parameters ---
+        // RPDO 1 Comm Param (for PReq from MN, NodeID 0)
+        self.insert(
+            0x1400,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned8(0), // 1: NodeID_U8 (0 = PReq)
+                    ObjectValue::Unsigned8(0), // 2: MappingVersion_U8
+                ]),
+                name: "PDO_RxCommParam_00h_REC",
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        );
+        // TPDO 1 Comm Param (for PRes from this CN)
+        self.insert(
+            0x1800,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned8(1), // 1: NodeID_U8 (1 = self, placeholder)
+                    ObjectValue::Unsigned8(0), // 2: MappingVersion_U8
+                ]),
+                name: "PDO_TxCommParam_00h_REC",
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        );
+
+        // --- Add default PDO Mapping Parameters (empty) ---
+        // RPDO 1 Mapping Param
+        self.insert(
+            0x1600,
+            ObjectEntry {
+                object: Object::Array(vec![]), // Empty mapping by default
+                name: "PDO_RxMappParam_00h_AU64",
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        );
+        // TPDO 1 Mapping Param
+        self.insert(
+            0x1A00,
+            ObjectEntry {
+                object: Object::Array(vec![]), // Empty mapping by default
+                name: "PDO_TxMappParam_00h_AU64",
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        );
     }
 
     /// Validates that the OD contains all mandatory objects required for a node to function.
@@ -446,6 +508,12 @@ impl<'a> ObjectDictionary<'a> {
                     }
                 }
             })
+    }
+
+    /// Reads an object's enum (`Object::Variable`, `Object::Array`, etc.) by index.
+    /// This is a helper for accessing the structural part of an entry.
+    pub fn read_object(&self, index: u16) -> Option<&Object> {
+        self.entries.get(&index).map(|entry| &entry.object)
     }
 
     // --- Start of Type-Safe Accessors ---
@@ -867,3 +935,4 @@ mod tests {
         assert!(!storage.restore_requested);
     }
 }
+

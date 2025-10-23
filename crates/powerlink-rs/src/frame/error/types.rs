@@ -52,5 +52,9 @@ pub enum DllError {
     /// Corresponds to `E_DLL_MEV_ASND_TIMEOUT` in the specification.
     MevAsndTimeout,
     /// Unexpected event in the current state machine state.
-    UnexpectedEventInState { state: u8, event: u8}
+    UnexpectedEventInState { state: u8, event: u8 },
+    /// Corresponds to `E_PDO_MAP_VERS` (Section 6.4.8.1.1)
+    PdoMapVersion { node_id: NodeId },
+    /// Corresponds to `E_PDO_SHORT_RX` (Section 6.4.8.1.2)
+    PdoPayloadShort { node_id: NodeId },
 }

@@ -49,12 +49,13 @@ impl MnNmtStateMachine {
 
         // WaitNotActive timeout from OD entry 0x1F89, sub-index 1.
         let wait_not_active_timeout_val = od.read(0x1F89, 1).ok_or(PowerlinkError::ObjectNotFound)?;
-        let wait_not_active_timeout = if let ObjectValue::Unsigned32(val) = &*wait_not_active_timeout_val {
-            *val
-        } else {
-            return Err(PowerlinkError::TypeMismatch);
-        };
-        
+        let wait_not_active_timeout =
+            if let ObjectValue::Unsigned32(val) = &*wait_not_active_timeout_val {
+                *val
+            } else {
+                return Err(PowerlinkError::TypeMismatch);
+            };
+
         // NMT_StartUp_U32 from OD entry 0x1F80, sub-index 0.
         let startup_flags_val = od.read(0x1F80, 0).ok_or(PowerlinkError::ObjectNotFound)?;
         let startup_flags = if let ObjectValue::Unsigned32(val) = &*startup_flags_val {
@@ -62,7 +63,7 @@ impl MnNmtStateMachine {
         } else {
             return Err(PowerlinkError::TypeMismatch);
         };
-        
+
         info!(
             "MN NMT configured with FeatureFlags: {:?}, WaitNotActiveTimeout: {}, StartupFlags: {:#010x}",
             feature_flags, wait_not_active_timeout, startup_flags
@@ -83,12 +84,12 @@ impl NmtStateMachine for MnNmtStateMachine {
     }
 
     fn reset(&mut self, event: NmtEvent) {
-         match event {
+        match event {
             NmtEvent::Reset => self.current_state = NmtState::NmtGsInitialising,
             NmtEvent::ResetNode => self.current_state = NmtState::NmtGsResetApplication,
             NmtEvent::ResetCommunication => self.current_state = NmtState::NmtGsResetCommunication,
             NmtEvent::ResetConfiguration => self.current_state = NmtState::NmtGsResetConfiguration,
-            _ => {}, // Ignore other events
+            _ => {} // Ignore other events
         }
     }
 
@@ -104,14 +105,16 @@ impl NmtStateMachine for MnNmtStateMachine {
             self.update_od_state(od);
             self.current_state = NmtState::NmtNotActive;
             self.update_od_state(od);
-            info!("Internal MN NMT initialisation sequence complete. State is now NotActive.");
+            info!(
+                "Internal MN NMT initialisation sequence complete. State is now NotActive."
+            );
         }
     }
 
     /// Processes an external event and transitions the NMT state accordingly.
     /// The logic follows the MN state diagram (Figure 73) from the specification.
     fn process_event(&mut self, event: NmtEvent, od: &mut ObjectDictionary) -> Option<Vec<DllError>> {
-        let mut errors: Vec<DllError> = Vec::new();
+        let errors: Vec<DllError> = Vec::new();
         let old_state = self.current_state;
         let next_state = match (self.current_state, event) {
             // --- Reset and Initialisation Transitions (Same as CN) ---
@@ -120,10 +123,11 @@ impl NmtStateMachine for MnNmtStateMachine {
             (_, NmtEvent::ResetCommunication) => NmtState::NmtGsResetCommunication,
             (_, NmtEvent::ResetConfiguration) => NmtState::NmtGsResetConfiguration,
 
-            // --- MN Boot-up Sequence ---
-            
+            // --- MN Boot-up Sequence (Figure 73) ---
+
+            // (NMT_MT2 / NMT_MT7) Timeout in NotActive
             (NmtState::NmtNotActive, NmtEvent::Timeout) => {
-                // Check NMT_StartUp_U32.Bit13
+                // Check NMT_StartUp_U32.Bit13 (0x1F80)
                 if (self.startup_flags & (1 << 13)) != 0 {
                     // (NMT_MT7) Go to BasicEthernet
                     NmtState::NmtBasicEthernet
@@ -131,31 +135,39 @@ impl NmtStateMachine for MnNmtStateMachine {
                     // (NMT_MT2) Go to PreOp1
                     NmtState::NmtPreOperational1
                 }
-            },
-            
-            // (NMT_MT3) Once all mandatory CNs are identified, start the full EPL cycle.
-            (NmtState::NmtPreOperational1, NmtEvent::AllCnsIdentified) => NmtState::NmtPreOperational2,
+            }
 
-            // (NMT_MT4) Once MN config is done and all mandatory CNs are ready, move to ReadyToOperate.
-            (NmtState::NmtPreOperational2, NmtEvent::ConfigurationCompleteCnsReady) => NmtState::NmtReadyToOperate,
+            // (NMT_MT3) All mandatory CNs identified
+            (NmtState::NmtPreOperational1, NmtEvent::AllCnsIdentified) => {
+                NmtState::NmtPreOperational2
+            }
 
-            // (NMT_MT5) Once isochronous communication is stable, enter the final operational state.
+            // (NmtPreOperational2, CnsReady)
+            (NmtState::NmtPreOperational2, NmtEvent::ConfigurationCompleteCnsReady) => {
+                NmtState::NmtReadyToOperate
+            }
+
+            // (NmtReadyToOperate, CnsOperational / NMTStartNode)
+            // We use StartNode as the trigger event, as MN decides when this happens
             (NmtState::NmtReadyToOperate, NmtEvent::StartNode) => NmtState::NmtOperational,
 
             // --- Operational State Transitions ---
-            
+
             // (NMT_MT6) A critical error (e.g., mandatory CN lost) forces a reset to PreOp1.
             (NmtState::NmtOperational, NmtEvent::Error) => NmtState::NmtPreOperational1,
 
+            // (NMT_CT12) MN in BasicEthernet detects other POWERLINK traffic
+            (NmtState::NmtBasicEthernet, NmtEvent::PowerlinkFrameReceived) => NmtState::NmtPreOperational1,
+            
             // If no specific transition is defined, remain in the current state.
-            (current, _) => {
-                errors.push(DllError::UnexpectedEventInState { state: current as u8, event: event as u8 });
-                current
-            },
+            (current, _) => current,
         };
 
         if old_state != next_state {
-            info!("MN NMT state transition: {:?} -> {:?} (on event: {:?})", old_state, next_state, event);
+            info!(
+                "MN NMT state transition: {:?} -> {:?} (on event: {:?})",
+                old_state, next_state, event
+            );
             self.current_state = next_state;
             self.update_od_state(od);
         }

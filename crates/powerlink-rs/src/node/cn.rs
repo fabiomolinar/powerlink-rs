@@ -1,16 +1,17 @@
 use super::{handler::FrameHandler, Node, NodeAction};
 use crate::frame::basic::MacAddress;
+use crate::frame::poll::PResFlags;
 use crate::frame::{
     deserialize_frame,
     error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler},
     ASndFrame, Codec, DllCsEvent, DllCsStateMachine, DllError, NmtAction, PowerlinkFrame,
-    PReqFrame, PResFrame, poll::PResFlags, PRFlag, RSFlag, ServiceId,
+    PReqFrame, PResFrame, PRFlag, RSFlag, ServiceId,
 };
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::{NmtEvent, NmtState};
-use crate::od::ObjectDictionary;
-use crate::pdo::PDOVersion;
+use crate::od::{ObjectDictionary, ObjectValue};
+use crate::pdo::{PdoMappingEntry, PDOVersion};
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::server::SdoServer;
@@ -23,6 +24,14 @@ use log::{debug, error, info, trace, warn};
 // Constants for OD access
 const OD_IDX_CYCLE_TIME: u16 = 0x1006;
 const OD_IDX_LOSS_SOC_TOLERANCE: u16 = 0x1C14;
+const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
+const OD_IDX_TPDO_MAPP_PARAM_BASE: u16 = 0x1A00;
+const OD_IDX_RPDO_COMM_PARAM_BASE: u16 = 0x1400;
+const OD_IDX_RPDO_MAPP_PARAM_BASE: u16 = 0x1600;
+const OD_IDX_PRES_PAYLOAD_LIMIT: u16 = 0x1F98;
+const OD_SUBIDX_PRES_PAYLOAD_LIMIT: u8 = 5;
+const OD_SUBIDX_PDO_COMM_NODEID: u8 = 1;
+const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
 
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct owns and manages all protocol layers and state machines.
@@ -85,30 +94,34 @@ impl<'s> ControlledNode<'s> {
         if let PowerlinkFrame::ASnd(ref asnd_frame) = frame {
             if asnd_frame.service_id == crate::frame::ServiceId::Sdo {
                 debug!("Received SDO/ASnd frame for processing.");
-                
                 // Extract SDO Headers first to get Transaction ID for potential abort
-                // ASnd payload = SDO Payload (Seq + Cmd + Data)
-                let transaction_id = if asnd_frame.payload.len() >= 4 { // Min 4 for Seq
-                    SdoCommand::deserialize(&asnd_frame.payload[4..]) // Cmd starts at offset 4
-                        .ok()
-                        .map(|cmd| cmd.header.transaction_id)
+                let transaction_id = if asnd_frame.payload.len() >= 4 { // Seq header
+                    SequenceLayerHeader::deserialize(&asnd_frame.payload[0..4])
+                        .ok() // Ignore deserialization errors here, let SDO server handle payload
+                        .and_then(|_seq_header| {
+                             if asnd_frame.payload.len() >= 8 { // Cmd header
+                                SdoCommand::deserialize(&asnd_frame.payload[4..])
+                                    .ok()
+                                    .map(|cmd| cmd.header.transaction_id)
+                             } else { None }
+                        })
                 } else {
                     None
                 };
 
-                // SDO server `handle_request` expects the SDO payload (Seq + Cmd + Data)
                 match self
                     .sdo_server
                     .handle_request(&asnd_frame.payload, &mut self.od)
                 {
-                    Ok(response_sdo_payload) => {
+                    Ok(response_payload) => {
+                        // Build and send the normal SDO response
                         let response_asnd = ASndFrame::new(
                             self.mac_address,
                             asnd_frame.eth_header.source_mac,
                             asnd_frame.source, // Respond to the original source node
                             self.nmt_state_machine.node_id,
                             crate::frame::ServiceId::Sdo,
-                            response_sdo_payload, // This is (Seq + Cmd + Data)
+                            response_payload,
                         );
                         let mut buf = vec![0u8; 1500];
                         if let Ok(size) = response_asnd.serialize(&mut buf) {
@@ -118,7 +131,6 @@ impl<'s> ControlledNode<'s> {
                             return NodeAction::SendFrame(buf);
                         } else {
                             error!("Failed to serialize SDO response frame.");
-                            // Fall through to abort
                         }
                     }
                     Err(e) => {
@@ -131,7 +143,7 @@ impl<'s> ControlledNode<'s> {
                                 PowerlinkError::SubObjectNotFound => 0x0609_0011,
                                 PowerlinkError::TypeMismatch => 0x0607_0010,
                                 PowerlinkError::StorageError(_) => 0x0800_0020, // Cannot transfer data
-                                _ => 0x0800_0000, // General error
+                                _ => 0x0800_0000,                               // General error
                             };
                             return self.build_sdo_abort_response(
                                 tid,
@@ -154,13 +166,18 @@ impl<'s> ControlledNode<'s> {
             trace!("SoC received at time {}", current_time_us);
             self.last_soc_reception_time_us = current_time_us;
             self.soc_timeout_check_active = true; // Enable timeout check after first SoC
+            // Request timer for next SoC check based on cycle time + tolerance
+            if let Some(action) = self.request_soc_timeout_check() {
+                 return action; // Return early as SoC processing is done
+            } else {
+                 // Could not read cycle time or tolerance, proceed without timer request
+                 warn!("Could not read cycle time/tolerance to set SoC timeout timer.");
+            }
         }
 
         // --- Normal Frame Processing ---
 
         // 1. Update NMT state machine based on the frame type.
-        // This is where NmtNotActive -> NmtPreOp1 (on SoC/SoA) happens
-        // or NmtPreOp1 -> NmtPreOp2 (on SoC) happens.
         if let Some(event) = frame.nmt_event() {
             self.nmt_state_machine.process_event(event, &mut self.od);
         }
@@ -181,7 +198,19 @@ impl<'s> ControlledNode<'s> {
             }
         }
 
-        // 3. Delegate response logic to the frame handler.
+        // 3. Handle PDO consumption *before* generating a response
+        match &frame {
+            PowerlinkFrame::PReq(preq_frame) => {
+                self.consume_preq_payload(preq_frame);
+            }
+            PowerlinkFrame::PRes(pres_frame) => {
+                self.consume_pres_payload(pres_frame);
+            }
+            _ => {} // Other frames do not carry consumer PDOs
+        }
+
+
+        // 4. Delegate response logic to the frame handler.
         if let Some(response_frame) = frame.handle_cn(self) {
             let mut buf = vec![0u8; 1500];
             let serialize_result = match &response_frame {
@@ -198,13 +227,6 @@ impl<'s> ControlledNode<'s> {
                 return NodeAction::SendFrame(buf);
             } else {
                 error!("Failed to serialize response frame: {:?}", response_frame);
-            }
-        }
-        
-        // If we processed a SoC, return the timer action we calculated earlier
-        if matches!(frame, PowerlinkFrame::Soc(_)) {
-            if let Some(action) = self.request_soc_timeout_check() {
-                return action;
             }
         }
 
@@ -234,25 +256,22 @@ impl<'s> ControlledNode<'s> {
             "Building PRes in response to PReq for node {}",
             self.nmt_state_machine.node_id.0
         );
+        
+        let nmt_state = self.nmt_state();
+        let (payload, pdo_version, payload_is_valid) = 
+            match self.build_tpdo_payload() {
+                Ok((payload, version)) => (payload, version, true),
+                Err(e) => {
+                    warn!("Failed to build TPDO payload: {:?}. Sending empty PRes.", e);
+                    (Vec::new(), PDOVersion(0), false)
+                }
+            };
 
-        // --- PDO Mapping Logic (Placeholder) ---
-        // In a real implementation:
-        // 1. Read the TPDO mapping object (e.g., 0x1A00).
-        // 2. Iterate through mapping entries.
-        // 3. For each entry, read the corresponding value from `self.od`.
-        // 4. Serialize the value and place it in the `payload` Vec at the correct offset.
-        let payload: Vec<u8> = Vec::new(); // Empty payload for now
-        let pdo_version = PDOVersion(0); // Default version
+        // Determine RD flag based on NMT state and PDO validity
+        // [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Section 6.4.4, 6.4.8.2]
+        let rd_flag = (nmt_state == NmtState::NmtOperational) && payload_is_valid;
 
-        // Determine RD flag based on NMT state [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Section 6.4.4]
-        let rd_flag = self.nmt_state() == NmtState::NmtOperational;
-
-        // Determine RS and PR flags (Placeholder)
-        // In a real implementation:
-        // 1. Check if SDO server or NMT layer has pending requests.
-        // 2. Determine the highest priority among pending requests.
-        // 3. Set PR flag to the highest priority.
-        // 4. Set RS flag to the number of pending requests at that priority (clamped to 7).
+        // TODO: Determine RS and PR flags from SDO/NMT queues
         let rs_flag = RSFlag::new(0); // No pending requests for now
         let pr_flag = PRFlag::Low1; // Default priority
 
@@ -267,7 +286,7 @@ impl<'s> ControlledNode<'s> {
         let pres = PResFrame::new(
             self.mac_address,
             self.nmt_state_machine.node_id,
-            self.nmt_state_machine.current_state(),
+            nmt_state,
             flags,
             pdo_version,
             payload,
@@ -375,13 +394,20 @@ impl<'s> ControlledNode<'s> {
             send_con: SendConnState::ConnectionValid,
         };
 
-        // Serialize SDO Seq + Cmd into ASnd payload buffer
-        // This is the payload for the ASndFrame
-        let mut sdo_payload_buf = vec![0u8; 12]; // 4 (Seq) + 8 (Cmd fixed) + 4 (Abort Code)
-        let mut offset = 0;
-        offset += seq_header.serialize(&mut sdo_payload_buf[offset..]).unwrap_or(0);
-        offset += abort_command.serialize(&mut sdo_payload_buf[offset..]).unwrap_or(0);
-        sdo_payload_buf.truncate(offset);
+        // Serialize SDO Seq + Cmd into SDO payload buffer
+        let mut sdo_payload_buf = vec![0u8; 12]; // 4 (Seq) + 8 (Cmd fixed)
+        seq_header
+            .serialize(&mut sdo_payload_buf[0..4])
+            .unwrap_or_else(|e| {
+                error!("Failed to serialize SDO Seq header for abort: {:?}", e);
+                0
+            }); // Should not fail with correct buffer size
+        abort_command
+            .serialize(&mut sdo_payload_buf[4..])
+            .unwrap_or_else(|e| {
+                error!("Failed to serialize SDO Cmd header for abort: {:?}", e);
+                0
+            }); // Should not fail
 
         // Construct the ASnd frame
         let abort_asnd = ASndFrame::new(
@@ -428,24 +454,252 @@ impl<'s> ControlledNode<'s> {
         );
         Some(NodeAction::SetTimer(next_check_delay_us))
     }
+
+    /// Reads RPDO mappings for a given source Node ID (0 for PReq) and writes
+    /// data from the payload into the Object Dictionary.
+    fn consume_pdo_payload(
+        &mut self,
+        source_node_id: NodeId,
+        payload: &[u8],
+        received_version: PDOVersion,
+        is_ready: bool,
+    ) {
+        if !is_ready {
+            trace!("Ignoring PDO payload, RD flag is not set.");
+            return; // Data is not valid
+        }
+
+        if self.nmt_state() != NmtState::NmtOperational {
+            trace!("Ignoring PDO payload, NMT state is not Operational.");
+            return; // Per spec, only consume in Operational
+        }
+
+        // Find the correct mapping for this source node
+        // TODO: This is a linear scan. For performance, a BTreeMap<NodeId, u16>
+        // could cache this lookup (e.g., NodeId(0) -> 0x1400, NodeId(5) -> 0x1401).
+        let mut mapping_index = None;
+        for i in 0..256 {
+            let comm_param_index = OD_IDX_RPDO_COMM_PARAM_BASE + i as u16;
+            if let Some(node_id_val) =
+                self.od.read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
+            {
+                if node_id_val == source_node_id.0 {
+                    // Found the correct communication parameter object
+                    // Check mapping version
+                    let expected_version = self
+                        .od
+                        .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_VERSION)
+                        .unwrap_or(0);
+                    if expected_version != 0 && received_version.0 != expected_version {
+                        warn!(
+                            "PDO version mismatch for source Node {}. Expected {}, got {}. Ignoring payload.",
+                            source_node_id.0, expected_version, received_version.0
+                        );
+                        // TODO: Log E_PDO_MAP_VERS (6.4.8.1.1)
+                        return;
+                    }
+                    mapping_index = Some(OD_IDX_RPDO_MAPP_PARAM_BASE + i as u16);
+                    break;
+                }
+            }
+        }
+
+        let mapping_index = match mapping_index {
+            Some(index) => index,
+            None => {
+                trace!("No RPDO mapping found for source Node {}.", source_node_id.0);
+                return;
+            }
+        };
+
+        // We have a valid mapping, now process it
+        if let Some(mapping_cow) = self.od.read(mapping_index, 0) {
+            if let ObjectValue::Unsigned8(num_entries) = *mapping_cow {
+                for i in 1..=num_entries {
+                    if let Some(entry_cow) = self.od.read(mapping_index, i) {
+                        if let ObjectValue::Unsigned64(raw_mapping) = *entry_cow {
+                            let entry = PdoMappingEntry::from_u64(raw_mapping);
+                            self.apply_rpdo_mapping_entry(&entry, payload);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Helper for `consume_pdo_payload` to apply a single mapping entry.
+    fn apply_rpdo_mapping_entry(&mut self, entry: &PdoMappingEntry, payload: &[u8]) {
+        // Get byte-aligned offset and length
+        let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
+            warn!("Bit-level PDO mapping is not supported. Index: {}, SubIndex: {}.", entry.index, entry.sub_index);
+            return;
+        };
+
+        // Check payload bounds
+        if payload.len() < offset + length {
+            warn!(
+                "RPDO mapping for 0x{:04X}/{} is out of bounds. Payload size: {}, expected at least {}.",
+                entry.index, entry.sub_index, payload.len(), offset + length
+            );
+            // TODO: Log E_PDO_SHORT_RX (6.4.8.1.2)
+            return;
+        }
+
+        // Get the slice of data from the payload
+        let data_slice = &payload[offset..offset + length];
+
+        // Get a type template from the OD to deserialize against
+        let Some(type_template) = self.od.read(entry.index, entry.sub_index) else {
+            warn!("RPDO mapping for 0x{:04X}/{} failed: OD entry not found.", entry.index, entry.sub_index);
+            return;
+        };
+        
+        // Deserialize and write to OD
+        match ObjectValue::deserialize(data_slice, &type_template) {
+            Ok(value) => {
+                trace!(
+                    "Applying RPDO: Writing {:?} to 0x{:04X}/{}",
+                    value,
+                    entry.index,
+                    entry.sub_index
+                );
+                // Use write_internal to bypass read-only checks (PDO writes are allowed)
+                if let Err(e) = self.od.write_internal(entry.index, entry.sub_index, value, false) {
+                     warn!(
+                        "Failed to write RPDO data to 0x{:04X}/{}: {:?}",
+                        entry.index, entry.sub_index, e
+                    );
+                }
+            }
+            Err(e) => {
+                 warn!(
+                    "Failed to deserialize RPDO data for 0x{:04X}/{}: {:?}",
+                    entry.index, entry.sub_index, e
+                );
+            }
+        }
+    }
+
+    /// Consumes the payload of a PReq frame based on RPDO mapping 0x1400/0x1600.
+    fn consume_preq_payload(&mut self, preq: &PReqFrame) {
+        self.consume_pdo_payload(
+            NodeId(0), // Node ID 0 is reserved for PReq
+            &preq.payload,
+            preq.pdo_version,
+            preq.flags.rd,
+        );
+    }
+
+    /// Consumes the payload of a PRes frame based on RPDO mapping 0x14xx/0x16xx.
+    fn consume_pres_payload(&mut self, pres: &PResFrame) {
+        self.consume_pdo_payload(
+            pres.source, // Source Node ID of the PRes
+            &pres.payload,
+            pres.pdo_version,
+            pres.flags.rd,
+        );
+    }
+
+    /// Builds the payload for a TPDO (PRes) frame.
+    fn build_tpdo_payload(&self) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
+        let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE; // Default PRes is 0x1800
+        let mapping_index = OD_IDX_TPDO_MAPP_PARAM_BASE; // Default PRes is 0x1A00
+
+        // 1. Get Mapping Version
+        let pdo_version = PDOVersion(
+            self.od
+                .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_VERSION)
+                .unwrap_or(0),
+        );
+
+        // 2. Get Payload Limit
+        let payload_limit = self
+            .od
+            .read_u16(
+                OD_IDX_PRES_PAYLOAD_LIMIT,
+                OD_SUBIDX_PRES_PAYLOAD_LIMIT,
+            )
+            .unwrap_or(0) as usize;
+        
+        let mut payload = vec![0u8; payload_limit.min(1490)]; // Pre-allocate buffer
+        let mut max_offset_len = 0;
+
+        // 3. Iterate mapping and fill payload
+        if let Some(mapping_cow) = self.od.read(mapping_index, 0) {
+            if let ObjectValue::Unsigned8(num_entries) = *mapping_cow {
+                for i in 1..=num_entries {
+                    let Some(entry_cow) = self.od.read(mapping_index, i) else { continue };
+                    let ObjectValue::Unsigned64(raw_mapping) = *entry_cow else { continue };
+                    
+                    let entry = PdoMappingEntry::from_u64(raw_mapping);
+
+                    let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
+                        warn!("Bit-level TPDO mapping not supported for 0x{:04X}/{}", entry.index, entry.sub_index);
+                        continue;
+                    };
+
+                    let end_pos = offset + length;
+                    if end_pos > payload.len() {
+                         warn!(
+                            "TPDO mapping for 0x{:04X}/{} exceeds payload limit {}. Required: {} bytes.",
+                            entry.index, entry.sub_index, payload.len(), end_pos
+                        );
+                        return Err(PowerlinkError::ValidationError("PDO mapping exceeds payload limit"));
+                    }
+                    if end_pos > max_offset_len {
+                        max_offset_len = end_pos;
+                    }
+
+                    // Read from OD
+                    let Some(value_cow) = self.od.read(entry.index, entry.sub_index) else {
+                        warn!("TPDO mapping for 0x{:04X}/{} failed: OD entry not found.", entry.index, entry.sub_index);
+                        // Write zeros to the payload for this entry
+                        payload[offset..end_pos].fill(0);
+                        continue;
+                    };
+
+                    // Serialize and copy to payload
+                    let serialized_data = value_cow.serialize();
+                    if serialized_data.len() != length {
+                        warn!(
+                            "TPDO mapping for 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes.",
+                            entry.index, entry.sub_index, length, serialized_data.len()
+                        );
+                        // Truncate or pad, for now just copy the valid part
+                        let copy_len = serialized_data.len().min(length);
+                        payload[offset..offset+copy_len].copy_from_slice(&serialized_data[..copy_len]);
+                    } else {
+                        payload[offset..end_pos].copy_from_slice(&serialized_data);
+                    }
+                     trace!("Applied TPDO: Read {:?} from 0x{:04X}/{}", value_cow, entry.index, entry.sub_index);
+                }
+            }
+        }
+        
+        // Truncate payload to the minimum required size
+        payload.truncate(max_offset_len);
+        Ok((payload, pdo_version))
+    }
 }
 
 impl<'s> Node for ControlledNode<'s> {
     /// Processes a raw byte buffer received from the network at a specific time.
     fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
+        // First, check if we are in BasicEthernet and if this is a POWERLINK frame
+        if self.nmt_state() == NmtState::NmtBasicEthernet
+            && buffer.len() > 14
+            && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
+        {
+            info!("[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1.");
+            self.nmt_state_machine.process_event(
+                NmtEvent::PowerlinkFrameReceived,
+                &mut self.od,
+            );
+            // After transitioning, fall through to process the frame that triggered it
+        }
+
         match deserialize_frame(buffer) {
-            Ok(frame) => {
-                // --- NMT_CT12 Handling ---
-                // If we are in BasicEthernet and receive *any* valid POWERLINK frame,
-                // we must transition back to PreOperational1 *before* processing the frame.
-                // [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Table 107]
-                if self.nmt_state() == NmtState::NmtBasicEthernet {
-                    info!("[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1.");
-                    self.nmt_state_machine.process_event(NmtEvent::PowerlinkFrameReceived, &mut self.od);
-                }
-                
-                self.process_frame(frame, current_time_us)
-            }
+            Ok(frame) => self.process_frame(frame, current_time_us),
             Err(PowerlinkError::InvalidEthernetFrame) => {
                 // This is not a POWERLINK frame (e.g., ARP, IP), so we ignore it.
                 // This is expected on a shared network interface.
@@ -483,7 +737,8 @@ impl<'s> Node for ControlledNode<'s> {
             }
 
             let timeout_duration_us = self.nmt_state_machine.basic_ethernet_timeout as u64;
-            if current_time_us.saturating_sub(self.last_soc_reception_time_us) >= timeout_duration_us
+            if current_time_us.saturating_sub(self.last_soc_reception_time_us)
+                >= timeout_duration_us
             {
                 // Timeout expired without seeing a SoC, transition to BasicEthernet
                 // [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Section 7.1.4.1.1].
@@ -495,8 +750,9 @@ impl<'s> Node for ControlledNode<'s> {
                 return NodeAction::NoAction; // No further timer needed for this mode
             } else {
                 // Timeout not yet reached, request another check later.
-                let remaining_time = timeout_duration_us
-                    .saturating_sub(current_time_us.saturating_sub(self.last_soc_reception_time_us));
+                let remaining_time = timeout_duration_us.saturating_sub(
+                    current_time_us.saturating_sub(self.last_soc_reception_time_us),
+                );
                 trace!(
                     "BasicEthernet timeout check pending, next check in {} us",
                     remaining_time
@@ -553,12 +809,15 @@ impl<'s> Node for ControlledNode<'s> {
                                 }
                             }
                         }
-                        // Stop checking until we get a new SoC
-                        self.soc_timeout_check_active = false; 
-                        self.last_soc_reception_time_us = 0; // Reset time
-                         
-                         // No new timer, wait for next SoC to re-activate
-                        return NodeAction::NoAction;
+                        // Assume next SoC should have arrived at expected_soc_time_us for next calc
+                        self.last_soc_reception_time_us = expected_soc_time_us;
+                        // Request timer for the *next* timeout check
+                        let next_check_delay = cycle_time_us + tolerance_us;
+                        trace!(
+                            "SoC timeout processed, requesting next check in {} us",
+                            next_check_delay
+                        );
+                        return NodeAction::SetTimer(next_check_delay);
                     } else {
                         // Timeout not yet reached, request timer for the threshold time.
                         let remaining_time = timeout_threshold_us.saturating_sub(current_time_us);
@@ -571,7 +830,9 @@ impl<'s> Node for ControlledNode<'s> {
                 } else {
                     // Cycle time is 0, disable check for this cycle.
                     self.soc_timeout_check_active = false;
-                    warn!("Cycle Time (0x1006) is zero, disabling SoC timeout check for this cycle.");
+                    warn!(
+                        "Cycle Time (0x1006) is zero, disabling SoC timeout check for this cycle."
+                    );
                 }
             } else {
                 // Could not read OD values, disable check for this cycle.

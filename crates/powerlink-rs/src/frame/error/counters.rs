@@ -1,5 +1,3 @@
-// In frame/error/counters.rs
-
 use crate::types::NodeId;
 use super::traits::{ErrorCounters, ErrorHandler};
 use super::types::{DllError, NmtAction};
@@ -17,25 +15,25 @@ pub struct ThresholdCounter {
 impl ThresholdCounter {
     /// Creates a new counter with a specific threshold.
     pub fn new(threshold: u32) -> Self {
-        Self { 
+        Self {
             cumulative_cnt: 0,
             threshold_cnt: 0,
             threshold,
-         }
+        }
     }
 
-    /// Increments the counter by 8 when an error occurs[cite: 965].
+    /// Increments the counter by 8 when an error occurs[cite: 1, 4.7.4.1].
     pub fn increment(&mut self) {
         self.threshold_cnt = self.threshold_cnt.saturating_add(8);
     }
 
-    /// Decrements the counter by 1 for each error-free cycle[cite: 965].
+    /// Decrements the counter by 1 for each error-free cycle[cite: 1, 4.7.4.1].
     pub fn decrement(&mut self) {
         self.threshold_cnt = self.threshold_cnt.saturating_sub(1);
     }
 
     /// Checks if the threshold has been reached. If so, resets the counter
-    /// and returns true[cite: 965].
+    /// and returns true[cite: 1, 4.7.4.1].
     pub fn check_and_reset(&mut self) -> bool {
         if self.threshold > 0 && self.threshold_cnt >= self.threshold {
             self.threshold_cnt = 0;
@@ -93,42 +91,47 @@ impl ErrorCounters for CnErrorCounters {
         self.collision.decrement();
         self.soc_jitter.decrement();
     }
-    
+
     fn handle_error<H: ErrorHandler>(&mut self, error: DllError, handler: &mut H) -> NmtAction {
         let threshold_reached = match error {
             DllError::LossOfSoc => {
                 self.loss_of_soc.increment();
                 self.loss_of_soc.check_and_reset()
-            },
+            }
             DllError::LossOfSoa => {
                 self.loss_of_soa.increment();
                 self.loss_of_soa.check_and_reset()
-            },
+            }
             DllError::LossOfPreq => {
                 self.loss_of_preq.increment();
                 self.loss_of_preq.check_and_reset()
-            },
+            }
             DllError::Crc => {
                 self.crc_errors.increment();
                 self.crc_errors.check_and_reset()
-            },
+            }
             DllError::Collision => {
                 self.collision.increment();
                 self.collision.check_and_reset()
-            },
+            }
             DllError::SoCJitter => {
                 self.soc_jitter.increment();
                 self.soc_jitter.check_and_reset()
-            },
+            }
             DllError::LossOfLink => {
                 self.loss_of_link_cumulative = self.loss_of_link_cumulative.saturating_add(1);
                 handler.log_error(&error);
                 false // Does not trigger an immediate NMT action.
-            },
+            }
+            // PDO errors are logged but do not trigger threshold-based NMT actions
+            DllError::PdoMapVersion { .. } | DllError::PdoPayloadShort { .. } => {
+                handler.log_error(&error);
+                false
+            }
             // Errors handled by MN are ignored here.
             _ => false,
         };
-        
+
         if threshold_reached {
             handler.log_error(&error);
             // Per Table 27, most threshold errors on a CN trigger a reset to PreOp1.
@@ -147,26 +150,34 @@ pub struct MnErrorCounters {
     pub collision: ThresholdCounter,
     pub cycle_time_exceeded: ThresholdCounter,
     // Cumulative counters do not reset.
-    pub loss_of_link_cumulative: u32,    
-    // Per-CN counters    
+    pub loss_of_link_cumulative: u32,
+    // Per-CN counters
     pub cn_late_pres: BTreeMap<NodeId, ThresholdCounter>,
-    pub cn_loss_of_pres: BTreeMap<NodeId, ThresholdCounter>,    
+    pub cn_loss_of_pres: BTreeMap<NodeId, ThresholdCounter>,
     pub cn_loss_of_status_response: BTreeMap<NodeId, ThresholdCounter>,
     // Cumulative counters do not reset.
 }
 
 impl MnErrorCounters {
-    pub fn new() -> Self { Self::default() }
-    
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     // Helper methods to get or insert a counter for a given node.
     fn loss_pres_counter_for(&mut self, node_id: NodeId) -> &mut ThresholdCounter {
-        self.cn_loss_of_pres.entry(node_id).or_insert_with(|| ThresholdCounter::new(15))
+        self.cn_loss_of_pres
+            .entry(node_id)
+            .or_insert_with(|| ThresholdCounter::new(15))
     }
     fn late_pres_counter_for(&mut self, node_id: NodeId) -> &mut ThresholdCounter {
-        self.cn_late_pres.entry(node_id).or_insert_with(|| ThresholdCounter::new(15))
+        self.cn_late_pres
+            .entry(node_id)
+            .or_insert_with(|| ThresholdCounter::new(15))
     }
     fn loss_status_res_counter_for(&mut self, node_id: NodeId) -> &mut ThresholdCounter {
-        self.cn_loss_of_status_response.entry(node_id).or_insert_with(|| ThresholdCounter::new(15))
+        self.cn_loss_of_status_response
+            .entry(node_id)
+            .or_insert_with(|| ThresholdCounter::new(15))
     }
 }
 
@@ -177,7 +188,9 @@ impl ErrorCounters for MnErrorCounters {
         self.cycle_time_exceeded.decrement();
         self.cn_loss_of_pres.values_mut().for_each(|c| c.decrement());
         self.cn_late_pres.values_mut().for_each(|c| c.decrement());
-        self.cn_loss_of_status_response.values_mut().for_each(|c| c.decrement());
+        self.cn_loss_of_status_response
+            .values_mut()
+            .for_each(|c| c.decrement());
     }
 
     fn handle_error<H: ErrorHandler>(&mut self, error: DllError, handler: &mut H) -> NmtAction {
@@ -185,34 +198,39 @@ impl ErrorCounters for MnErrorCounters {
             DllError::Crc => {
                 self.crc_errors.increment();
                 (self.crc_errors.check_and_reset(), None)
-            },
+            }
             DllError::Collision => {
                 self.collision.increment();
                 (self.collision.check_and_reset(), None)
-            },
+            }
             DllError::CycleTimeExceeded => {
                 self.cycle_time_exceeded.increment();
                 (self.cycle_time_exceeded.check_and_reset(), None)
-            },
+            }
             DllError::LossOfPres { node_id } => {
                 let counter = self.loss_pres_counter_for(node_id);
                 counter.increment();
                 (counter.check_and_reset(), Some(node_id))
-            },
+            }
             DllError::LatePres { node_id } => {
                 let counter = self.late_pres_counter_for(node_id);
                 counter.increment();
                 (counter.check_and_reset(), Some(node_id))
-            },
+            }
             DllError::LossOfStatusRes { node_id } => {
                 let counter = self.loss_status_res_counter_for(node_id);
                 counter.increment();
                 (counter.check_and_reset(), Some(node_id))
-            },
+            }
+            // PDO errors are logged but do not trigger threshold-based NMT actions
+            DllError::PdoMapVersion { .. } | DllError::PdoPayloadShort { .. } => {
+                handler.log_error(&error);
+                (false, None)
+            }
             // Errors handled by CN are ignored here.
             _ => (false, None),
         };
-        
+
         if threshold_reached {
             handler.log_error(&error);
             // Per Table 28, the MN's action depends on the error type.

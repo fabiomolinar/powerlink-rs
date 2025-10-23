@@ -56,17 +56,17 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
   - Focus: Enabling cross-platform usage and testing.
   - Key Features: Define the core Rust Trait for low-level I/O (send_raw_frame, receive_raw_frame). Implement the initial platform-specific driver modules for Linux/Windows (using sockets/raw interfaces). Optionally, support the use of SDO via UDP/IP (Method 1, signaled by NMT_FeatureFlags_U32 Bit 1).
   - Success Metric: The core protocol logic can run and exchange actual Ethernet frames on a standard operating system using a loopback or virtual network environment.
-  - Status: **In development**.
+  - Status: **First draft finished**. Still need to be improved.
 - Phase 5: Real-Time Data Handling (PDO):
   - Focus: Implementing the core real-time communication mechanism.
   - Key Features (DS-301): Implementation of PDO Mapping structures (Transmit PDOs 1800h-1AFFh, Receive PDOs 1400h-16FFh), and the logic to insert/extract process data into/from PReq and PRes frames based on the cycle timing.
   - Success Metric: The library can correctly map application variables to PDO payloads during simulated cyclic data exchange.
-  - Status: **Not started**.
+  - Status: **First draft finished**.
 - Phase 6: Core NMT Cycle Logic (MN/CN Implementation):
   - Focus: Implementing the roles required to run an entire POWERLINK network.
   - Key Features (DS-301): Implementing the Managing Node (MN) primary scheduler loop (generating SoC, PReqs, SoA), implementing the Controlled Node (CN) response timing and logic, and full DLL error detection (e.g., handling buffer errors leading to NMT_GS_RESET_COMMUNICATION).
   - Success Metric: A simulated MN/CN pair can successfully transition to the NMT_CS_OPERATIONAL state and maintain a stable POWERLINK cycle.
-  - Status: **Not started**.
+  - Status: **In development**.
 - Future (post DS-301):
   - Microcontroller Support: Implement a `no_std` I/O module targeting a specific embedded MAC/PHY driver using the traits defined in Phase 4.
   - Configuration Files: Implement parsers for the `XML` Device Description (`XDD`) and `XML` Device Configuration (`XDC`) files (defined by EPSG DS-311).
