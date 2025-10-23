@@ -4,30 +4,31 @@ use powerlink_io_linux::LinuxPnetInterface;
 use powerlink_rs::{
     common::{NetTime, RelativeTime},
     frame::{
-        PowerlinkFrame, SocFrame, SoAFrame, RequestedServiceId, ServiceId, PReqFrame,
-        // poll::PResFlags, // Removed unused import
-        basic::MacAddress,
-        ASndFrame,
+        basic::MacAddress, ASndFrame, Codec, PowerlinkFrame, RequestedServiceId, ServiceId,
+        SoAFrame, SocFrame,
     },
-    nmt::{flags::FeatureFlags, states::NmtState}, // Removed unused NmtEvent import
+    nmt::{flags::FeatureFlags, states::NmtState},
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
-    pdo::PDOVersion,
-    sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation},
-     // Removed unused `self` import
-    sdo::sequence::{SequenceLayerHeader, ReceiveConnState, SendConnState},
+    // Removed unused imports PReqFrame and PDOVersion
+    sdo::{
+        command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation},
+        sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader},
+    },
     types::{NodeId, C_ADR_MN_DEF_NODE_ID, EPLVersion},
-    Codec, ControlledNode, NetworkInterface, Node, NodeAction, PowerlinkError,
-    deserialize_frame,
+    deserialize_frame, ControlledNode, NetworkInterface, Node, NodeAction, PowerlinkError,
 };
 use pnet::datalink::interfaces;
-// Removed unused Arc and Mutex imports
-use std::{env, thread, time::{Duration, Instant}, num::ParseIntError};
+use std::{
+    env,
+    num::ParseIntError,
+    thread,
+    time::{Duration, Instant},
+};
 use log::{debug, error, info, trace, warn};
 
 // Define constants for clarity
 const TEST_INTERFACE: &str = "eth0"; // Standard interface name inside Docker
 const FALLBACK_INTERFACE: &str = "lo"; // For local testing
-// const MAX_RECEIVE_ATTEMPTS: u32 = 60; // Removed unused constant
 const SLEEP_DURATION: Duration = Duration::from_millis(200); // Increased sleep duration slightly
 const TEST_TIMEOUT: Duration = Duration::from_secs(20); // Overall test timeout
 
@@ -63,7 +64,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             name: "NMT_DeviceType_U32",
             category: Category::Mandatory,
             access: Some(AccessType::Constant),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -73,7 +76,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             name: "NMT_CycleLen_U32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWriteStore),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -83,7 +88,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             name: "NMT_ManufactDevName_VS",
             category: Category::Optional, // Required by IdentResponse logic
             access: Some(AccessType::Constant),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -97,7 +104,10 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             ]),
             name: "NMT_IdentityObject_REC",
             category: Category::Mandatory,
-            access: None, default_value: None, value_range: None, pdo_mapping: None,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -109,7 +119,10 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             ]),
             name: "NMT_EPLNodeID_REC",
             category: Category::Mandatory,
-            access: None, default_value: None, value_range: None, pdo_mapping: None,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     // FeatureFlags: Isochronous + SDO/UDP + SDO/ASnd
@@ -121,7 +134,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             name: "NMT_FeatureFlags_U32",
             category: Category::Mandatory,
             access: Some(AccessType::Constant),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -131,7 +146,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             name: "DLL_CNLossOfSocTolerance_U32",
             category: Category::Mandatory, // Mandatory for CN
             access: Some(AccessType::ReadWriteStore),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -141,7 +158,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             name: "NMT_CNBasicEthernetTimeout_U32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWriteStore),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -151,7 +170,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             name: "NMT_CurrNMTState_U8",
             category: Category::Mandatory,
             access: Some(AccessType::ReadOnly),
-            default_value: None, value_range: None, pdo_mapping: Some(PdoMapping::No),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: Some(PdoMapping::No),
         },
     );
     od.insert(
@@ -161,7 +182,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             name: "NMT_EPLVersion_U8",
             category: Category::Mandatory,
             access: Some(AccessType::Constant),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -180,7 +203,10 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             ]),
             name: "NMT_CycleTiming_REC",
             category: Category::Mandatory,
-            access: None, default_value: None, value_range: None, pdo_mapping: None,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -192,7 +218,10 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             ]),
             name: "CFM_VerifyConfiguration_REC",
             category: Category::Mandatory,
-            access: None, default_value: None, value_range: None, pdo_mapping: None,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -204,22 +233,28 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             ]),
             name: "PDL_LocVerApplSw_REC",
             category: Category::Conditional,
-            access: None, default_value: None, value_range: None, pdo_mapping: None,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
         0x1E40, // NWL_IpAddrTable_Xh_REC (Conditional, assume supported for test)
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned16(1),             // 1: IfIndex_U16
+                ObjectValue::Unsigned16(1), // 1: IfIndex_U16
                 ObjectValue::Unsigned32(0xC0A86400 | node_id as u32), // 2: Addr_IPAD (192.168.100.node_id)
-                ObjectValue::Unsigned32(0xFFFFFF00),    // 3: NetMask_IPAD (255.255.255.0)
-                ObjectValue::Unsigned16(1500),          // 4: ReasmMaxSize_U16
-                ObjectValue::Unsigned32(0xC0A864FE),    // 5: DefaultGateway_IPAD (192.168.100.254)
+                ObjectValue::Unsigned32(0xFFFFFF00), // 3: NetMask_IPAD (255.255.255.0)
+                ObjectValue::Unsigned16(1500),       // 4: ReasmMaxSize_U16
+                ObjectValue::Unsigned32(0xC0A864FE), // 5: DefaultGateway_IPAD (192.168.100.254)
             ]),
             name: "NWL_IpAddrTable_0h_REC",
             category: Category::Conditional,
-            access: None, default_value: None, value_range: None, pdo_mapping: None,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -229,7 +264,9 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
             name: "NMT_HostName_VSTR",
             category: Category::Conditional,
             access: Some(AccessType::ReadWriteStore),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
 
@@ -272,19 +309,20 @@ fn send_frame_helper(interface: &mut LinuxPnetInterface, frame_bytes: &[u8], fra
 
 /// Helper function to build SDO payload.
 /// Builds the SDO payload (Seq Hdr + Cmd Hdr + Cmd Payload)
-fn build_sdo_payload(
-    seq_header: SequenceLayerHeader,
-    cmd: SdoCommand,
-) -> Vec<u8> {
+fn build_sdo_payload(seq_header: SequenceLayerHeader, cmd: SdoCommand) -> Vec<u8> {
     let mut payload = vec![0u8; 1500]; // Use a large enough buffer
     let mut offset = 0;
     // Serialize Sequence Layer Header (4 bytes)
-    offset += seq_header.serialize(&mut payload[offset..offset+4]).unwrap_or_else(|e| {
-        error!("Error serializing Seq Header: {:?}", e); 0
-    });
+    offset += seq_header
+        .serialize(&mut payload[offset..offset + 4])
+        .unwrap_or_else(|e| {
+            error!("Error serializing Seq Header: {:?}", e);
+            0
+        });
     // Serialize Command Layer (Header + Payload)
     offset += cmd.serialize(&mut payload[offset..]).unwrap_or_else(|e| {
-         error!("Error serializing SDO Command: {:?}", e); 0
+        error!("Error serializing SDO Command: {:?}", e);
+        0
     });
     payload.truncate(offset); // Truncate to actual size
     payload
@@ -366,9 +404,9 @@ fn run_cn_logic(interface_name: &str) {
             error!("[CN] Test timed out.");
             panic!("[CN] Test timed out.");
         }
-        
+
         let current_time_us = start_time.elapsed().as_micros() as u64;
-        
+
         // --- Frame Receiving First ---
         match cn_interface.receive_frame(&mut buffer) {
             Ok(bytes) if bytes > 0 => {
@@ -381,7 +419,10 @@ fn run_cn_logic(interface_name: &str) {
                 }
 
                 let frame_action = node.process_raw_frame(received_slice, current_time_us);
-                debug!("[CN] NMT state after processing: {:?}", node.nmt_state());
+                debug!(
+                    "[CN] NMT state after processing frame: {:?}",
+                    node.nmt_state()
+                );
 
                 if frame_action != NodeAction::NoAction {
                     next_action = frame_action; // Prioritize frame action
@@ -406,16 +447,20 @@ fn run_cn_logic(interface_name: &str) {
                 // Only sleep if the delay is significant to avoid tiny sleeps
                 let sleep_duration = Duration::from_micros(delay_us.min(100_000)); // Sleep at most 100ms
                 if sleep_duration > Duration::from_millis(1) {
-                     trace!("[CN] Sleeping for {:?}", sleep_duration);
-                     thread::sleep(sleep_duration);
+                    trace!("[CN] Sleeping for {:?}", sleep_duration);
+                    thread::sleep(sleep_duration);
                 }
                 next_action = NodeAction::NoAction; // Timer "event" implicitly handled by waking up
             }
             NodeAction::NoAction => {
-                 // No action from frame processing, check for tick actions
+                // No action from frame processing, check for tick actions
                 let tick_action = node.tick(current_time_us);
                 if tick_action != NodeAction::NoAction {
                     next_action = tick_action; // Prioritize tick action
+                    debug!(
+                        "[CN] NMT state after tick: {:?}",
+                        node.nmt_state()
+                    );
                 } else {
                     // No frame and no tick action, sleep briefly
                     thread::sleep(Duration::from_millis(2));
@@ -479,11 +524,13 @@ fn run_mn_logic(interface_name: &str, test_to_run: &str) {
     send_frame_helper(&mut mn_interface, &soa_buffer, "SoA(IdentRequest)");
 
     // 3. Receive ASnd(IdentResponse)
-    let _ident_response = receive_frame_helper( // Renamed as value is checked but not used further here
+    let _ident_response = receive_frame_helper(
+        // Renamed as value is checked but not used further here
         &mut mn_interface,
         mn_mac,
         "ASnd(IdentResponse)",
-        |frame| match frame { // Closure now takes a reference
+        |frame| match frame {
+            // Closure now takes a reference
             // Remove 'ref' here due to Rust 2021 match ergonomics
             PowerlinkFrame::ASnd(asnd)
                 if asnd.source == NodeId(cn_node_id)
@@ -506,6 +553,7 @@ fn run_mn_logic(interface_name: &str, test_to_run: &str) {
         "test_sdo_read_by_index_over_asnd" => {
             run_sdo_test_logic(&mut mn_interface, mn_mac, cn_node_id, &soc_buffer);
         }
+        // "test_cn_responds_to_preq" arm removed
         _ => panic!("Unknown test case: {}", test_to_run),
     }
 
@@ -532,8 +580,11 @@ fn run_sdo_test_logic(
     let mut last_acked_cn_sdo_seq: u8 = 63; // Start at 63 (equiv. to -1)
 
     // 5a. Send ASnd(SDO Init Request)
-    let init_cmd = SdoCommand { // Empty command for init
-        header: Default::default(), data_size: None, payload: Vec::new()
+    let init_cmd = SdoCommand {
+        // Empty command for init
+        header: Default::default(),
+        data_size: None,
+        payload: Vec::new(),
     };
     let init_seq_header = SequenceLayerHeader {
         send_sequence_number: current_mn_sdo_seq,
@@ -544,31 +595,51 @@ fn run_sdo_test_logic(
     // Use the local build_sdo_payload function
     let init_sdo_payload = build_sdo_payload(init_seq_header, init_cmd.clone());
     let init_asnd = ASndFrame::new(
-        mn_mac.into(), MacAddress([0x01, 0x11, 0x1E, 0x00, 0x00, cn_node_id]),
-        NodeId(cn_node_id), NodeId(C_ADR_MN_DEF_NODE_ID), ServiceId::Sdo, init_sdo_payload,
+        mn_mac.into(),
+        MacAddress([0x01, 0x11, 0x1E, 0x00, 0x00, cn_node_id]),
+        NodeId(cn_node_id),
+        NodeId(C_ADR_MN_DEF_NODE_ID),
+        ServiceId::Sdo,
+        init_sdo_payload,
     );
     let mut init_asnd_buffer = vec![0u8; 1500];
     let init_asnd_size = init_asnd.serialize(&mut init_asnd_buffer).unwrap();
     init_asnd_buffer.truncate(init_asnd_size);
-    send_frame_helper(mn_interface, &init_asnd_buffer, "ASnd(SDO Init Request)");
+    send_frame_helper(
+        mn_interface,
+        &init_asnd_buffer,
+        "ASnd(SDO Init Request)",
+    );
 
     // 5b. Receive ASnd(SDO Init ACK)
-    let _init_ack_frame = receive_frame_helper( // Assign to _
-        mn_interface, mn_mac, "ASnd(SDO Init ACK)",
-        |frame| match frame { // Closure now takes a reference
-             // Remove 'ref' here due to Rust 2021 match ergonomics
+    let _init_ack_frame = receive_frame_helper(
+        // Assign to _
+        mn_interface,
+        mn_mac,
+        "ASnd(SDO Init ACK)",
+        |frame| match frame {
+            // Closure now takes a reference
+            // Remove 'ref' here due to Rust 2021 match ergonomics
             PowerlinkFrame::ASnd(asnd) if asnd.service_id == ServiceId::Sdo => {
                 // SDO Payload starts at offset 0 (Seq Header) of ASnd payload
-                SequenceLayerHeader::deserialize(&asnd.payload[0..4]).ok().and_then(|seq| {
-                    if seq.send_con == SendConnState::Initialization && seq.receive_sequence_number == current_mn_sdo_seq {
-                        last_acked_cn_sdo_seq = seq.send_sequence_number; // Store CN's sequence number
-                        Some(true) // Return Option<bool>
-                    } else { None } // Mismatch, not the frame we want
-                }).unwrap_or(false) // Convert Option<bool> to bool for condition fn
+                SequenceLayerHeader::deserialize(&asnd.payload[0..4])
+                    .ok()
+                    .and_then(|seq| {
+                        if seq.send_con == SendConnState::Initialization
+                            && seq.receive_sequence_number == current_mn_sdo_seq
+                        {
+                            last_acked_cn_sdo_seq = seq.send_sequence_number; // Store CN's sequence number
+                            Some(true) // Return Option<bool>
+                        } else {
+                            None
+                        } // Mismatch, not the frame we want
+                    })
+                    .unwrap_or(false) // Convert Option<bool> to bool for condition fn
             }
             _ => false,
-        }
-    ).expect("Did not receive SDO Init ACK");
+        },
+    )
+    .expect("Did not receive SDO Init ACK");
 
     current_mn_sdo_seq = current_mn_sdo_seq.wrapping_add(1) % 64; // Increment MN sequence number
 
@@ -576,8 +647,10 @@ fn run_sdo_test_logic(
     let sdo_read_cmd = SdoCommand {
         header: CommandLayerHeader {
             transaction_id: 1, // Example transaction ID
-            is_response: false, is_aborted: false,
-            segmentation: Segmentation::Expedited, command_id: CommandId::ReadByIndex,
+            is_response: false,
+            is_aborted: false,
+            segmentation: Segmentation::Expedited,
+            command_id: CommandId::ReadByIndex,
             segment_size: 4, // Size of index/subindex payload
         },
         data_size: None,
@@ -592,40 +665,59 @@ fn run_sdo_test_logic(
     // Use the local build_sdo_payload function
     let read_sdo_payload = build_sdo_payload(read_seq_header, sdo_read_cmd);
     let read_asnd = ASndFrame::new(
-        mn_mac.into(), MacAddress([0x01, 0x11, 0x1E, 0x00, 0x00, cn_node_id]),
-        NodeId(cn_node_id), NodeId(C_ADR_MN_DEF_NODE_ID), ServiceId::Sdo, read_sdo_payload,
+        mn_mac.into(),
+        MacAddress([0x01, 0x11, 0x1E, 0x00, 0x00, cn_node_id]),
+        NodeId(cn_node_id),
+        NodeId(C_ADR_MN_DEF_NODE_ID),
+        ServiceId::Sdo,
+        read_sdo_payload,
     );
     let mut read_asnd_buffer = vec![0u8; 1500];
     let read_asnd_size = read_asnd.serialize(&mut read_asnd_buffer).unwrap();
     read_asnd_buffer.truncate(read_asnd_size);
-    send_frame_helper(mn_interface, &read_asnd_buffer, "ASnd(SDO Read Request + Valid ACK)");
+    send_frame_helper(
+        mn_interface,
+        &read_asnd_buffer,
+        "ASnd(SDO Read Request + Valid ACK)",
+    );
 
     // 6. Receive ASnd(SDO Data Response)
     let sdo_response_frame = receive_frame_helper(
-        mn_interface, mn_mac, "ASnd(SDO Data Response)",
-        |frame| match frame { // Closure now takes a reference
-             // Remove 'ref' here due to Rust 2021 match ergonomics
+        mn_interface,
+        mn_mac,
+        "ASnd(SDO Data Response)",
+        |frame| match frame {
+            // Closure now takes a reference
+            // Remove 'ref' here due to Rust 2021 match ergonomics
             PowerlinkFrame::ASnd(asnd) if asnd.service_id == ServiceId::Sdo => {
-                 // SDO Payload starts at offset 0 (Seq Header) of ASnd payload
-                SequenceLayerHeader::deserialize(&asnd.payload[0..4]).ok().and_then(|seq| {
-                    if seq.receive_sequence_number == current_mn_sdo_seq { // Check if it ACKs our Read Request
-                        last_acked_cn_sdo_seq = seq.send_sequence_number; // Store CN's sequence number
-                        // Now deserialize the command part (starts after Seq Header)
-                        SdoCommand::deserialize(&asnd.payload[4..]).ok().and_then(|cmd| {
-                            if cmd.header.is_response && !cmd.header.is_aborted {
-                                Some(true) // Return Option<bool>
-                            } else {
-                                warn!("Received SDO Abort or non-response cmd: {:?}", cmd);
-                                None // Not the frame we want
-                            }
-                        })
-                    } else { None } // Not the frame we want
-                }).unwrap_or(false) // Convert Option<bool> to bool for condition fn
+                // SDO Payload starts at offset 0 (Seq Header) of ASnd payload
+                SequenceLayerHeader::deserialize(&asnd.payload[0..4])
+                    .ok()
+                    .and_then(|seq| {
+                        if seq.receive_sequence_number == current_mn_sdo_seq {
+                            // Check if it ACKs our Read Request
+                            last_acked_cn_sdo_seq = seq.send_sequence_number; // Store CN's sequence number
+                                                                              // Now deserialize the command part (starts after Seq Header)
+                            SdoCommand::deserialize(&asnd.payload[4..]).ok().and_then(
+                                |cmd| {
+                                    if cmd.header.is_response && !cmd.header.is_aborted {
+                                        Some(true) // Return Option<bool>
+                                    } else {
+                                        warn!("Received SDO Abort or non-response cmd: {:?}", cmd);
+                                        None // Not the frame we want
+                                    }
+                                },
+                            )
+                        } else {
+                            None
+                        } // Not the frame we want
+                    })
+                    .unwrap_or(false) // Convert Option<bool> to bool for condition fn
             }
             _ => false,
-        }
-    ).expect("Did not receive valid SDO Data Response");
-
+        },
+    )
+    .expect("Did not receive valid SDO Data Response");
 
     // 7. Validate SDO Response Payload
     if let PowerlinkFrame::ASnd(asnd) = sdo_response_frame {
@@ -633,7 +725,10 @@ fn run_sdo_test_logic(
         let sdo_cmd = SdoCommand::deserialize(&asnd.payload[4..]).unwrap();
         let expected_name = "powerlink-rs CN Test";
         assert_eq!(sdo_cmd.payload, expected_name.as_bytes());
-        info!("[MN] SDO Read test successful. Received name: {}", expected_name);
+        info!(
+            "[MN] SDO Read test successful. Received name: {}",
+            expected_name
+        );
     } else {
         panic!("Received frame was not an ASnd");
     }

@@ -6,6 +6,13 @@
 use std::process::{Command, Output};
 use std::path::PathBuf;
 use std::env;
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+
+// Define a static Mutex to ensure docker-compose tests run serially
+lazy_static! {
+    static ref DOCKER_TEST_MUTEX: Mutex<()> = Mutex::new(());
+}
 
 /// Guard struct to ensure docker-compose down is always called
 struct DockerComposeGuard {
@@ -20,6 +27,7 @@ impl DockerComposeGuard {
     /// Runs a docker-compose command (e.g., "down", "up")
     fn run_compose_command(&self, args: &[&str]) -> std::io::Result<Output> {
         let mut cmd = Command::new("docker-compose");
+        // Removed the -p project flag, will use default project name
         cmd.arg("-f")
            .arg(&self.compose_file_path)
            .args(args);
@@ -65,8 +73,14 @@ fn get_compose_file_path() -> PathBuf {
 fn run_docker_test(test_name: &str) {
     let compose_file_path = get_compose_file_path();
     
-    // Set the environment variable *for the docker-compose command*
-    unsafe { env::set_var("POWERLINK_TEST_TO_RUN", test_name) };
+    // Set environment variables for docker-compose to use.
+    // This is unsafe because env::set_var modifies global state, but
+    // we are ensuring serial execution with the Mutex.
+    unsafe {
+        env::set_var("POWERLINK_TEST_TO_RUN", test_name);
+        // Remove variables related to dynamic network config
+    }
+
 
     // The guard ensures `docker-compose down` is called even if the test panics
     let guard = DockerComposeGuard::new(compose_file_path);
@@ -74,10 +88,12 @@ fn run_docker_test(test_name: &str) {
     // Run docker-compose up.
     // --build: Ensures the image is built if it doesn't exist or Dockerfile changed.
     // --abort-on-container-exit: Stops all containers if any container stops.
+    // --exit-code-from: We'll check the 'mn' container for the test result.
     let output = guard.run_compose_command(&[
         "up",
         "--build",
         "--abort-on-container-exit",
+        "--exit-code-from", "mn", // MN drives the test, so its exit code is authoritative
     ]).expect("Failed to execute docker-compose up command");
 
     // Print the combined output from docker-compose (which includes logs from both containers)
@@ -93,12 +109,17 @@ fn run_docker_test(test_name: &str) {
 
 #[test]
 fn test_ident_request_sequence() {
+    // Acquire the lock to ensure this test runs serially
+    let _lock = DOCKER_TEST_MUTEX.lock().unwrap();
     println!("--- [HOST] Running Test: test_cn_responds_to_ident_request ---");
     run_docker_test("test_cn_responds_to_ident_request");
 }
 
 #[test]
 fn test_sdo_read_sequence() {
+    // Acquire the lock to ensure this test runs serially
+    let _lock = DOCKER_TEST_MUTEX.lock().unwrap();
     println!("--- [HOST] Running Test: test_sdo_read_by_index_over_asnd ---");
     run_docker_test("test_sdo_read_by_index_over_asnd");
 }
+
