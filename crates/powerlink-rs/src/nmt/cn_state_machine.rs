@@ -1,12 +1,13 @@
-// In crates/powerlink-rs/src/nmt/cn_state_machine.rs
+// crates/powerlink-rs/src/nmt/cn_state_machine.rs
 
 use super::state_machine::NmtStateMachine;
 use crate::frame::DllError;
+use crate::nmt::events::NmtEvent;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::types::NodeId;
 use crate::PowerlinkError;
 use super::flags::FeatureFlags;
-use super::states::{NmtEvent, NmtState};
+use super::states::NmtState;
 use alloc::vec::Vec;
 use log::{info, debug, trace};
 
@@ -74,60 +75,35 @@ impl NmtStateMachine for CnNmtStateMachine {
         self.current_state
     }
 
-    fn reset(&mut self, event: NmtEvent) {
-        match event {
-            NmtEvent::Reset => self.current_state = NmtState::NmtGsInitialising,
-            NmtEvent::ResetNode => self.current_state = NmtState::NmtGsResetApplication,
-            NmtEvent::ResetCommunication => self.current_state = NmtState::NmtGsResetCommunication,
-            NmtEvent::ResetConfiguration => self.current_state = NmtState::NmtGsResetConfiguration,
-            _ => {}, // Ignore other events
-        }
-    }
-
-    /// Handles automatic, internal state transitions that don't require an external event.
-    /// This should be called in a loop after `process_event`.
-    fn run_internal_initialisation(&mut self, od: &mut ObjectDictionary) {
-        let mut transition = true;
-        info!("Starting internal NMT initialisation sequence.");
-        while transition {
-            let old_state = self.current_state;
-            let next_state = match self.current_state {
-                // After basic init, automatically move to reset the application.
-                NmtState::NmtGsInitialising => NmtState::NmtGsResetApplication,
-                // After app reset, automatically move to reset comms.
-                NmtState::NmtGsResetApplication => NmtState::NmtGsResetCommunication,
-                // After comms reset, automatically move to reset config.
-                NmtState::NmtGsResetCommunication => NmtState::NmtGsResetConfiguration,
-                // After config reset, the node is ready to listen on the network.
-                NmtState::NmtGsResetConfiguration => NmtState::NmtNotActive,
-                // No other states have automatic transitions.
-                _ => {
-                    transition = false; // Stop the loop
-                    self.current_state
-                }
-            };
-            if self.current_state != next_state {
-                info!("[NMT] Internal transition from {:?} to {:?}", old_state, next_state);
-                self.current_state = next_state;
-                self.update_od_state(od);
-            } else {
-                transition = false;
-            }
-        }
+    fn set_state(&mut self, new_state: NmtState) {
+        self.current_state = new_state;
     }
 
     /// Processes an external event and transitions the NMT state accordingly.
     fn process_event(&mut self, event: NmtEvent, od: &mut ObjectDictionary) -> Option<Vec<DllError>> {
         let mut errors: Vec<DllError> = Vec::new();
         let old_state = self.current_state;
+
+        // --- Handle Common Reset Events ---
+        if matches!(
+            event,
+            NmtEvent::Reset
+                | NmtEvent::SwReset
+                | NmtEvent::ResetNode
+                | NmtEvent::ResetCommunication
+                | NmtEvent::ResetConfiguration
+        ) {
+            self.reset(event);
+            if old_state != self.current_state {
+                self.update_od_state(od);
+            }
+            // After a reset, a full re-initialisation sequence should run.
+            self.run_internal_initialisation(od);
+            return None;
+        }
+        
         trace!("[NMT] Processing event {:?} in state {:?}", event, old_state);
         let next_state = match (self.current_state, event) {
-            // --- Reset and Initialisation Transitions ---
-            (_, NmtEvent::Reset) => NmtState::NmtGsInitialising,
-            (_, NmtEvent::ResetNode) => NmtState::NmtGsResetApplication,
-            (_, NmtEvent::ResetCommunication) => NmtState::NmtGsResetCommunication,
-            (_, NmtEvent::ResetConfiguration) => NmtState::NmtGsResetConfiguration,
-
             // --- CN Boot-up Sequence ---
 
             // (NMT_CT2) A SoC or SoA frame moves the node from NotActive to PreOp1.

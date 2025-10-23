@@ -1,14 +1,15 @@
-// In crates/powerlink-rs/src/nmt/mn_state_machine.rs
+// crates/powerlink-rs/src/nmt/mn_state_machine.rs
 
 use super::state_machine::NmtStateMachine;
 use crate::frame::DllError;
+use crate::nmt::events::NmtEvent;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
 use crate::PowerlinkError;
 use super::flags::FeatureFlags;
-use super::states::{NmtEvent, NmtState};
+use super::states::NmtState;
 use alloc::vec::Vec;
-use log::{debug, info};
+use log::{debug, info, warn};
 
 /// Manages the NMT state for a Managing Node.
 pub struct MnNmtStateMachine {
@@ -83,32 +84,8 @@ impl NmtStateMachine for MnNmtStateMachine {
         self.current_state
     }
 
-    fn reset(&mut self, event: NmtEvent) {
-        match event {
-            NmtEvent::Reset => self.current_state = NmtState::NmtGsInitialising,
-            NmtEvent::ResetNode => self.current_state = NmtState::NmtGsResetApplication,
-            NmtEvent::ResetCommunication => self.current_state = NmtState::NmtGsResetCommunication,
-            NmtEvent::ResetConfiguration => self.current_state = NmtState::NmtGsResetConfiguration,
-            _ => {} // Ignore other events
-        }
-    }
-
-    fn run_internal_initialisation(&mut self, od: &mut ObjectDictionary) {
-        // The MN follows the same initial reset sequence as the CN.
-        if self.current_state == NmtState::NmtGsInitialising {
-            info!("Starting internal MN NMT initialisation sequence.");
-            self.current_state = NmtState::NmtGsResetApplication;
-            self.update_od_state(od);
-            self.current_state = NmtState::NmtGsResetCommunication;
-            self.update_od_state(od);
-            self.current_state = NmtState::NmtGsResetConfiguration;
-            self.update_od_state(od);
-            self.current_state = NmtState::NmtNotActive;
-            self.update_od_state(od);
-            info!(
-                "Internal MN NMT initialisation sequence complete. State is now NotActive."
-            );
-        }
+    fn set_state(&mut self, new_state: NmtState) {
+        self.current_state = new_state;
     }
 
     /// Processes an external event and transitions the NMT state accordingly.
@@ -116,13 +93,26 @@ impl NmtStateMachine for MnNmtStateMachine {
     fn process_event(&mut self, event: NmtEvent, od: &mut ObjectDictionary) -> Option<Vec<DllError>> {
         let errors: Vec<DllError> = Vec::new();
         let old_state = self.current_state;
-        let next_state = match (self.current_state, event) {
-            // --- Reset and Initialisation Transitions (Same as CN) ---
-            (_, NmtEvent::Reset) => NmtState::NmtGsInitialising,
-            (_, NmtEvent::ResetNode) => NmtState::NmtGsResetApplication,
-            (_, NmtEvent::ResetCommunication) => NmtState::NmtGsResetCommunication,
-            (_, NmtEvent::ResetConfiguration) => NmtState::NmtGsResetConfiguration,
 
+        // --- Handle Common Reset Events ---
+        if matches!(
+            event,
+            NmtEvent::Reset
+                | NmtEvent::SwReset
+                | NmtEvent::ResetNode
+                | NmtEvent::ResetCommunication
+                | NmtEvent::ResetConfiguration
+        ) {
+            self.reset(event);
+            if old_state != self.current_state {
+                self.update_od_state(od);
+            }
+            // After a reset, a full re-initialisation sequence should run.
+            self.run_internal_initialisation(od);
+            return None;
+        }
+
+        let next_state = match (self.current_state, event) {
             // --- MN Boot-up Sequence (Figure 73) ---
 
             // (NMT_MT2 / NMT_MT7) Timeout in NotActive
@@ -160,7 +150,10 @@ impl NmtStateMachine for MnNmtStateMachine {
             (NmtState::NmtBasicEthernet, NmtEvent::PowerlinkFrameReceived) => NmtState::NmtPreOperational1,
             
             // If no specific transition is defined, remain in the current state.
-            (current, _) => current,
+            (current, _) => {
+                warn!("[NMT] Unhandled event {:?} in state {:?}", event, current);
+                current
+            }
         };
 
         if old_state != next_state {

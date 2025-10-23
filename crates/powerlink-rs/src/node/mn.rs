@@ -11,7 +11,8 @@ use crate::frame::{
 };
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
-use crate::nmt::states::{NmtEvent, NmtState};
+use crate::nmt::states::NmtState;
+use crate::nmt::events::NmtEvent;
 use crate::od::{Object, ObjectDictionary, ObjectValue};
 use crate::pdo::{PdoMappingEntry};
 use crate::types::{NodeId, EPLVersion};

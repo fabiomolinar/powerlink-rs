@@ -9,7 +9,8 @@ use crate::frame::{
 };
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
-use crate::nmt::states::{NmtEvent, NmtState};
+use crate::nmt::states::NmtState;
+use crate::nmt::events::NmtEvent;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PdoMappingEntry, PDOVersion};
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};

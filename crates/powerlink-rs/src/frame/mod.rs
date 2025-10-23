@@ -18,7 +18,7 @@ pub use error::{DllError, DllErrorManager, ErrorHandler, NmtAction, NoOpErrorHan
 pub use ms_state_machine::{DllMsEvent, DllMsStateMachine};
 pub use poll::{PReqFrame, PResFrame, PRFlag, RSFlag};
 
-use crate::nmt::states::NmtEvent;
+use crate::nmt::events::NmtEvent;
 use crate::PowerlinkError;
 
 /// Represents any POWERLINK frame

@@ -2,7 +2,8 @@ use super::{cn::ControlledNode};
 use crate::frame::{
     DllCsEvent, DllMsEvent, PowerlinkFrame, RequestedServiceId,
 };
-use crate::nmt::states::{NmtEvent, NmtState};
+use crate::nmt::states::NmtState;
+use crate::nmt::events::NmtEvent;
 use crate::{Node};
 
 /// A trait to handle the specific logic for each POWERLINK frame type.
