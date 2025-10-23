@@ -62,34 +62,28 @@ impl ObjectValue {
         data: &[u8],
         type_template: &ObjectValue,
     ) -> Result<ObjectValue, PowerlinkError> {
+        // Helper macro to handle fixed-size deserialization
+        macro_rules! deserialize_fixed {
+            ($data:expr, $variant:path, $type:ty) => {
+                $data
+                    .try_into()
+                    .map(|bytes| $variant(<$type>::from_le_bytes(bytes)))
+                    .map_err(|_| PowerlinkError::TypeMismatch)
+            };
+        }
+
         match type_template {
-            ObjectValue::Boolean(_) => Ok(ObjectValue::Boolean(u8::from_le_bytes(
-                data.try_into()?,
-            ))),
-            ObjectValue::Integer8(_) => Ok(ObjectValue::Integer8(i8::from_le_bytes(
-                data.try_into()?,
-            ))),
-            ObjectValue::Integer16(_) => Ok(ObjectValue::Integer16(i16::from_le_bytes(
-                data.try_into()?,
-            ))),
-            ObjectValue::Integer32(_) => Ok(ObjectValue::Integer32(i32::from_le_bytes(
-                data.try_into()?,
-            ))),
-            ObjectValue::Integer64(_) => Ok(ObjectValue::Integer64(i64::from_le_bytes(
-                data.try_into()?,
-            ))),
-            ObjectValue::Unsigned8(_) => Ok(ObjectValue::Unsigned8(u8::from_le_bytes(
-                data.try_into()?,
-            ))),
-            ObjectValue::Unsigned16(_) => Ok(ObjectValue::Unsigned16(u16::from_le_bytes(
-                data.try_into()?,
-            ))),
-            ObjectValue::Unsigned32(_) => Ok(ObjectValue::Unsigned32(u32::from_le_bytes(
-                data.try_into()?,
-            ))),
-            ObjectValue::Unsigned64(_) => Ok(ObjectValue::Unsigned64(u64::from_le_bytes(
-                data.try_into()?,
-            ))),
+            ObjectValue::Boolean(_) => deserialize_fixed!(data, ObjectValue::Boolean, u8),
+            ObjectValue::Integer8(_) => deserialize_fixed!(data, ObjectValue::Integer8, i8),
+            ObjectValue::Integer16(_) => deserialize_fixed!(data, ObjectValue::Integer16, i16),
+            ObjectValue::Integer32(_) => deserialize_fixed!(data, ObjectValue::Integer32, i32),
+            ObjectValue::Integer64(_) => deserialize_fixed!(data, ObjectValue::Integer64, i64),
+            ObjectValue::Unsigned8(_) => deserialize_fixed!(data, ObjectValue::Unsigned8, u8),
+            ObjectValue::Unsigned16(_) => deserialize_fixed!(data, ObjectValue::Unsigned16, u16),
+            ObjectValue::Unsigned32(_) => deserialize_fixed!(data, ObjectValue::Unsigned32, u32),
+            ObjectValue::Unsigned64(_) => deserialize_fixed!(data, ObjectValue::Unsigned64, u64),
+            ObjectValue::Real32(_) => deserialize_fixed!(data, ObjectValue::Real32, f32),
+            ObjectValue::Real64(_) => deserialize_fixed!(data, ObjectValue::Real64, f64),
             ObjectValue::VisibleString(_) => Ok(ObjectValue::VisibleString(
                 String::from_utf8(data.to_vec()).map_err(|_| PowerlinkError::TypeMismatch)?,
             )),
@@ -248,7 +242,7 @@ impl<'a> ObjectDictionary<'a> {
     /// Populates the OD with mandatory objects that define protocol mechanisms.
     /// Device-specific identification objects are left to the user to insert.
     fn populate_protocol_objects(&mut self) {
-        // Add Store Parameters (1010h) as a RECORD.
+        // Add "Store Parameters" (1010h)
         self.insert(
             0x1010,
             ObjectEntry {
@@ -258,7 +252,7 @@ impl<'a> ObjectDictionary<'a> {
                     ObjectValue::Unsigned32(1), // Sub-index 3: Save Application Parameters
                 ]),
                 name: "NMT_StoreParam_REC",
-                category: Category::Mandatory,
+                category: Category::Mandatory, // Spec says Optional, but it's fundamental
                 access: None,
                 default_value: None,
                 value_range: None,
@@ -266,7 +260,7 @@ impl<'a> ObjectDictionary<'a> {
             },
         );
 
-        // Add Restore Default Parameters (1011h) as a RECORD.
+        // Add "Restore Default Parameters" (1011h)
         self.insert(
             0x1011,
             ObjectEntry {
@@ -276,15 +270,86 @@ impl<'a> ObjectDictionary<'a> {
                     ObjectValue::Unsigned32(1), // Sub-index 3: Restore Application Parameters
                 ]),
                 name: "NMT_RestoreDefParam_REC",
-                category: Category::Mandatory,
+                category: Category::Optional,
                 access: None,
                 default_value: None,
                 value_range: None,
                 pdo_mapping: None,
             },
         );
+        
+        // Add "PDO_CommParamRecord_TYPE" (0x0420) definition
+        self.insert(
+            0x0420,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned8(2), // NumberOfEntries
+                    ObjectValue::Unsigned8(0), // NodeID_U8
+                    ObjectValue::Unsigned8(0), // MappingVersion_U8
+                ]),
+                name: "PDO_CommParamRecord_TYPE",
+                category: Category::Mandatory, // This is a type definition
+                access: Some(AccessType::Constant),
+                default_value: None, value_range: None, pdo_mapping: Some(PdoMapping::No)
+            }
+        );
 
-        // Add current NMT state object (1F8Ch).
+        // Add "RPDO Communication Parameter" (1400h) - Default entry
+        self.insert(
+            0x1400,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned8(0), // 1: NodeID_U8 (0 = mapped to PReq)
+                    ObjectValue::Unsigned8(0), // 2: MappingVersion_U8
+                ]),
+                name: "PDO_RxCommParam_00h_REC",
+                category: Category::Conditional,
+                access: None, // Access is per-subindex
+                default_value: None, value_range: None, pdo_mapping: None
+            }
+        );
+
+        // Add "RPDO Mapping Parameter" (1600h) - Default entry
+        self.insert(
+            0x1600,
+            ObjectEntry {
+                object: Object::Array(vec![]), // Empty mapping by default
+                name: "PDO_RxMappParam_00h_AU64",
+                category: Category::Conditional,
+                access: None, // Access is per-subindex
+                default_value: None, value_range: None, pdo_mapping: None
+            }
+        );
+
+        // Add "TPDO Communication Parameter" (1800h) - Default entry
+        self.insert(
+            0x1800,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned8(0), // 1: NodeID_U8 (0 = mapped to PRes)
+                    ObjectValue::Unsigned8(0), // 2: MappingVersion_U8
+                ]),
+                name: "PDO_TxCommParam_00h_REC",
+                category: Category::Conditional,
+                access: None, // Access is per-subindex
+                default_value: None, value_range: None, pdo_mapping: None
+            }
+        );
+        
+        // Add "TPDO Mapping Parameter" (1A00h) - Default entry
+        self.insert(
+            0x1A00,
+            ObjectEntry {
+                object: Object::Array(vec![]), // Empty mapping by default
+                name: "PDO_TxMappParam_00h_AU64",
+                category: Category::Conditional,
+                access: None, // Access is per-subindex
+                default_value: None, value_range: None, pdo_mapping: None
+            }
+        );
+
+
+        // Add "NMT_CurrNMTState_U8" (1F8Ch)
         self.insert(
             0x1F8C,
             ObjectEntry {
@@ -407,6 +472,16 @@ impl<'a> ObjectDictionary<'a> {
     pub fn read_u32(&self, index: u16, sub_index: u8) -> Option<u32> {
         self.read(index, sub_index).and_then(|cow| {
             if let ObjectValue::Unsigned32(val) = *cow {
+                Some(val)
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn read_u64(&self, index: u16, sub_index: u8) -> Option<u64> {
+        self.read(index, sub_index).and_then(|cow| {
+            if let ObjectValue::Unsigned64(val) = *cow {
                 Some(val)
             } else {
                 None
@@ -712,7 +787,7 @@ mod tests {
                 },
             );
 
-            od.write(0x1010, 1, ObjectValue::VisibleString("save".to_string()))
+            od.write(0x1010, 3, ObjectValue::VisibleString("save".to_string())) // Save Application Params
                 .unwrap();
         }
 
