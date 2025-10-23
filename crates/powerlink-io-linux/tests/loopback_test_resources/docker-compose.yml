@@ -2,19 +2,19 @@ services:
   # The Controlled Node (CN) service
   cn:
     build:
-      # The build context is now the workspace root, 4 levels up.
       context: ../../../../
-      # The Dockerfile path is relative to the new context.
       dockerfile: crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
     container_name: powerlink-cn
-    command: ["--test-threads=1", "test_cn_responds_to_ident_request", "--exact", "--nocapture"]
+    cap_add:
+      - NET_RAW # Needed for pnet raw sockets
     environment:
       POWERLINK_TEST_ROLE: "CN"
-      RUST_LOG: "info,powerlink_rs=debug"
+      RUST_LOG: debug # Enable logging inside the container
     networks:
-      - powerlink_net
-    cap_add:
-      - NET_RAW
+      powerlink_net:
+        # Assign a static IP corresponding to the Node ID used in the test
+        ipv4_address: 192.168.100.42
+    # Ensure CN waits for MN to be ready (optional but good practice)
     depends_on:
       - mn
 
@@ -24,21 +24,20 @@ services:
       context: ../../../../
       dockerfile: crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
     container_name: powerlink-mn
-    command: ["--test-threads=1", "test_cn_responds_to_ident_request", "--exact", "--nocapture"]
+    cap_add:
+      - NET_RAW # Needed for pnet raw sockets
     environment:
       POWERLINK_TEST_ROLE: "MN"
-      RUST_LOG: "info,powerlink_rs=debug"
+      RUST_LOG: debug # Enable logging inside the container
     networks:
-      # The static ipv4_address has been removed to prevent conflicts.
-      # Docker will now assign an available IP automatically.
-      - powerlink_net
-    cap_add:
-      - NET_RAW
+      powerlink_net:
+        # Assign the standard POWERLINK MN IP address
+        ipv4_address: 192.168.100.240
 
 networks:
   powerlink_net:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.28.1.0/24
+        - subnet: 192.168.100.0/24 # Define the POWERLINK subnet
 
