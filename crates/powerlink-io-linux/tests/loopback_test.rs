@@ -3,18 +3,17 @@
 use powerlink_io_linux::LinuxPnetInterface;
 use powerlink_rs::{
     common::{NetTime, RelativeTime},
-    frame::{PowerlinkFrame, SocFrame, SoAFrame, RequestedServiceId, ServiceId, ASndFrame},
-    nmt::{flags::FeatureFlags, states::{NmtState}},
+    frame::{PowerlinkFrame, SocFrame, SoAFrame, RequestedServiceId, ServiceId},
+    nmt::{flags::FeatureFlags, states::NmtState},
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
     types::{NodeId, C_ADR_MN_DEF_NODE_ID, EPLVersion},
     Codec, ControlledNode, NetworkInterface, Node, NodeAction, PowerlinkError,
 };
 use pnet::datalink::interfaces;
-use std::{env, thread, time::{Duration, Instant}};
+use std::{env, thread, time::{Duration, Instant}, num::ParseIntError};
 use log::{debug, error, info}; // Make sure log macros are imported if used directly
 
 // Define constants for clarity
-const CN_NODE_ID: u8 = 42;
 const TEST_INTERFACE: &str = "eth0"; // Standard interface name inside Docker
 const FALLBACK_INTERFACE: &str = "lo"; // For local testing
 const MAX_RECEIVE_ATTEMPTS: u32 = 40; // Approx 2 seconds with 50ms sleep
@@ -28,6 +27,13 @@ fn find_test_interface() -> String {
         .find(|iface| iface.name == TEST_INTERFACE)
         .map(|iface| iface.name.clone())
         .unwrap_or_else(|| FALLBACK_INTERFACE.to_string())
+}
+
+/// Helper function to get Node ID from environment variable.
+fn get_cn_node_id() -> Result<u8, ParseIntError> {
+    env::var("POWERLINK_CN_NODE_ID")
+        .expect("Missing POWERLINK_CN_NODE_ID environment variable")
+        .parse()
 }
 
 
@@ -140,15 +146,17 @@ fn run_cn_logic(interface_name: &str) {
     // Initialize the logger for this thread/process
     env_logger::try_init().ok(); // Ignore error if already initialized
 
-    info!("[CN] Thread started. Interface: {}", interface_name);
-    let mut cn_interface = match LinuxPnetInterface::new(interface_name, CN_NODE_ID) {
+    let cn_node_id = get_cn_node_id().expect("Failed to parse CN Node ID from environment");
+
+    info!("[CN] Thread started. Node ID: {}. Interface: {}", cn_node_id, interface_name);
+    let mut cn_interface = match LinuxPnetInterface::new(interface_name, cn_node_id) {
         Ok(iface) => iface,
         Err(e) => {
             error!("[CN] Failed to create interface: {}", e);
             panic!("[CN] Interface creation failed.");
         }
     };
-    let od = get_test_od(CN_NODE_ID);
+    let od = get_test_od(cn_node_id); // Pass the Node ID here
     let cn_mac = cn_interface.local_mac_address();
     let mut node = match ControlledNode::new(od, cn_mac.into()) {
          Ok(n) => n,
@@ -221,7 +229,10 @@ fn run_mn_logic(interface_name: &str) {
     // Initialize the logger for this thread/process
     env_logger::try_init().ok(); // Ignore error if already initialized
 
-    info!("[MN] Starting MN logic. Interface: {}", interface_name);
+    let cn_node_id = get_cn_node_id().expect("Failed to parse CN Node ID from environment");
+
+
+    info!("[MN] Starting MN logic. Target CN ID: {}. Interface: {}", cn_node_id, interface_name);
     let mut mn_interface =
         match LinuxPnetInterface::new(interface_name, C_ADR_MN_DEF_NODE_ID) {
              Ok(iface) => iface,
@@ -255,7 +266,7 @@ fn run_mn_logic(interface_name: &str) {
         NmtState::NmtPreOperational1, // MN signals its current understanding of CN state
         Default::default(),
         RequestedServiceId::IdentRequest,
-        NodeId(CN_NODE_ID),
+        NodeId(cn_node_id), // Use the Node ID read from env var
         EPLVersion(0x15), // Example version V1.5
     );
     let mut soa_buffer = vec![0u8; 64]; // Ensure buffer is large enough
@@ -283,7 +294,8 @@ fn run_mn_logic(interface_name: &str) {
                 if let Ok(PowerlinkFrame::ASnd(asnd)) =
                     powerlink_rs::deserialize_frame(received_slice)
                 {
-                    if asnd.source == NodeId(CN_NODE_ID)
+                    // Check against the Node ID read from env var
+                    if asnd.source == NodeId(cn_node_id)
                         && asnd.destination == NodeId(C_ADR_MN_DEF_NODE_ID)
                         && asnd.service_id == ServiceId::IdentResponse
                     {

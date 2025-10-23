@@ -7,6 +7,7 @@ services:
       dockerfile: ./crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
     environment:
       POWERLINK_TEST_ROLE: "CN" # Role for the test binary
+      POWERLINK_CN_NODE_ID: "42" # Define the CN Node ID here
       RUST_LOG: debug # Enable debug logging
       RUST_BACKTRACE: 1 # Provide backtraces on panic
     networks:
@@ -16,7 +17,6 @@ services:
       - NET_RAW # Allow opening raw sockets
     depends_on: # Ensure MN starts first (optional but good practice)
       - mn
-    # Use the ENTRYPOINT defined in the Dockerfile
     # Command override to pass test flags:
     command: ["--ignored", "--nocapture"]
 
@@ -27,6 +27,7 @@ services:
       dockerfile: ./crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
     environment:
       POWERLINK_TEST_ROLE: "MN" # Role for the test binary
+      POWERLINK_CN_NODE_ID: "42" # Pass CN Node ID to MN as well
       RUST_LOG: debug # Enable debug logging
       RUST_BACKTRACE: 1 # Provide backtraces on panic
     networks:
@@ -34,7 +35,6 @@ services:
         ipv4_address: 192.168.100.240 # Assign static IP for MN
     cap_add:
       - NET_RAW # Allow opening raw sockets
-    # Use the ENTRYPOINT defined in the Dockerfile
     # Command override to pass test flags:
     command: ["--ignored", "--nocapture"]
 

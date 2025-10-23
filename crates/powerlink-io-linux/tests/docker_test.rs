@@ -57,7 +57,7 @@ fn run_docker_integration_test() {
     println!("--- Starting Docker Integration Test via 'docker compose' ---");
 
     // Construct the path relative to the crate root where this test lives
-    let mut crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let compose_file_path = crate_root.join("tests/loopback_test_resources/docker-compose.yml");
 
     if !compose_file_path.exists() {
