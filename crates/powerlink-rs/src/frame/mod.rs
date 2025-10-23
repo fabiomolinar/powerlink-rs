@@ -1,23 +1,25 @@
+// crates/powerlink-rs/src/frame/mod.rs
 //! Defines the structures and logic for the Data Link Layer (DLL) frames.
 
 pub mod basic;
-pub mod control;
-pub mod poll;
-pub mod cs_state_machine;
-pub mod ms_state_machine;
-pub mod error;
 pub mod codec;
+pub mod control;
+pub mod cs_state_machine;
+pub mod error;
+pub mod ms_state_machine;
+pub mod poll;
 
 pub use basic::EthernetHeader;
 // Make frame types public so other modules (like `node`) can use them.
-pub use control::{ASndFrame, ServiceId, SoAFrame, RequestedServiceId, SocFrame};
-pub use poll::{PReqFrame, PResFrame, RSFlag, PRFlag};
-pub use cs_state_machine::{DllCsStateMachine, DllCsEvent};
-pub use ms_state_machine::{DllMsStateMachine, DllMsEvent};
-pub use error::{DllError, DllErrorManager, ErrorHandler, NoOpErrorHandler, NmtAction};
-pub use codec::{Codec, deserialize_frame};
+pub use codec::{deserialize_frame, Codec};
+pub use control::{ASndFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame};
+pub use cs_state_machine::{DllCsEvent, DllCsStateMachine};
+pub use error::{DllError, DllErrorManager, ErrorHandler, NmtAction, NoOpErrorHandler};
+pub use ms_state_machine::{DllMsEvent, DllMsStateMachine};
+pub use poll::{PReqFrame, PResFrame, PRFlag, RSFlag};
 
 use crate::nmt::states::NmtEvent;
+use crate::PowerlinkError;
 
 /// Represents any POWERLINK frame
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +32,17 @@ pub enum PowerlinkFrame {
 }
 
 impl PowerlinkFrame {
+    /// Serializes the frame into the provided buffer.
+    pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+        match self {
+            PowerlinkFrame::Soc(frame) => frame.serialize(buffer),
+            PowerlinkFrame::PReq(frame) => frame.serialize(buffer),
+            PowerlinkFrame::PRes(frame) => frame.serialize(buffer),
+            PowerlinkFrame::SoA(frame) => frame.serialize(buffer),
+            PowerlinkFrame::ASnd(frame) => frame.serialize(buffer),
+        }
+    }
+
     /// Determines the DLL event for a Controlled Node.
     pub fn dll_cn_event(&self) -> DllCsEvent {
         match self {
