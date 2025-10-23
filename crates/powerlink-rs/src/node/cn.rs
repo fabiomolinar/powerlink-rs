@@ -1,11 +1,10 @@
 use super::{handler::FrameHandler, Node, NodeAction};
 use crate::frame::basic::MacAddress;
-use crate::frame::poll::PResFlags;
 use crate::frame::{
     deserialize_frame,
     error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler},
     ASndFrame, Codec, DllCsEvent, DllCsStateMachine, DllError, NmtAction, PowerlinkFrame,
-    PReqFrame, PResFrame, PRFlag, RSFlag, ServiceId,
+    PReqFrame, PResFrame, poll::PResFlags, PRFlag, RSFlag, ServiceId,
 };
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
@@ -86,32 +85,30 @@ impl<'s> ControlledNode<'s> {
         if let PowerlinkFrame::ASnd(ref asnd_frame) = frame {
             if asnd_frame.service_id == crate::frame::ServiceId::Sdo {
                 debug!("Received SDO/ASnd frame for processing.");
+                
                 // Extract SDO Headers first to get Transaction ID for potential abort
-                let transaction_id = if asnd_frame.payload.len() >= 8 {
-                    SequenceLayerHeader::deserialize(&asnd_frame.payload[4..8])
-                        .ok() // Ignore deserialization errors here, let SDO server handle payload
-                        .and_then(|_seq_header| {
-                            SdoCommand::deserialize(&asnd_frame.payload[8..])
-                                .ok()
-                                .map(|cmd| cmd.header.transaction_id)
-                        })
+                // ASnd payload = SDO Payload (Seq + Cmd + Data)
+                let transaction_id = if asnd_frame.payload.len() >= 4 { // Min 4 for Seq
+                    SdoCommand::deserialize(&asnd_frame.payload[4..]) // Cmd starts at offset 4
+                        .ok()
+                        .map(|cmd| cmd.header.transaction_id)
                 } else {
                     None
                 };
 
+                // SDO server `handle_request` expects the SDO payload (Seq + Cmd + Data)
                 match self
                     .sdo_server
                     .handle_request(&asnd_frame.payload, &mut self.od)
                 {
-                    Ok(response_payload) => {
-                        // Build and send the normal SDO response
+                    Ok(response_sdo_payload) => {
                         let response_asnd = ASndFrame::new(
                             self.mac_address,
                             asnd_frame.eth_header.source_mac,
                             asnd_frame.source, // Respond to the original source node
                             self.nmt_state_machine.node_id,
                             crate::frame::ServiceId::Sdo,
-                            response_payload,
+                            response_sdo_payload, // This is (Seq + Cmd + Data)
                         );
                         let mut buf = vec![0u8; 1500];
                         if let Ok(size) = response_asnd.serialize(&mut buf) {
@@ -121,7 +118,7 @@ impl<'s> ControlledNode<'s> {
                             return NodeAction::SendFrame(buf);
                         } else {
                             error!("Failed to serialize SDO response frame.");
-                            // Fall through to potentially send abort if serialization failed badly
+                            // Fall through to abort
                         }
                     }
                     Err(e) => {
@@ -134,7 +131,7 @@ impl<'s> ControlledNode<'s> {
                                 PowerlinkError::SubObjectNotFound => 0x0609_0011,
                                 PowerlinkError::TypeMismatch => 0x0607_0010,
                                 PowerlinkError::StorageError(_) => 0x0800_0020, // Cannot transfer data
-                                _ => 0x0800_0000,                               // General error
+                                _ => 0x0800_0000, // General error
                             };
                             return self.build_sdo_abort_response(
                                 tid,
@@ -157,18 +154,13 @@ impl<'s> ControlledNode<'s> {
             trace!("SoC received at time {}", current_time_us);
             self.last_soc_reception_time_us = current_time_us;
             self.soc_timeout_check_active = true; // Enable timeout check after first SoC
-                                                  // Request timer for next SoC check based on cycle time + tolerance
-            if let Some(action) = self.request_soc_timeout_check() {
-                return action; // Return early as SoC processing is done
-            } else {
-                // Could not read cycle time or tolerance, proceed without timer request
-                warn!("Could not read cycle time/tolerance to set SoC timeout timer.");
-            }
         }
 
         // --- Normal Frame Processing ---
 
         // 1. Update NMT state machine based on the frame type.
+        // This is where NmtNotActive -> NmtPreOp1 (on SoC/SoA) happens
+        // or NmtPreOp1 -> NmtPreOp2 (on SoC) happens.
         if let Some(event) = frame.nmt_event() {
             self.nmt_state_machine.process_event(event, &mut self.od);
         }
@@ -206,6 +198,13 @@ impl<'s> ControlledNode<'s> {
                 return NodeAction::SendFrame(buf);
             } else {
                 error!("Failed to serialize response frame: {:?}", response_frame);
+            }
+        }
+        
+        // If we processed a SoC, return the timer action we calculated earlier
+        if matches!(frame, PowerlinkFrame::Soc(_)) {
+            if let Some(action) = self.request_soc_timeout_check() {
+                return action;
             }
         }
 
@@ -377,19 +376,12 @@ impl<'s> ControlledNode<'s> {
         };
 
         // Serialize SDO Seq + Cmd into ASnd payload buffer
-        let mut sdo_payload_buf = vec![0u8; 12]; // 4 (Seq) + 8 (Cmd fixed)
-        seq_header
-            .serialize(&mut sdo_payload_buf[0..4])
-            .unwrap_or_else(|e| {
-                error!("Failed to serialize SDO Seq header for abort: {:?}", e);
-                0
-            }); // Should not fail with correct buffer size
-        abort_command
-            .serialize(&mut sdo_payload_buf[4..])
-            .unwrap_or_else(|e| {
-                error!("Failed to serialize SDO Cmd header for abort: {:?}", e);
-                0
-            }); // Should not fail
+        // This is the payload for the ASndFrame
+        let mut sdo_payload_buf = vec![0u8; 12]; // 4 (Seq) + 8 (Cmd fixed) + 4 (Abort Code)
+        let mut offset = 0;
+        offset += seq_header.serialize(&mut sdo_payload_buf[offset..]).unwrap_or(0);
+        offset += abort_command.serialize(&mut sdo_payload_buf[offset..]).unwrap_or(0);
+        sdo_payload_buf.truncate(offset);
 
         // Construct the ASnd frame
         let abort_asnd = ASndFrame::new(
@@ -442,7 +434,18 @@ impl<'s> Node for ControlledNode<'s> {
     /// Processes a raw byte buffer received from the network at a specific time.
     fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
         match deserialize_frame(buffer) {
-            Ok(frame) => self.process_frame(frame, current_time_us),
+            Ok(frame) => {
+                // --- NMT_CT12 Handling ---
+                // If we are in BasicEthernet and receive *any* valid POWERLINK frame,
+                // we must transition back to PreOperational1 *before* processing the frame.
+                // [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Table 107]
+                if self.nmt_state() == NmtState::NmtBasicEthernet {
+                    info!("[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1.");
+                    self.nmt_state_machine.process_event(NmtEvent::PowerlinkFrameReceived, &mut self.od);
+                }
+                
+                self.process_frame(frame, current_time_us)
+            }
             Err(PowerlinkError::InvalidEthernetFrame) => {
                 // This is not a POWERLINK frame (e.g., ARP, IP), so we ignore it.
                 // This is expected on a shared network interface.
@@ -550,15 +553,12 @@ impl<'s> Node for ControlledNode<'s> {
                                 }
                             }
                         }
-                        // Assume next SoC should have arrived at expected_soc_time_us for next calc
-                        self.last_soc_reception_time_us = expected_soc_time_us;
-                        // Request timer for the *next* timeout check
-                        let next_check_delay = cycle_time_us + tolerance_us;
-                        trace!(
-                            "SoC timeout processed, requesting next check in {} us",
-                            next_check_delay
-                        );
-                        return NodeAction::SetTimer(next_check_delay);
+                        // Stop checking until we get a new SoC
+                        self.soc_timeout_check_active = false; 
+                        self.last_soc_reception_time_us = 0; // Reset time
+                         
+                         // No new timer, wait for next SoC to re-activate
+                        return NodeAction::NoAction;
                     } else {
                         // Timeout not yet reached, request timer for the threshold time.
                         let remaining_time = timeout_threshold_us.saturating_sub(current_time_us);
@@ -597,3 +597,4 @@ impl<'s> Node for ControlledNode<'s> {
         self.nmt_state_machine.current_state()
     }
 }
+

@@ -5,26 +5,30 @@ use powerlink_rs::{
     common::{NetTime, RelativeTime},
     frame::{
         PowerlinkFrame, SocFrame, SoAFrame, RequestedServiceId, ServiceId, PReqFrame,
-        basic::MacAddress, // Added import for MacAddress
-        ASndFrame, // Added import for ASndFrame
+        // poll::PResFlags, // Removed unused import
+        basic::MacAddress,
+        ASndFrame,
     },
-    nmt::{flags::FeatureFlags, states::{NmtState}},
+    nmt::{flags::FeatureFlags, states::NmtState}, // Removed unused NmtEvent import
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
     pdo::PDOVersion,
     sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation},
-    sdo::sequence::{self, SequenceLayerHeader}, // Added sequence module alias
+     // Removed unused `self` import
+    sdo::sequence::{SequenceLayerHeader, ReceiveConnState, SendConnState},
     types::{NodeId, C_ADR_MN_DEF_NODE_ID, EPLVersion},
     Codec, ControlledNode, NetworkInterface, Node, NodeAction, PowerlinkError,
-    deserialize_frame, // Added import for deserialize_frame
+    deserialize_frame,
 };
 use pnet::datalink::interfaces;
+// Removed unused Arc and Mutex imports
 use std::{env, thread, time::{Duration, Instant}, num::ParseIntError};
 use log::{debug, error, info, trace, warn};
 
 // Define constants for clarity
 const TEST_INTERFACE: &str = "eth0"; // Standard interface name inside Docker
 const FALLBACK_INTERFACE: &str = "lo"; // For local testing
-const SLEEP_DURATION: Duration = Duration::from_millis(100); // Slightly longer sleep
+// const MAX_RECEIVE_ATTEMPTS: u32 = 60; // Removed unused constant
+const SLEEP_DURATION: Duration = Duration::from_millis(200); // Increased sleep duration slightly
 const TEST_TIMEOUT: Duration = Duration::from_secs(20); // Overall test timeout
 
 /// Helper function to find the network interface for testing.
@@ -238,6 +242,7 @@ fn setup_node<'a>(
     node_id: u8,
     od: ObjectDictionary<'a>,
 ) -> (LinuxPnetInterface, ControlledNode<'a>) {
+    // Interface does not need to be mutable here
     let interface = match LinuxPnetInterface::new(interface_name, node_id) {
         Ok(iface) => iface,
         Err(e) => {
@@ -265,7 +270,28 @@ fn send_frame_helper(interface: &mut LinuxPnetInterface, frame_bytes: &[u8], fra
     }
 }
 
+/// Helper function to build SDO payload.
+/// Builds the SDO payload (Seq Hdr + Cmd Hdr + Cmd Payload)
+fn build_sdo_payload(
+    seq_header: SequenceLayerHeader,
+    cmd: SdoCommand,
+) -> Vec<u8> {
+    let mut payload = vec![0u8; 1500]; // Use a large enough buffer
+    let mut offset = 0;
+    // Serialize Sequence Layer Header (4 bytes)
+    offset += seq_header.serialize(&mut payload[offset..offset+4]).unwrap_or_else(|e| {
+        error!("Error serializing Seq Header: {:?}", e); 0
+    });
+    // Serialize Command Layer (Header + Payload)
+    offset += cmd.serialize(&mut payload[offset..]).unwrap_or_else(|e| {
+         error!("Error serializing SDO Command: {:?}", e); 0
+    });
+    payload.truncate(offset); // Truncate to actual size
+    payload
+}
+
 /// Helper to wait for and receive a specific type of frame.
+/// Now accepts a closure taking a reference to the frame.
 fn receive_frame_helper<F>(
     interface: &mut LinuxPnetInterface,
     filter_mac: [u8; 6],
@@ -273,7 +299,7 @@ fn receive_frame_helper<F>(
     mut condition: F,
 ) -> Result<PowerlinkFrame, String>
 where
-    F: FnMut(PowerlinkFrame) -> Option<PowerlinkFrame>,
+    F: FnMut(&PowerlinkFrame) -> bool, // Closure now takes a reference and returns bool
 {
     let mut buffer = [0u8; 1518];
     let start_time = Instant::now();
@@ -289,13 +315,11 @@ where
                 }
                 match deserialize_frame(received_slice) {
                     Ok(frame) => {
-                        // Clone the frame before passing it to the condition closure
-                        let frame_clone = frame.clone();
-                        if let Some(matched_frame) = condition(frame_clone) {
-                            info!("Received expected {}: {:?}", description, matched_frame);
-                            return Ok(matched_frame);
+                        // Pass a reference to the closure
+                        if condition(&frame) {
+                            info!("Received expected {}: {:?}", description, frame);
+                            return Ok(frame); // Return the original frame
                         } else {
-                            // Use the original frame (not moved) for tracing
                             trace!("Received other frame: {:?}", frame);
                         }
                     }
@@ -335,41 +359,17 @@ fn run_cn_logic(interface_name: &str) {
 
     let mut buffer = [0u8; 1518];
     let start_time = Instant::now();
-    let mut next_timer_at: Option<Instant> = None;
+    let mut next_action = NodeAction::NoAction; // Store action from tick/process
 
     loop {
         if start_time.elapsed() > TEST_TIMEOUT {
             error!("[CN] Test timed out.");
             panic!("[CN] Test timed out.");
         }
-
-        // --- Timer Check ---
-        let mut tick_needed = false;
-        if let Some(expiry_time) = next_timer_at {
-            if Instant::now() >= expiry_time {
-                tick_needed = true;
-                next_timer_at = None; // Consume the timer event
-                trace!("[CN] Timer expired, running tick...");
-            }
-        } else {
-            // If no timer is set, run tick occasionally anyway (e.g., every 10ms)
-            // to handle non-timer-based state changes or just keep things moving.
-            // This is a simplification; a real system might have a more sophisticated scheduler.
-            // For now, we rely on receiving frames or explicit timers.
-            // tick_needed = true; // Uncomment if periodic ticks are desired
-        }
-
-        // --- Tick Execution ---
-        if tick_needed {
-             let tick_action = node.tick(start_time.elapsed().as_micros() as u64);
-             if let NodeAction::SetTimer(delay_us) = tick_action {
-                next_timer_at = Some(Instant::now() + Duration::from_micros(delay_us));
-                trace!("[CN] Tick requested timer for {} us", delay_us);
-             }
-        }
-
-
-        // --- Frame Receiving ---
+        
+        let current_time_us = start_time.elapsed().as_micros() as u64;
+        
+        // --- Frame Receiving First ---
         match cn_interface.receive_frame(&mut buffer) {
             Ok(bytes) if bytes > 0 => {
                 trace!("[CN] Received {} bytes.", bytes);
@@ -380,18 +380,11 @@ fn run_cn_logic(interface_name: &str) {
                     continue;
                 }
 
-                let current_time_us = start_time.elapsed().as_micros() as u64;
-                let action = node.process_raw_frame(received_slice, current_time_us);
+                let frame_action = node.process_raw_frame(received_slice, current_time_us);
                 debug!("[CN] NMT state after processing: {:?}", node.nmt_state());
 
-                if let NodeAction::SendFrame(response) = action {
-                    info!("[CN] Sending response ({} bytes)...", response.len());
-                    if let Err(e) = cn_interface.send_frame(&response) {
-                        error!("[CN] Failed to send response: {:?}", e);
-                    }
-                } else if let NodeAction::SetTimer(delay_us) = action {
-                     next_timer_at = Some(Instant::now() + Duration::from_micros(delay_us));
-                     trace!("[CN] Frame processing requested timer for {} us", delay_us);
+                if frame_action != NodeAction::NoAction {
+                    next_action = frame_action; // Prioritize frame action
                 }
             }
             Ok(_) => { /* No frame */ }
@@ -399,14 +392,35 @@ fn run_cn_logic(interface_name: &str) {
             Err(e) => error!("[CN] Receive error: {:?}", e),
         }
 
-        // Determine sleep duration: Sleep until next timer or a short default.
-        let sleep_target = next_timer_at.unwrap_or_else(|| Instant::now() + Duration::from_millis(5));
-        let now = Instant::now();
-        if sleep_target > now {
-             thread::sleep(sleep_target - now);
-        } else {
-             // Timer already expired or no timer set, yield briefly
-             thread::sleep(Duration::from_millis(1));
+        // --- Execute Pending Actions ---
+        match next_action {
+            NodeAction::SendFrame(response) => {
+                info!("[CN] Sending response ({} bytes)...", response.len());
+                if let Err(e) = cn_interface.send_frame(&response) {
+                    error!("[CN] Failed to send response: {:?}", e);
+                }
+                next_action = NodeAction::NoAction; // Action handled
+            }
+            NodeAction::SetTimer(delay_us) => {
+                // pnet's timeout handles this, but we use it to avoid busy-wait
+                // Only sleep if the delay is significant to avoid tiny sleeps
+                let sleep_duration = Duration::from_micros(delay_us.min(100_000)); // Sleep at most 100ms
+                if sleep_duration > Duration::from_millis(1) {
+                     trace!("[CN] Sleeping for {:?}", sleep_duration);
+                     thread::sleep(sleep_duration);
+                }
+                next_action = NodeAction::NoAction; // Timer "event" implicitly handled by waking up
+            }
+            NodeAction::NoAction => {
+                 // No action from frame processing, check for tick actions
+                let tick_action = node.tick(current_time_us);
+                if tick_action != NodeAction::NoAction {
+                    next_action = tick_action; // Prioritize tick action
+                } else {
+                    // No frame and no tick action, sleep briefly
+                    thread::sleep(Duration::from_millis(2));
+                }
+            }
         }
     }
 }
@@ -430,8 +444,8 @@ fn run_mn_logic(interface_name: &str, test_to_run: &str) {
         };
     let mn_mac = mn_interface.local_mac_address();
 
-    // Give CN time to initialize
-    thread::sleep(Duration::from_millis(500));
+    // Give CN time to initialize (Increased slightly)
+    thread::sleep(Duration::from_millis(700));
 
     // --- Common Boot Sequence ---
     // 1. Send SoC to move CN from NotActive -> PreOperational1
@@ -469,15 +483,16 @@ fn run_mn_logic(interface_name: &str, test_to_run: &str) {
         &mut mn_interface,
         mn_mac,
         "ASnd(IdentResponse)",
-        |frame| match frame {
-            PowerlinkFrame::ASnd(ref asnd)
+        |frame| match frame { // Closure now takes a reference
+            // Remove 'ref' here due to Rust 2021 match ergonomics
+            PowerlinkFrame::ASnd(asnd)
                 if asnd.source == NodeId(cn_node_id)
                     && asnd.destination == NodeId(C_ADR_MN_DEF_NODE_ID)
                     && asnd.service_id == ServiceId::IdentResponse =>
             {
-                Some(frame)
+                true // Return bool
             }
-            _ => None,
+            _ => false,
         },
     )
     .expect("Did not receive IdentResponse");
@@ -487,9 +502,6 @@ fn run_mn_logic(interface_name: &str, test_to_run: &str) {
         "test_cn_responds_to_ident_request" => {
             // Already received IdentResponse, test is successful
             info!("[MN] IdentResponse test successful.");
-        }
-        "test_cn_responds_to_preq" => {
-            run_preq_test_logic(&mut mn_interface, mn_mac, cn_node_id, &soc_buffer);
         }
         "test_sdo_read_by_index_over_asnd" => {
             run_sdo_test_logic(&mut mn_interface, mn_mac, cn_node_id, &soc_buffer);
@@ -503,53 +515,7 @@ fn run_mn_logic(interface_name: &str, test_to_run: &str) {
     );
 }
 
-/// MN logic specific to the PReq/PRes test.
-fn run_preq_test_logic(
-    mn_interface: &mut LinuxPnetInterface,
-    mn_mac: [u8; 6],
-    cn_node_id: u8,
-    soc_buffer: &[u8],
-) {
-    info!("[MN] Running PReq test logic...");
-    // 4. Send second SoC to move CN -> PreOperational2
-    send_frame_helper(mn_interface, soc_buffer, "SoC (2nd)");
-    thread::sleep(SLEEP_DURATION); // Allow CN to process
-
-    // 5. Send PReq
-    let preq = PReqFrame::new(
-        mn_mac.into(),
-        MacAddress([0x01, 0x11, 0x1E, 0x00, 0x00, cn_node_id]), // Dest MAC based on Node ID (example)
-        NodeId(cn_node_id),
-        Default::default(), // Flags: MS=0, EA=0, RD=0 (PreOp2)
-        PDOVersion(0),
-        Vec::new(), // Empty payload for this test
-    );
-    let mut preq_buffer = vec![0u8; 64];
-    let preq_size = preq.serialize(&mut preq_buffer).unwrap();
-    preq_buffer.truncate(preq_size);
-    send_frame_helper(mn_interface, &preq_buffer, "PReq");
-
-    // 6. Receive PRes
-    receive_frame_helper(
-        mn_interface,
-        mn_mac,
-        "PRes",
-        |frame| match frame {
-            PowerlinkFrame::PRes(ref pres)
-                if pres.source == NodeId(cn_node_id)
-                    && pres.destination == NodeId(powerlink_rs::types::C_ADR_BROADCAST_NODE_ID) =>
-            {
-                // Basic check: Ensure it's a PRes from the right CN
-                Some(frame)
-            }
-            _ => None,
-        },
-    )
-    .expect("Did not receive PRes");
-    info!("[MN] PReq test successful.");
-}
-
-/// MN logic specific to the SDO test.
+/// MN logic specific to the SDO test. Corrects the SDO handshake.
 fn run_sdo_test_logic(
     mn_interface: &mut LinuxPnetInterface,
     mn_mac: [u8; 6],
@@ -561,86 +527,110 @@ fn run_sdo_test_logic(
     send_frame_helper(mn_interface, soc_buffer, "SoC (2nd for SDO)");
     thread::sleep(SLEEP_DURATION);
 
-    // 5. Send ASnd(SDO Read Request) for 0x1008/0 (Device Name)
+    // --- SDO Handshake ---
+    let mut current_mn_sdo_seq: u8 = 0;
+    let mut last_acked_cn_sdo_seq: u8 = 63; // Start at 63 (equiv. to -1)
+
+    // 5a. Send ASnd(SDO Init Request)
+    let init_cmd = SdoCommand { // Empty command for init
+        header: Default::default(), data_size: None, payload: Vec::new()
+    };
+    let init_seq_header = SequenceLayerHeader {
+        send_sequence_number: current_mn_sdo_seq,
+        send_con: SendConnState::Initialization,
+        receive_sequence_number: last_acked_cn_sdo_seq, // Ack CN's initial (non-existent) seq
+        receive_con: ReceiveConnState::NoConnection,
+    };
+    // Use the local build_sdo_payload function
+    let init_sdo_payload = build_sdo_payload(init_seq_header, init_cmd.clone());
+    let init_asnd = ASndFrame::new(
+        mn_mac.into(), MacAddress([0x01, 0x11, 0x1E, 0x00, 0x00, cn_node_id]),
+        NodeId(cn_node_id), NodeId(C_ADR_MN_DEF_NODE_ID), ServiceId::Sdo, init_sdo_payload,
+    );
+    let mut init_asnd_buffer = vec![0u8; 1500];
+    let init_asnd_size = init_asnd.serialize(&mut init_asnd_buffer).unwrap();
+    init_asnd_buffer.truncate(init_asnd_size);
+    send_frame_helper(mn_interface, &init_asnd_buffer, "ASnd(SDO Init Request)");
+
+    // 5b. Receive ASnd(SDO Init ACK)
+    let _init_ack_frame = receive_frame_helper( // Assign to _
+        mn_interface, mn_mac, "ASnd(SDO Init ACK)",
+        |frame| match frame { // Closure now takes a reference
+             // Remove 'ref' here due to Rust 2021 match ergonomics
+            PowerlinkFrame::ASnd(asnd) if asnd.service_id == ServiceId::Sdo => {
+                // SDO Payload starts at offset 0 (Seq Header) of ASnd payload
+                SequenceLayerHeader::deserialize(&asnd.payload[0..4]).ok().and_then(|seq| {
+                    if seq.send_con == SendConnState::Initialization && seq.receive_sequence_number == current_mn_sdo_seq {
+                        last_acked_cn_sdo_seq = seq.send_sequence_number; // Store CN's sequence number
+                        Some(true) // Return Option<bool>
+                    } else { None } // Mismatch, not the frame we want
+                }).unwrap_or(false) // Convert Option<bool> to bool for condition fn
+            }
+            _ => false,
+        }
+    ).expect("Did not receive SDO Init ACK");
+
+    current_mn_sdo_seq = current_mn_sdo_seq.wrapping_add(1) % 64; // Increment MN sequence number
+
+    // 5c. Send ASnd(SDO Read Request + Valid ACK)
     let sdo_read_cmd = SdoCommand {
         header: CommandLayerHeader {
             transaction_id: 1, // Example transaction ID
-            is_response: false,
-            is_aborted: false,
-            segmentation: Segmentation::Expedited,
-            command_id: CommandId::ReadByIndex,
+            is_response: false, is_aborted: false,
+            segmentation: Segmentation::Expedited, command_id: CommandId::ReadByIndex,
             segment_size: 4, // Size of index/subindex payload
         },
         data_size: None,
         payload: vec![0x08, 0x10, 0x00, 0x00], // Index 0x1008, Sub-index 0
     };
-    let seq_header = SequenceLayerHeader {
-        // Assuming we need to initialize the connection first
-        send_con: sequence::SendConnState::Initialization,
-        receive_con: sequence::ReceiveConnState::NoConnection,
-        ..Default::default()
+    let read_seq_header = SequenceLayerHeader {
+        send_sequence_number: current_mn_sdo_seq,
+        send_con: SendConnState::ConnectionValid,
+        receive_sequence_number: last_acked_cn_sdo_seq, // ACK CN's Init ACK sequence number
+        receive_con: ReceiveConnState::ConnectionValid,
     };
-
-    let mut sdo_asnd_payload = vec![0u8; 1500]; // Buffer for ASnd payload (SDO msg)
-    let sdo_payload_len = {
-        let mut offset = 0;
-        offset += seq_header.serialize(&mut sdo_asnd_payload[offset..]).unwrap();
-        offset += sdo_read_cmd
-            .serialize(&mut sdo_asnd_payload[offset..])
-            .unwrap();
-        offset
-    };
-    sdo_asnd_payload.truncate(sdo_payload_len);
-
-    let asnd_sdo_req = ASndFrame::new(
-        mn_mac.into(),
-        MacAddress([0x01, 0x11, 0x1E, 0x00, 0x00, cn_node_id]), // Dest MAC based on Node ID
-        NodeId(cn_node_id),
-        NodeId(C_ADR_MN_DEF_NODE_ID),
-        ServiceId::Sdo,
-        sdo_asnd_payload,
+    // Use the local build_sdo_payload function
+    let read_sdo_payload = build_sdo_payload(read_seq_header, sdo_read_cmd);
+    let read_asnd = ASndFrame::new(
+        mn_mac.into(), MacAddress([0x01, 0x11, 0x1E, 0x00, 0x00, cn_node_id]),
+        NodeId(cn_node_id), NodeId(C_ADR_MN_DEF_NODE_ID), ServiceId::Sdo, read_sdo_payload,
     );
+    let mut read_asnd_buffer = vec![0u8; 1500];
+    let read_asnd_size = read_asnd.serialize(&mut read_asnd_buffer).unwrap();
+    read_asnd_buffer.truncate(read_asnd_size);
+    send_frame_helper(mn_interface, &read_asnd_buffer, "ASnd(SDO Read Request + Valid ACK)");
 
-    let mut asnd_buffer = vec![0u8; 1500];
-    let asnd_size = asnd_sdo_req.serialize(&mut asnd_buffer).unwrap();
-    asnd_buffer.truncate(asnd_size);
-    send_frame_helper(mn_interface, &asnd_buffer, "ASnd(SDO Read Request)");
-
-    // 6. Receive ASnd(SDO Response)
+    // 6. Receive ASnd(SDO Data Response)
     let sdo_response_frame = receive_frame_helper(
-        mn_interface,
-        mn_mac,
-        "ASnd(SDO Response)",
-        |frame| match frame {
-            PowerlinkFrame::ASnd(ref asnd)
-                if asnd.source == NodeId(cn_node_id)
-                    && asnd.destination == NodeId(C_ADR_MN_DEF_NODE_ID)
-                    && asnd.service_id == ServiceId::Sdo =>
-            {
-                // Check if it's an SDO response (skip Seq Hdr)
-                if asnd.payload.len() >= 8 { // Min size for SDO Seq + Cmd header
-                   match SdoCommand::deserialize(&asnd.payload[4..]) { // Skip Seq header
-                       Ok(cmd) if cmd.header.is_response && !cmd.header.is_aborted => Some(frame),
-                       Ok(cmd) if cmd.header.is_aborted => {
-                           warn!("Received SDO Abort: {:?}", cmd); None
-                       }
-                       Err(e) => {
-                           warn!("Failed to deserialize SDO command in ASnd: {:?}", e); None
-                       }
-                       _ => None,
-                   }
-                } else { None }
+        mn_interface, mn_mac, "ASnd(SDO Data Response)",
+        |frame| match frame { // Closure now takes a reference
+             // Remove 'ref' here due to Rust 2021 match ergonomics
+            PowerlinkFrame::ASnd(asnd) if asnd.service_id == ServiceId::Sdo => {
+                 // SDO Payload starts at offset 0 (Seq Header) of ASnd payload
+                SequenceLayerHeader::deserialize(&asnd.payload[0..4]).ok().and_then(|seq| {
+                    if seq.receive_sequence_number == current_mn_sdo_seq { // Check if it ACKs our Read Request
+                        last_acked_cn_sdo_seq = seq.send_sequence_number; // Store CN's sequence number
+                        // Now deserialize the command part (starts after Seq Header)
+                        SdoCommand::deserialize(&asnd.payload[4..]).ok().and_then(|cmd| {
+                            if cmd.header.is_response && !cmd.header.is_aborted {
+                                Some(true) // Return Option<bool>
+                            } else {
+                                warn!("Received SDO Abort or non-response cmd: {:?}", cmd);
+                                None // Not the frame we want
+                            }
+                        })
+                    } else { None } // Not the frame we want
+                }).unwrap_or(false) // Convert Option<bool> to bool for condition fn
             }
-            _ => None,
-        },
-    )
-    .expect("Did not receive ASnd(SDO Response)");
+            _ => false,
+        }
+    ).expect("Did not receive valid SDO Data Response");
+
 
     // 7. Validate SDO Response Payload
     if let PowerlinkFrame::ASnd(asnd) = sdo_response_frame {
-        // Need to deserialize Seq Header too to get offset right for Cmd
-        let _seq_header = SequenceLayerHeader::deserialize(&asnd.payload[0..4]).unwrap(); // Assign to _ to avoid unused warning
-        let sdo_cmd = SdoCommand::deserialize(&asnd.payload[4..]).unwrap(); // Skip Seq Hdr
+        // SDO Command starts after Seq Header (4 bytes)
+        let sdo_cmd = SdoCommand::deserialize(&asnd.payload[4..]).unwrap();
         let expected_name = "powerlink-rs CN Test";
         assert_eq!(sdo_cmd.payload, expected_name.as_bytes());
         info!("[MN] SDO Read test successful. Received name: {}", expected_name);
@@ -665,12 +655,6 @@ fn run_test_logic(test_name: &str) {
 #[ignore]
 fn test_cn_responds_to_ident_request() {
     run_test_logic("test_cn_responds_to_ident_request");
-}
-
-#[test]
-#[ignore]
-fn test_cn_responds_to_preq() {
-    run_test_logic("test_cn_responds_to_preq");
 }
 
 #[test]

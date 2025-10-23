@@ -17,8 +17,8 @@ services:
       - NET_RAW # Allow opening raw sockets
     depends_on: # Ensure MN starts first (optional but good practice)
       - mn
-    # Command override to pass test flags:
-    command: ["--ignored", "--nocapture"]
+    # Command override to pass test flags and the specific test filter:
+    command: ["--ignored", "--nocapture", "${POWERLINK_TEST_TO_RUN}", "--"]
 
   mn:
     container_name: powerlink-mn
@@ -35,8 +35,8 @@ services:
         ipv4_address: 192.168.100.240 # Assign static IP for MN
     cap_add:
       - NET_RAW # Allow opening raw sockets
-    # Command override to pass test flags:
-    command: ["--ignored", "--nocapture"]
+    # Command override to pass test flags and the specific test filter:
+    command: ["--ignored", "--nocapture", "${POWERLINK_TEST_TO_RUN}", "--"]
 
 
 networks:
@@ -46,4 +46,3 @@ networks:
       driver: default
       config:
         - subnet: 192.168.100.0/24 # Define the POWERLINK standard subnet
-
