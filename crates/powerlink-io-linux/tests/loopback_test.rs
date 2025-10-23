@@ -4,12 +4,11 @@ use powerlink_io_linux::LinuxPnetInterface;
 use powerlink_rs::{
     common::{NetTime, RelativeTime},
     frame::{
-        PowerlinkFrame, SocFrame, SoAFrame, RequestedServiceId, ServiceId, PReqFrame, PResFrame,
-        poll::PResFlags, // Corrected import path
+        PowerlinkFrame, SocFrame, SoAFrame, RequestedServiceId, ServiceId, PReqFrame,
         basic::MacAddress, // Added import for MacAddress
         ASndFrame, // Added import for ASndFrame
     },
-    nmt::{flags::FeatureFlags, states::{NmtEvent, NmtState}},
+    nmt::{flags::FeatureFlags, states::{NmtState}},
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
     pdo::PDOVersion,
     sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation},
@@ -19,13 +18,12 @@ use powerlink_rs::{
     deserialize_frame, // Added import for deserialize_frame
 };
 use pnet::datalink::interfaces;
-use std::{env, thread, time::{Duration, Instant}, num::ParseIntError, sync::{Arc, Mutex}};
+use std::{env, thread, time::{Duration, Instant}, num::ParseIntError};
 use log::{debug, error, info, trace, warn};
 
 // Define constants for clarity
 const TEST_INTERFACE: &str = "eth0"; // Standard interface name inside Docker
 const FALLBACK_INTERFACE: &str = "lo"; // For local testing
-const MAX_RECEIVE_ATTEMPTS: u32 = 60; // Increased attempts for potentially slower CI/Docker
 const SLEEP_DURATION: Duration = Duration::from_millis(100); // Slightly longer sleep
 const TEST_TIMEOUT: Duration = Duration::from_secs(20); // Overall test timeout
 
@@ -240,7 +238,7 @@ fn setup_node<'a>(
     node_id: u8,
     od: ObjectDictionary<'a>,
 ) -> (LinuxPnetInterface, ControlledNode<'a>) {
-    let mut interface = match LinuxPnetInterface::new(interface_name, node_id) {
+    let interface = match LinuxPnetInterface::new(interface_name, node_id) {
         Ok(iface) => iface,
         Err(e) => {
             error!("Failed to create interface '{}': {}", interface_name, e);

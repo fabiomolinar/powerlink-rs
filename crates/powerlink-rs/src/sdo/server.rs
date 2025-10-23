@@ -1,13 +1,11 @@
 // In crates/powerlink-rs/src/sdo/server.rs
 
-use crate::frame::ServiceId;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::command::{
     CommandId, CommandLayerHeader, ReadByIndexRequest, SdoCommand, Segmentation,
     WriteByIndexRequest,
 };
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
-use crate::types::MessageType;
 use crate::{Codec, PowerlinkError};
 use alloc::vec;
 use alloc::vec::Vec;
