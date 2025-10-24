@@ -3,7 +3,7 @@
 
 use log::{debug, error, info, trace, warn};
 use pnet::datalink::interfaces;
-use powerlink_io_linux::LinuxPnetInterface;
+use powerlink_rs_linux::LinuxPnetInterface;
 use powerlink_rs::{
     ControlledNode,
     NetworkInterface,
