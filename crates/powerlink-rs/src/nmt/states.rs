@@ -1,4 +1,5 @@
 // crates/powerlink-rs/src/nmt/states.rs
+// Added derive(PartialOrd)
 
 use crate::PowerlinkError;
 
@@ -14,7 +15,7 @@ pub enum NodeType {
 /// This covers both the common initialisation states and the specific states
 /// for Controlled Nodes (CN) and Managing Nodes (MN).
 /// (Reference: EPSG DS 301, Section 7.1 and Appendix 3.6)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Default)] // Added PartialOrd
 #[repr(u8)]
 pub enum NmtState {
     // NMT States. Super states are not coded.
@@ -52,30 +53,16 @@ impl NmtState {
     /// Parses a u8 into an NmtState with node-specific context.
     pub fn from_u8_with_context(value: u8, node_type: NodeType) -> Result<Self, PowerlinkError> {
         match value {
-            0x1C => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtNotActive),
-                NodeType::ManagingNode => Ok(NmtState::NmtNotActive),
-            },
-            0x1D => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtPreOperational1),
-                NodeType::ManagingNode => Ok(NmtState::NmtPreOperational1),
-            },
-            0x5D => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtPreOperational2),
-                NodeType::ManagingNode => Ok(NmtState::NmtPreOperational2),
-            },
-            0x6D => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtReadyToOperate),
-                NodeType::ManagingNode => Ok(NmtState::NmtReadyToOperate),
-            },
-            0xFD => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtOperational),
-                NodeType::ManagingNode => Ok(NmtState::NmtOperational),
-            },
-            0x1E => match node_type {
-                NodeType::ControlledNode => Ok(NmtState::NmtBasicEthernet),
-                NodeType::ManagingNode => Ok(NmtState::NmtBasicEthernet),
-            },
+            // Handle potentially ambiguous values based on context
+            // Note: In DS301 App 3.6, all shared states have the same numeric value
+            // So, context isn't strictly needed for parsing *these* shared states,
+            // but the function remains for potential future use or stricter validation.
+            0x1C => Ok(NmtState::NmtNotActive),
+            0x1D => Ok(NmtState::NmtPreOperational1),
+            0x5D => Ok(NmtState::NmtPreOperational2),
+            0x6D => Ok(NmtState::NmtReadyToOperate),
+            0xFD => Ok(NmtState::NmtOperational),
+            0x1E => Ok(NmtState::NmtBasicEthernet),
             // Unambiguous states can be handled by the standard TryFrom.
             _ => NmtState::try_from(value),
         }
@@ -148,5 +135,12 @@ mod tests {
             NmtState::from_u8_with_context(0x4D, NodeType::ManagingNode),
             Ok(NmtState::NmtCsStopped)
         );
+    }
+
+     #[test]
+    fn test_partial_ord() {
+         assert!(NmtState::NmtPreOperational2 >= NmtState::NmtPreOperational1);
+         assert!(NmtState::NmtOperational > NmtState::NmtReadyToOperate);
+         assert!(NmtState::NmtNotActive < NmtState::NmtPreOperational1);
     }
 }

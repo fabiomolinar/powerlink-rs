@@ -1,9 +1,10 @@
 // crates/powerlink-rs/src/od/value.rs
 
+use crate::frame::basic::MacAddress;
 use crate::PowerlinkError;
 use crate::common::{NetTime, TimeDifference, TimeOfDay};
 use crate::types::{
-    BOOLEAN, INTEGER8, INTEGER16, INTEGER32, INTEGER64, IpAddress, MacAddress, REAL32, REAL64,
+    BOOLEAN, INTEGER8, INTEGER16, INTEGER32, INTEGER64, IpAddress, REAL32, REAL64,
     UNSIGNED8, UNSIGNED16, UNSIGNED32, UNSIGNED64,
 };
 use alloc::{string::String, vec, vec::Vec};

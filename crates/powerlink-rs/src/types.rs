@@ -29,8 +29,6 @@ pub type UNSIGNED64 = u64;
 pub type REAL32 = f32;
 /// Alias for REAL64 (64-bit floating point).
 pub type REAL64 = f64;
-/// Alias for a 6-byte MAC Address.
-pub type MacAddress = [u8; 6];
 /// Alias for a 4-byte IP Address.
 pub type IpAddress = [u8; 4];
 
@@ -81,6 +79,10 @@ pub const C_DLL_MULTICAST_SOA: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x03];
 
 /// POWERLINK SoC multicast MAC address: 01-11-1E-00-00-01.
 pub const C_DLL_MULTICAST_SOC: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x01];
+
+/// POWERLINK ASnd multicast MAC address: 01-11-1E-00-00-04.
+pub const C_DLL_MULTICAST_ASND: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x04];
+
 
 // --- Core Protocol Identifiers ---
 
