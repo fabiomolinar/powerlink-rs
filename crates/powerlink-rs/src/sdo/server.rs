@@ -1,5 +1,3 @@
-// crates/powerlink-rs/src/sdo/server.rs
-
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::command::{
     CommandId, CommandLayerHeader, ReadByIndexRequest, SdoCommand, Segmentation,
@@ -7,7 +5,7 @@ use crate::sdo::command::{
 };
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::state::{SdoServerState, SdoTransferState};
-use crate::{Codec, PowerlinkError};
+use crate::{PowerlinkError};
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -49,6 +47,7 @@ impl SdoServer {
             return Err(PowerlinkError::BufferTooShort);
         }
         trace!("Handling SDO request payload: {:?}", request_sdo_payload);
+        // Use the inherent deserialize method (now unambiguous)
         let sequence_header = SequenceLayerHeader::deserialize(&request_sdo_payload[0..4])?;
         let command_payload = &request_sdo_payload[4..]; // Command Layer starts after Seq Layer
 
@@ -93,6 +92,7 @@ impl SdoServer {
             return Err(PowerlinkError::InvalidPlFrame); // Or SdoSequenceError
         }
 
+        // Use the inherent deserialize method (now unambiguous)
         let sdo_command = SdoCommand::deserialize(command_payload)?;
 
         debug!("Parsed SDO command: {:?}", sdo_command);
@@ -115,6 +115,7 @@ impl SdoServer {
     ) -> Result<Vec<u8>, PowerlinkError> {
         // --- Assemble the full SDO response payload (Seq + Cmd + Data) ---
         let mut response_sdo_payload = vec![0u8; 1500]; // Allocate max SDO size.
+        // Use inherent serialize methods
         let seq_len = seq_header.serialize(&mut response_sdo_payload[0..4])?;
         let cmd_len = cmd.serialize(&mut response_sdo_payload[seq_len..])?;
         let total_sdo_len = seq_len + cmd_len;

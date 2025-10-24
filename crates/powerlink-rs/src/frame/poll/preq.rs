@@ -1,5 +1,3 @@
-// crates/powerlink-rs/src/frame/poll/preq.rs
-
 use crate::PowerlinkError;
 use crate::frame::basic::{EthernetHeader, MacAddress};
 use crate::frame::codec::{Codec, CodecHelpers};
@@ -17,6 +15,7 @@ pub struct PReqFrame {
     pub source: NodeId,
     pub flags: PReqFlags,
     pub pdo_version: PDOVersion,
+    /// Size of the actual payload data in bytes.
     pub payload_size: u16,
     pub payload: Vec<u8>,
 }
@@ -57,64 +56,97 @@ impl PReqFrame {
 }
 
 impl Codec for PReqFrame {
+    /// Serializes the PReq frame into the provided buffer.
+    /// Returns the total size of the POWERLINK frame section written,
+    /// including padding if necessary to meet minimum Ethernet payload size.
+    /// Assumes buffer starts *after* the Ethernet header.
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        let header_size = 24;
-        let total_size = header_size + self.payload.len();
-        if buffer.len() < total_size {
+        let pl_header_size = 10; // MType(1)+Dest(1)+Src(1)+Rsvd(1)+Flags(1)+Rsvd(1)+PDOv(1)+Rsvd(1)+Size(2)
+        let total_pl_frame_size = pl_header_size + self.payload.len();
+        // Check buffer size for unpadded PL frame first
+        if buffer.len() < total_pl_frame_size {
             return Err(PowerlinkError::BufferTooShort);
         }
 
-        CodecHelpers::serialize_eth_header(&self.eth_header, buffer);
+        // --- Serialize POWERLINK Header ---
         CodecHelpers::serialize_pl_header(self.message_type, self.destination, self.source, buffer);
+        buffer[3] = 0; // Reserved
 
-        buffer[17] = 0;
-        let mut octet4 = 0u8;
-        if self.flags.ms {
-            octet4 |= 1 << 5;
-        }
-        if self.flags.ea {
-            octet4 |= 1 << 2;
-        }
-        if self.flags.rd {
-            octet4 |= 1 << 0;
-        }
-        buffer[18] = octet4;
-        buffer[19] = 0;
-        buffer[20] = self.pdo_version.0;
-        buffer[21] = 0;
-        buffer[22..24].copy_from_slice(&self.payload_size.to_le_bytes());
-        buffer[header_size..total_size].copy_from_slice(&self.payload);
+        // PReq Specific Header Fields
+        let mut octet4_flags = 0u8;
+        if self.flags.ms { octet4_flags |= 1 << 5; }
+        if self.flags.ea { octet4_flags |= 1 << 2; }
+        if self.flags.rd { octet4_flags |= 1 << 0; }
+        buffer[4] = octet4_flags; // Flags byte
+        buffer[5] = 0; // Reserved
+        buffer[6] = self.pdo_version.0;
+        buffer[7] = 0; // Reserved
+        buffer[8..10].copy_from_slice(&self.payload_size.to_le_bytes()); // Actual payload size
 
-        Ok(total_size.max(60))
+        // --- Serialize Payload ---
+        let payload_start = pl_header_size;
+        let payload_end = payload_start + self.payload.len();
+        // Bounds already checked for total_pl_frame_size
+        buffer[payload_start..payload_end].copy_from_slice(&self.payload);
+
+        // --- Determine Padded Size ---
+        let pl_frame_len = payload_end; // Length before padding
+        let min_eth_payload = 46; // Minimum Ethernet payload size
+        let padded_pl_len = pl_frame_len.max(min_eth_payload);
+
+        // Apply padding if necessary
+        if padded_pl_len > pl_frame_len {
+            if buffer.len() < padded_pl_len {
+                return Err(PowerlinkError::BufferTooShort); // Need space for padding
+            }
+            buffer[pl_frame_len..padded_pl_len].fill(0); // Pad with zeros
+        }
+
+        Ok(padded_pl_len) // Return the total size written, including padding
     }
 
-    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        let header_size = 24;
-        if buffer.len() < header_size {
+    /// Deserializes a PReq frame from the provided buffer.
+    /// Assumes the buffer starts *after* the 14-byte Ethernet header.
+    fn deserialize(eth_header: EthernetHeader, buffer: &[u8]) -> Result<Self, PowerlinkError> {
+        let pl_header_size = 10;
+        if buffer.len() < pl_header_size { // Need at least the header
             return Err(PowerlinkError::BufferTooShort);
         }
 
-        let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
+        // Deserialize Basic PL Header
         let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
+        // buffer[3] is reserved
 
-        let octet4 = buffer[18];
+        // Validate message type
+        if message_type != MessageType::PReq {
+            return Err(PowerlinkError::InvalidPlFrame);
+        }
+
+        // Deserialize PReq Specific Header Fields
+        let octet4_flags = buffer[4];
         let flags = PReqFlags {
-            ms: (octet4 & (1 << 5)) != 0,
-            ea: (octet4 & (1 << 2)) != 0,
-            rd: (octet4 & (1 << 0)) != 0,
+            ms: (octet4_flags & (1 << 5)) != 0,
+            ea: (octet4_flags & (1 << 2)) != 0,
+            rd: (octet4_flags & (1 << 0)) != 0,
         };
+        // buffer[5] is reserved
+        let pdo_version = PDOVersion(buffer[6]);
+        // buffer[7] is reserved
+        let payload_size = u16::from_le_bytes(buffer[8..10].try_into()?);
 
-        let pdo_version = PDOVersion(buffer[20]);
-        let payload_size = u16::from_le_bytes(buffer[22..24].try_into()?);
+        // Deserialize Payload
+        let payload_start = pl_header_size;
+        let payload_end = payload_start + payload_size as usize;
 
-        let payload_end = header_size + payload_size as usize;
+        // Check buffer length against the *indicated* payload size
         if buffer.len() < payload_end {
             return Err(PowerlinkError::BufferTooShort);
         }
-        let payload = buffer[header_size..payload_end].to_vec();
+        // The payload *is* the data up to payload_size. Padding is not part of the payload vec.
+        let payload = buffer[payload_start..payload_end].to_vec();
 
         Ok(Self {
-            eth_header,
+            eth_header, // Use the passed-in Eth header
             message_type,
             destination,
             source,
@@ -131,6 +163,7 @@ mod tests {
     use super::*;
     use crate::types::MessageType;
     use alloc::vec;
+    use crate::frame::codec::CodecHelpers; // Need this for tests
 
     #[test]
     fn test_preqframe_new_constructor() {
@@ -144,7 +177,7 @@ mod tests {
         };
         let frame = PReqFrame::new(
             source_mac,
-            MacAddress([0x00, 0x00, 0x00, 0x00, 0x00, 55]),
+            MacAddress([0x00, 0x00, 0x00, 0x00, 0x00, 55]), // Example dest MAC
             target_node,
             flags,
             PDOVersion(1),
@@ -173,13 +206,20 @@ mod tests {
                 rd: true,
             },
             PDOVersion(2),
-            vec![0x01, 0x02, 0x03, 0x04],
+            vec![0x01, 0x02, 0x03, 0x04], // Payload len = 4
         );
 
-        let mut buffer = [0u8; 128];
-        let bytes_written = original_frame.serialize(&mut buffer).unwrap();
+        let mut buffer = [0u8; 128]; // Buffer for full Ethernet frame
+        // 1. Serialize Eth header
+        CodecHelpers::serialize_eth_header(&original_frame.eth_header, &mut buffer);
+        // 2. Serialize PL frame part
+        let pl_bytes_written = original_frame.serialize(&mut buffer[14..]).unwrap();
+        // PL Header = 10, Payload = 4. Total = 14. < 46. Padded PL len = 46.
+        assert_eq!(pl_bytes_written, 46);
+        let total_frame_len = 14 + pl_bytes_written;
 
-        let deserialized_frame = PReqFrame::deserialize(&buffer[..bytes_written]).unwrap();
+        // 3. Deserialize full frame
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len]).unwrap().into_preq().unwrap();
 
         assert_eq!(original_frame, deserialized_frame);
     }
@@ -196,27 +236,37 @@ mod tests {
                 rd: false,
             },
             PDOVersion(3),
-            vec![],
+            vec![], // Payload len = 0
         );
 
         let mut buffer = [0u8; 128];
-        let bytes_written = original_frame.serialize(&mut buffer).unwrap();
-        assert_eq!(bytes_written, 60); // Padded to min ethernet size
+        CodecHelpers::serialize_eth_header(&original_frame.eth_header, &mut buffer);
+        let pl_bytes_written = original_frame.serialize(&mut buffer[14..]).unwrap();
+        let total_frame_len = 14 + pl_bytes_written;
 
-        let deserialized_frame = PReqFrame::deserialize(&buffer[..bytes_written]).unwrap();
+        // PReq header = 10 bytes. Payload = 0. Total PL Frame = 10 bytes.
+        // Min Eth Payload = 46 bytes. Needs padding.
+        assert_eq!(pl_bytes_written, 46); // Padded POWERLINK frame section size
+
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len]).unwrap().into_preq().unwrap();
 
         assert_eq!(original_frame, deserialized_frame);
         assert!(deserialized_frame.payload.is_empty());
+        assert_eq!(deserialized_frame.payload_size, 0); // Check indicated size is 0
     }
 
     #[test]
     fn test_preq_deserialize_short_buffer() {
-        // Test short buffer for header
-        let buffer = [0u8; 23];
-        let result = PReqFrame::deserialize(&buffer);
-        assert!(matches!(result, Err(PowerlinkError::BufferTooShort)));
+        // Test short buffer for header (less than 14 bytes for Eth header)
+        let buffer_short_header = [0u8; 13];
+        let result_header = crate::frame::deserialize_frame(&buffer_short_header);
+        // Correct the assertion: Expect BufferTooShort, not InvalidEthernetFrame
+        assert!(matches!(
+            result_header,
+            Err(PowerlinkError::BufferTooShort) // <-- FIX: Changed expected error
+        ));
 
-        // Test buffer that is too short for payload
+        // Test buffer that is too short for payload size indicated IN the frame
         let original_frame = PReqFrame::new(
             MacAddress([0xAA; 6]),
             MacAddress([0xBB; 6]),
@@ -231,14 +281,22 @@ mod tests {
         );
 
         let mut long_buffer = [0u8; 200];
-        original_frame.serialize(&mut long_buffer).unwrap();
+        CodecHelpers::serialize_eth_header(&original_frame.eth_header, &mut long_buffer);
+        original_frame.serialize(&mut long_buffer[14..]).unwrap();
+        // PL Header = 10, Payload = 100. Total = 110. > 46. No padding needed.
+        // Total bytes in buffer = 14 + 110 = 124.
 
-        // Slice the buffer to be long enough for the header, but not the payload.
-        let short_slice = &long_buffer[..50]; // Header=24, payload=100, total_len=124. Slice is 50.
-        let result_payload = PReqFrame::deserialize(short_slice);
+        // Slice the buffer to be long enough for the header, but not the indicated payload.
+        // Header = 14 (Eth) + 10 (PL) = 24 total. Indicated payload size = 100. Payload end = 14 + 10 + 100 = 124.
+        let short_slice = &long_buffer[..50]; // Slice is 50 bytes long. Header fits, payload doesn't.
+        let result_payload = crate::frame::deserialize_frame(short_slice); // Pass full buffer
+        // deserialize_frame will pass &short_slice[14..] (len 36) to PReqFrame::deserialize
+        // PReqFrame::deserialize will read payload_size=100 from bytes 8-9 (indices 22-23 of full slice)
+        // It will check if 36 < 10 + 100, which is true, and return BufferTooShort.
         assert!(matches!(
             result_payload,
             Err(PowerlinkError::BufferTooShort)
         ));
     }
 }
+

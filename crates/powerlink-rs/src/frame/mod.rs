@@ -33,6 +33,7 @@ pub enum PowerlinkFrame {
 
 impl PowerlinkFrame {
     /// Serializes the frame into the provided buffer.
+    /// This serializes *only* the POWERLINK frame section (after Eth header).
     pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
         match self {
             PowerlinkFrame::Soc(frame) => frame.serialize(buffer),
@@ -71,6 +72,43 @@ impl PowerlinkFrame {
             PowerlinkFrame::SoA(_) => Some(NmtEvent::SocSoAReceived),
             // PReq/PRes are part of the cycle, not NMT-level events themselves
             _ => None,
+        }
+    }
+
+    // --- Helper methods for tests and unwrapping ---
+
+    pub fn into_soc(self) -> Result<SocFrame, Self> {
+        match self {
+            PowerlinkFrame::Soc(frame) => Ok(frame),
+            _ => Err(self),
+        }
+    }
+
+    pub fn into_preq(self) -> Result<PReqFrame, Self> {
+        match self {
+            PowerlinkFrame::PReq(frame) => Ok(frame),
+            _ => Err(self),
+        }
+    }
+
+    pub fn into_pres(self) -> Result<PResFrame, Self> {
+        match self {
+            PowerlinkFrame::PRes(frame) => Ok(frame),
+            _ => Err(self),
+        }
+    }
+
+    pub fn into_soa(self) -> Result<SoAFrame, Self> {
+        match self {
+            PowerlinkFrame::SoA(frame) => Ok(frame),
+            _ => Err(self),
+        }
+    }
+
+    pub fn into_asnd(self) -> Result<ASndFrame, Self> {
+        match self {
+            PowerlinkFrame::ASnd(frame) => Ok(frame),
+            _ => Err(self),
         }
     }
 }

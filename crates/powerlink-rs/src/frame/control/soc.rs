@@ -52,16 +52,20 @@ impl SocFrame {
 }
 
 impl Codec for SocFrame {
+    /// Serializes the SoC frame into the provided buffer.
+    /// Assumes buffer starts *after* the Ethernet header.
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        const SOC_SIZE: usize = 60;
-        if buffer.len() < SOC_SIZE {
+        // Data fields up to relative_time end (index 21)
+        let pl_data_len = 22;
+        let min_eth_payload_after_header = 46; // Minimum Ethernet payload size after Eth header
+
+        if buffer.len() < pl_data_len {
             return Err(PowerlinkError::BufferTooShort);
         }
 
-        CodecHelpers::serialize_eth_header(&self.eth_header, buffer);
         CodecHelpers::serialize_pl_header(self.message_type, self.destination, self.source, buffer);
 
-        buffer[17] = 0;
+        buffer[3] = 0; // Reserved
         let mut octet4 = 0u8;
         if self.flags.mc {
             octet4 |= 1 << 7;
@@ -69,42 +73,65 @@ impl Codec for SocFrame {
         if self.flags.ps {
             octet4 |= 1 << 6;
         }
-        buffer[18] = octet4;
-        buffer[19] = 0;
-        buffer[20..24].copy_from_slice(&self.net_time.seconds.to_le_bytes());
-        buffer[24..28].copy_from_slice(&self.net_time.nanoseconds.to_le_bytes());
-        buffer[28..32].copy_from_slice(&self.relative_time.seconds.to_le_bytes());
-        buffer[32..36].copy_from_slice(&self.relative_time.nanoseconds.to_le_bytes());
+        buffer[4] = octet4;
+        buffer[5] = 0; // Reserved
+        // NetTime starts at offset 6 (relative to PL frame)
+        buffer[6..10].copy_from_slice(&self.net_time.seconds.to_le_bytes());
+        buffer[10..14].copy_from_slice(&self.net_time.nanoseconds.to_le_bytes());
+        // RelativeTime starts at offset 14
+        buffer[14..18].copy_from_slice(&self.relative_time.seconds.to_le_bytes());
+        buffer[18..22].copy_from_slice(&self.relative_time.nanoseconds.to_le_bytes());
 
-        Ok(SOC_SIZE)
+        // Per spec Table 15, data fields (incl. headers) up to octet 21 (pl_buffer[21])
+        // And reserved from 22..45. Total PL frame section = 46 bytes.
+        let pl_frame_len = pl_data_len.max(min_eth_payload_after_header); // Use derived length
+
+        // Apply padding
+        if buffer.len() < pl_frame_len {
+             return Err(PowerlinkError::BufferTooShort);
+        }
+        buffer[pl_data_len..pl_frame_len].fill(0); // Pad with zeros
+
+        Ok(pl_frame_len)
     }
 
-    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        if buffer.len() < 60 {
+    /// Deserializes an SoC frame from the provided buffer.
+    /// Assumes buffer starts *after* the Ethernet header.
+    fn deserialize(eth_header: EthernetHeader, buffer: &[u8]) -> Result<Self, PowerlinkError> {
+        // Minimum data length for SoC fields (up to end of relative_time)
+        let pl_data_len = 22;
+        if buffer.len() < pl_data_len {
             return Err(PowerlinkError::BufferTooShort);
         }
 
-        let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
         let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
 
-        let octet4 = buffer[18];
+        if message_type != MessageType::SoC {
+            return Err(PowerlinkError::InvalidPlFrame);
+        }
+
+        let octet4 = buffer[4];
         let flags = SocFlags {
             mc: (octet4 & (1 << 7)) != 0,
             ps: (octet4 & (1 << 6)) != 0,
         };
 
+        // NetTime starts at offset 6
+        // Map TryFromSliceError to BufferTooShort
         let net_time = NetTime {
-            seconds: u32::from_le_bytes(buffer[20..24].try_into()?),
-            nanoseconds: u32::from_le_bytes(buffer[24..28].try_into()?),
+            seconds: u32::from_le_bytes(buffer[6..10].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
+            nanoseconds: u32::from_le_bytes(buffer[10..14].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
         };
 
+        // RelativeTime starts at offset 14
+        // Map TryFromSliceError to BufferTooShort
         let relative_time = RelativeTime {
-            seconds: u32::from_le_bytes(buffer[28..32].try_into()?),
-            nanoseconds: u32::from_le_bytes(buffer[32..36].try_into()?),
+            seconds: u32::from_le_bytes(buffer[14..18].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
+            nanoseconds: u32::from_le_bytes(buffer[18..22].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
         };
 
         Ok(Self {
-            eth_header,
+            eth_header, // Use the passed-in header
             message_type,
             destination,
             source,
@@ -119,6 +146,7 @@ impl Codec for SocFrame {
 mod tests {
     use super::*;
     use crate::types::C_DLL_MULTICAST_SOC;
+    use crate::frame::codec::CodecHelpers; // Import for test setup
 
     #[test]
     fn test_socframe_new_constructor() {
@@ -163,21 +191,34 @@ mod tests {
         };
         let original_frame = SocFrame::new(source_mac, flags, net_time, relative_time);
 
-        let mut buffer = [0u8; 128];
-        let bytes_written = original_frame.serialize(&mut buffer).unwrap();
+        let mut buffer = [0u8; 128]; // Full Ethernet frame buffer
+        // 1. Serialize Eth header
+        CodecHelpers::serialize_eth_header(&original_frame.eth_header, &mut buffer);
+        // 2. Serialize PL frame part
+        let pl_bytes_written = original_frame.serialize(&mut buffer[14..]).unwrap();
 
-        // Ensure some bytes were written and it's at least the minimum frame size.
-        assert!(bytes_written >= 60);
+        // SoC PL frame section is always 46 bytes (padded)
+        assert_eq!(pl_bytes_written, 46);
+        let total_frame_len = 14 + pl_bytes_written;
 
-        let deserialized_frame = SocFrame::deserialize(&buffer[..bytes_written]).unwrap();
+        // 3. Deserialize full frame
+        // Use the new helper method on PowerlinkFrame
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len])
+            .unwrap()
+            .into_soc() // Use helper
+            .unwrap();
 
         assert_eq!(original_frame, deserialized_frame);
     }
 
     #[test]
     fn test_soc_deserialize_short_buffer() {
-        let buffer = [0u8; 59]; // One byte too short
-        let result = SocFrame::deserialize(&buffer);
+        // Test buffer just short enough to fail the last try_into() for relative_time.nanoseconds
+        let eth_header = EthernetHeader::new(MacAddress([0; 6]), MacAddress([0; 6]));
+        let short_buffer = [0u8; 21]; // Needs 22 bytes for PL part
+
+        let result = SocFrame::deserialize(eth_header, &short_buffer);
+        // Line 221 in the original file corresponds to this assertion
         assert!(matches!(result, Err(PowerlinkError::BufferTooShort)));
     }
 }

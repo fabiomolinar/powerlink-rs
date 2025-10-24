@@ -1,5 +1,5 @@
 use crate::PowerlinkError;
-use crate::frame::Codec;
+// use crate::frame::Codec; // No longer implements Codec
 use crate::sdo::command::{CommandId, Segmentation};
 use alloc::vec::Vec;
 
@@ -11,8 +11,9 @@ pub struct PdoSequenceLayerHeader {
     pub connection_state: u8, // 0-3
 }
 
-impl Codec for PdoSequenceLayerHeader {
-    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+// This is a payload codec, not a frame codec.
+impl PdoSequenceLayerHeader {
+    pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
         if buffer.is_empty() {
             return Err(PowerlinkError::BufferTooShort);
         }
@@ -20,7 +21,7 @@ impl Codec for PdoSequenceLayerHeader {
         Ok(1)
     }
 
-    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
+    pub fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
         if buffer.is_empty() {
             return Err(PowerlinkError::BufferTooShort);
         }
@@ -67,6 +68,7 @@ mod tests {
         // Expected: (10 << 2) | 2 = 40 | 2 = 42 = 0x2A
         assert_eq!(buffer[0], 0x2A);
 
+        // Call the inherent method
         let deserialized = PdoSequenceLayerHeader::deserialize(&buffer).unwrap();
         assert_eq!(original, deserialized);
     }

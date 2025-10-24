@@ -1,5 +1,3 @@
-// In frame/codec.rs
-
 use crate::PowerlinkError;
 use crate::frame::{
     ASndFrame, EthernetHeader, PReqFrame, PResFrame, PowerlinkFrame, SoAFrame, SocFrame,
@@ -11,85 +9,105 @@ use log::debug;
 /// A trait for objects that can be serialized into and deserialized from a byte buffer.
 pub trait Codec: Sized {
     /// Serializes the object into the provided buffer.
+    /// Assumes buffer starts *after* the Ethernet header (i.e., at the MessageType field).
+    /// Returns the number of bytes written to the buffer for the POWERLINK section,
+    /// including necessary padding for minimum Ethernet frame size.
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError>;
 
     /// Deserializes an object from the provided buffer.
-    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError>;
+    /// Assumes the buffer starts *after* the Ethernet header.
+    /// The eth_header is passed in separately, as it was parsed by the caller.
+    fn deserialize(eth_header: EthernetHeader, buffer: &[u8]) -> Result<Self, PowerlinkError>;
 }
 
 /// Contains helper functions for common serialization/deserialization tasks.
-pub(super) struct CodecHelpers;
+pub struct CodecHelpers;
 impl CodecHelpers {
-    /// Serializes the 14-byte Ethernet header.
-    pub(super) fn serialize_eth_header(header: &EthernetHeader, buffer: &mut [u8]) {
-        buffer[0..6].copy_from_slice(&header.destination_mac.0);
-        buffer[6..12].copy_from_slice(&header.source_mac.0);
-        buffer[12..14].copy_from_slice(&header.ether_type.to_be_bytes());
+    /// Serializes the 14-byte Ethernet header into the start of a buffer.
+    pub fn serialize_eth_header(header: &EthernetHeader, buffer: &mut [u8]) {
+        if buffer.len() >= 14 {
+            buffer[0..6].copy_from_slice(&header.destination_mac.0);
+            buffer[6..12].copy_from_slice(&header.source_mac.0);
+            buffer[12..14].copy_from_slice(&header.ether_type.to_be_bytes());
+        }
     }
 
     /// Serializes the common POWERLINK header fields (MessageType, Dest, Src).
-    pub(super) fn serialize_pl_header(
+    /// Assumes buffer starts *at* the POWERLINK frame section (after Eth header).
+    pub fn serialize_pl_header(
         message_type: MessageType,
         destination: NodeId,
         source: NodeId,
         buffer: &mut [u8],
     ) {
-        buffer[14] = message_type as u8;
-        buffer[15] = destination.0;
-        buffer[16] = source.0;
+        if buffer.len() >= 3 {
+            buffer[0] = message_type as u8; // Message type at index 0
+            buffer[1] = destination.0;    // Dest Node ID at index 1
+            buffer[2] = source.0;         // Src Node ID at index 2
+        }
     }
 
-    /// Deserializes the 14-byte Ethernet header.
-    pub(super) fn deserialize_eth_header(buffer: &[u8]) -> Result<EthernetHeader, PowerlinkError> {
+    /// Deserializes the 14-byte Ethernet header from the start of a buffer.
+    /// Returns BufferTooShort if the buffer is too small for any header field.
+    pub fn deserialize_eth_header(buffer: &[u8]) -> Result<EthernetHeader, PowerlinkError> {
         if buffer.len() < 14 {
-            return Err(PowerlinkError::InvalidEthernetFrame);
+            return Err(PowerlinkError::BufferTooShort);
         }
+        // Map TryFromSliceError to BufferTooShort for robustness
         Ok(EthernetHeader {
-            destination_mac: MacAddress(buffer[0..6].try_into()?),
-            source_mac: MacAddress(buffer[6..12].try_into()?),
-            ether_type: u16::from_be_bytes(buffer[12..14].try_into()?),
+            destination_mac: MacAddress(buffer[0..6].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
+            source_mac: MacAddress(buffer[6..12].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
+            ether_type: u16::from_be_bytes(buffer[12..14].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
         })
     }
 
+
     /// Deserializes the common POWERLINK header fields (MessageType, Dest, Src).
-    pub(super) fn deserialize_pl_header(
+    /// Assumes buffer starts *at* the POWERLINK frame section (after Eth header).
+    pub fn deserialize_pl_header(
         buffer: &[u8],
     ) -> Result<(MessageType, NodeId, NodeId), PowerlinkError> {
-        if buffer.len() < 17 {
-            return Err(PowerlinkError::InvalidPlFrame);
+        if buffer.len() < 3 { // Need minimum 3 bytes for MType, Dest, Src
+            return Err(PowerlinkError::BufferTooShort);
         }
-        let message_type = MessageType::try_from(buffer[14] & 0x7F)?;
-        let destination = NodeId(buffer[15]);
-        let source = NodeId(buffer[16]);
+        // Message type is in the lower 7 bits of the 1st byte (index 0)
+        let message_type = MessageType::try_from(buffer[0] & 0x7F)?;
+        let destination = NodeId(buffer[1]);
+        let source = NodeId(buffer[2]);
         Ok((message_type, destination, source))
     }
 }
 
-/// Parses a raw byte buffer and returns the corresponding `PowerlinkFrame` enum.
+/// Parses a raw byte buffer (including Ethernet header) and returns the corresponding `PowerlinkFrame`.
 pub fn deserialize_frame(buffer: &[u8]) -> Result<PowerlinkFrame, PowerlinkError> {
-    // A valid POWERLINK frame must have at least an Ethernet header (14 bytes)
-    // and a message type field (1 byte).
-    if buffer.len() < 15 {
-        return Err(PowerlinkError::InvalidPlFrame);
-    }
-
-    // Check if it's a POWERLINK frame by looking at the EtherType.
+    // 1. Deserialize Ethernet Header (checks for min length 14)
     let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
+
+    // 2. Check EtherType
     if !eth_header.is_powerlink() {
-        // This is a valid Ethernet frame, but not for us.
         return Err(PowerlinkError::InvalidEthernetFrame);
     }
 
-    // The message type is in the lower 7 bits of the 15th byte (index 14).
-    let message_type_byte = buffer[14] & 0x7F;
+    // 3. Get POWERLINK frame section (everything after the Eth header)
+    let pl_buffer = &buffer[14..];
 
+    // 4. Check for minimum PL frame size (at least MessageType byte)
+    //    CodecHelpers::deserialize_pl_header will check for len < 3 later if needed.
+    if pl_buffer.is_empty() {
+        return Err(PowerlinkError::InvalidPlFrame); // Specifically PL frame invalid
+    }
+
+    // 5. Get MessageType
+    let message_type_byte = pl_buffer[0] & 0x7F;
+
+    // 6. Call the appropriate frame-specific deserialize method
     let result = match MessageType::try_from(message_type_byte) {
-        Ok(MessageType::SoC) => SocFrame::deserialize(buffer).map(PowerlinkFrame::Soc),
-        Ok(MessageType::PReq) => PReqFrame::deserialize(buffer).map(PowerlinkFrame::PReq),
-        Ok(MessageType::PRes) => PResFrame::deserialize(buffer).map(PowerlinkFrame::PRes),
-        Ok(MessageType::SoA) => SoAFrame::deserialize(buffer).map(PowerlinkFrame::SoA),
-        Ok(MessageType::ASnd) => ASndFrame::deserialize(buffer).map(PowerlinkFrame::ASnd),
-        Err(_) => Err(PowerlinkError::InvalidPlFrame),
+        Ok(MessageType::SoC) => SocFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::Soc),
+        Ok(MessageType::PReq) => PReqFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::PReq),
+        Ok(MessageType::PRes) => PResFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::PRes),
+        Ok(MessageType::SoA) => SoAFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::SoA),
+        Ok(MessageType::ASnd) => ASndFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::ASnd),
+        Err(_) => Err(PowerlinkError::InvalidMessageType(message_type_byte)),
     };
 
     if let Ok(frame) = &result {

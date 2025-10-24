@@ -1,7 +1,4 @@
-// In crates/powerlink-rs/src/sdo/sequence.rs
-
 use crate::PowerlinkError;
-use crate::frame::Codec;
 
 /// Defines the connection state for the SDO Sequence Layer.
 ///
@@ -76,8 +73,9 @@ pub struct SequenceLayerHeader {
     pub send_con: SendConnState,       // scon
 }
 
-impl Codec for SequenceLayerHeader {
-    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+// This is a payload codec, not a frame codec.
+impl SequenceLayerHeader {
+    pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
         const HEADER_SIZE: usize = 4;
         if buffer.len() < HEADER_SIZE {
             return Err(PowerlinkError::BufferTooShort);
@@ -93,7 +91,7 @@ impl Codec for SequenceLayerHeader {
         Ok(HEADER_SIZE)
     }
 
-    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
+    pub fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
         const HEADER_SIZE: usize = 4;
         if buffer.len() < HEADER_SIZE {
             return Err(PowerlinkError::BufferTooShort);
@@ -133,6 +131,7 @@ mod tests {
         // Byte 1: ssnr(15=0x0F)<<2 | scon(3) = 0x3C | 0x03 = 0x3F
         assert_eq!(buffer, [0xAA, 0x3F, 0x00, 0x00]);
 
+        // Call the inherent method
         let deserialized_header = SequenceLayerHeader::deserialize(&buffer).unwrap();
         assert_eq!(original_header, deserialized_header);
     }

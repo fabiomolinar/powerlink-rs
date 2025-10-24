@@ -1,6 +1,5 @@
 // crates/powerlink-rs/src/sdo/command/base.rs
 use crate::PowerlinkError;
-use crate::frame::Codec;
 use crate::types::{UNSIGNED8, UNSIGNED16, UNSIGNED32};
 use alloc::vec::Vec;
 
@@ -97,8 +96,11 @@ pub struct SdoCommand {
     pub payload: Vec<u8>,
 }
 
-impl Codec for SdoCommand {
-    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+// SdoCommand is a payload, not a full frame. It does not implement Codec.
+impl SdoCommand {
+    /// Serializes the SDO command into the provided buffer.
+    /// Returns the number of bytes written.
+    pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
         let mut offset = 0;
         if buffer.len() < 8 {
             return Err(PowerlinkError::BufferTooShort);
@@ -144,7 +146,8 @@ impl Codec for SdoCommand {
         Ok(offset)
     }
 
-    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
+    /// Deserializes an SDO command from the provided buffer.
+    pub fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
         if buffer.len() < 8 {
             return Err(PowerlinkError::BufferTooShort);
         }
@@ -207,6 +210,7 @@ mod tests {
 
         let mut buffer = [0u8; 64];
         let bytes_written = original.serialize(&mut buffer).unwrap();
+        // Call the inherent method, not a trait method
         let deserialized = SdoCommand::deserialize(&buffer[..bytes_written]).unwrap();
 
         assert_eq!(original, deserialized);
@@ -229,6 +233,7 @@ mod tests {
 
         let mut buffer = [0u8; 64];
         let bytes_written = original.serialize(&mut buffer).unwrap();
+        // Call the inherent method
         let deserialized = SdoCommand::deserialize(&buffer[..bytes_written]).unwrap();
 
         assert_eq!(original, deserialized);

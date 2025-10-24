@@ -1,6 +1,5 @@
-// crates/powerlink-rs/src/node/mn/mod.rs
-
 mod main;
+mod payload;
 mod scheduler;
 
 pub use main::ManagingNode;

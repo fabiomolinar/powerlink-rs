@@ -6,9 +6,12 @@ use crate::frame::{
     ASndFrame, Codec, DllCsEvent, DllCsStateMachine, DllError, NmtAction, PReqFrame, PResFrame,
     PowerlinkFrame, RequestedServiceId, ServiceId,
     basic::MacAddress,
+    // deserialize_frame is now only used in process_raw_frame
     deserialize_frame,
     error::{CnErrorCounters, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler},
 };
+// Import the trait for SDO payload (de)serialization
+use crate::frame::codec::CodecHelpers;
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtEvent;
 use crate::nmt::state_machine::NmtStateMachine;
@@ -16,6 +19,9 @@ use crate::nmt::states::NmtState;
 use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::ObjectDictionary;
 use crate::sdo::SdoServer;
+// SdoCommand and Headers are needed for SDO logic
+use crate::sdo::command::SdoCommand;
+use crate::sdo::sequence::SequenceLayerHeader;
 use crate::types::NodeId;
 use alloc::vec;
 use log::{debug, error, info, trace, warn};
@@ -91,20 +97,20 @@ impl<'s> ControlledNode<'s> {
                 // Extract SDO Headers first to get Transaction ID for potential abort
                 let transaction_id = if asnd_frame.payload.len() >= 4 {
                     // Seq header
-                    crate::sdo::sequence::SequenceLayerHeader::deserialize(
-                        &asnd_frame.payload[0..4],
-                    )
-                    .ok() // Ignore deserialization errors here, let SDO server handle payload
-                    .and_then(|_seq_header| {
-                        if asnd_frame.payload.len() >= 8 {
-                            // Cmd header
-                            crate::sdo::command::SdoCommand::deserialize(&asnd_frame.payload[4..])
-                                .ok()
-                                .map(|cmd| cmd.header.transaction_id)
-                        } else {
-                            None
-                        }
-                    })
+                    // SDO payloads implement PayloadCodec, not Codec.
+                    // We must provide a dummy Eth header for the call.
+                    SequenceLayerHeader::deserialize(&asnd_frame.payload[0..4])
+                        .ok() // Ignore deserialization errors here, let SDO server handle payload
+                        .and_then(|_seq_header| {
+                            if asnd_frame.payload.len() >= 8 {
+                                // Cmd header
+                                SdoCommand::deserialize(&asnd_frame.payload[4..])
+                                    .ok()
+                                    .map(|cmd| cmd.header.transaction_id)
+                            } else {
+                                None
+                            }
+                        })
                 } else {
                     None
                 };
@@ -124,8 +130,12 @@ impl<'s> ControlledNode<'s> {
                             response_payload,
                         );
                         let mut buf = vec![0u8; 1500];
-                        if let Ok(size) = response_asnd.serialize(&mut buf) {
-                            buf.truncate(size);
+                        // Serialize Eth header first
+                        CodecHelpers::serialize_eth_header(&response_asnd.eth_header, &mut buf);
+                        // Then serialize PL part
+                        if let Ok(pl_size) = response_asnd.serialize(&mut buf[14..]) {
+                            let total_size = 14 + pl_size;
+                            buf.truncate(total_size);
                             info!("Sending SDO response.");
                             trace!("SDO response payload: {:?}", &buf);
                             return NodeAction::SendFrame(buf);
@@ -241,7 +251,7 @@ impl<'s> ControlledNode<'s> {
                     _ => None,
                 }
             }
-            PowerlinkFrame::PReq(_) => {
+            PowerlinkFrame::PReq(_) => { // Added preq_frame binding
                 match self.nmt_state() {
                     // A CN only responds to PReq when in isochronous states.
                     NmtState::NmtPreOperational2
@@ -250,7 +260,7 @@ impl<'s> ControlledNode<'s> {
                         self.mac_address,
                         self.nmt_state_machine.node_id,
                         self.nmt_state(),
-                        &self.od,
+                        &mut self.od, // Pass mutable OD for TPDO payload builder
                     )),
                     _ => None,
                 }
@@ -260,10 +270,22 @@ impl<'s> ControlledNode<'s> {
 
         if let Some(response) = response_frame {
             let mut buf = vec![0u8; 1500];
-            if let Ok(size) = response.serialize(&mut buf) {
-                buf.truncate(size);
+            // Serialize Eth header first
+            let eth_header = match &response {
+                PowerlinkFrame::PRes(f) => f.eth_header,
+                PowerlinkFrame::ASnd(f) => f.eth_header,
+                _ => { // Should only be PRes or ASnd
+                    error!("Generated unexpected response frame type");
+                    return NodeAction::NoAction;
+                }
+            };
+            CodecHelpers::serialize_eth_header(&eth_header, &mut buf);
+            // Then serialize PL part
+            if let Ok(pl_size) = response.serialize(&mut buf[14..]) {
+                let total_size = 14 + pl_size;
+                buf.truncate(total_size);
                 info!("Sending response frame: {:?}", response);
-                trace!("Sending frame bytes ({}): {:?}", size, &buf);
+                trace!("Sending frame bytes ({}): {:?}", total_size, &buf);
                 return NodeAction::SendFrame(buf);
             } else {
                 error!("Failed to serialize response frame: {:?}", response);
@@ -311,7 +333,7 @@ impl<'s> Node for ControlledNode<'s> {
     fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
         // First, check if we are in BasicEthernet and if this is a POWERLINK frame
         if self.nmt_state() == NmtState::NmtBasicEthernet
-            && buffer.len() > 14
+            && buffer.len() >= 14 // Check length before slicing
             && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
         {
             info!(
@@ -333,7 +355,7 @@ impl<'s> Node for ControlledNode<'s> {
             Err(e) => {
                 // This looked like a POWERLINK frame (correct EtherType) but was malformed.
                 // This is an error condition.
-                warn!("[CN] Could not deserialize frame: {:?}", e);
+                warn!("[CN] Could not deserialize frame: {:?} (Buffer: {:?})", e, buffer);
                 if self.dll_error_manager.handle_error(DllError::InvalidFormat) != NmtAction::None {
                     self.nmt_state_machine
                         .process_event(NmtEvent::Error, &mut self.od);
@@ -345,7 +367,8 @@ impl<'s> Node for ControlledNode<'s> {
 
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
         let current_nmt_state = self.nmt_state();
-        let mut deadline_passed = self.next_tick_us.is_some_and(|d| current_time_us >= d);
+        let deadline = self.next_tick_us.unwrap_or(0);
+        let deadline_passed = current_time_us >= deadline;
 
         // Special case for NmtNotActive: the first time tick is called, start the timer.
         if current_nmt_state == NmtState::NmtNotActive && self.next_tick_us.is_none() {
@@ -354,7 +377,7 @@ impl<'s> Node for ControlledNode<'s> {
                 debug!("No SoC seen, starting BasicEthernet timeout check.");
                 self.next_tick_us = Some(current_time_us + timeout_us);
             }
-            deadline_passed = false; // Don't act on this first call, just set the timer.
+            return NodeAction::NoAction; // Don't act on this first call, just set the timer.
         }
 
         if !deadline_passed {

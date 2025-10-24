@@ -35,7 +35,8 @@ impl TryFrom<u8> for RequestedServiceId {
             0x02 => Ok(Self::StatusRequest),
             0x03 => Ok(Self::NmtRequestInvite),
             0xFF => Ok(Self::UnspecifiedInvite),
-            _ => Err(PowerlinkError::InvalidServiceId(value)),
+            // Updated error type to match definition
+            _ => Err(PowerlinkError::InvalidRequestedServiceId(value)),
         }
     }
 }
@@ -90,16 +91,19 @@ impl SoAFrame {
 }
 
 impl Codec for SoAFrame {
+    /// Serializes the SoA frame into the provided buffer.
+    /// Assumes buffer starts *after* the Ethernet header.
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        const SOA_SIZE: usize = 60;
-        if buffer.len() < SOA_SIZE {
+        let pl_data_len = 9; // Data fields up to epl_version (offset 8)
+        let min_eth_payload_after_header = 46; // Minimum Ethernet payload size after Eth header
+
+        if buffer.len() < pl_data_len {
             return Err(PowerlinkError::BufferTooShort);
         }
 
-        CodecHelpers::serialize_eth_header(&self.eth_header, buffer);
         CodecHelpers::serialize_pl_header(self.message_type, self.destination, self.source, buffer);
 
-        buffer[17] = self.nmt_state as u8;
+        buffer[3] = self.nmt_state as u8;
         let mut octet4 = 0u8;
         if self.flags.ea {
             octet4 |= 1 << 2;
@@ -107,35 +111,52 @@ impl Codec for SoAFrame {
         if self.flags.er {
             octet4 |= 1 << 1;
         }
-        buffer[18] = octet4;
-        buffer[19] = 0;
-        buffer[20] = self.req_service_id as u8;
-        buffer[21] = self.target_node_id.0;
-        buffer[22] = self.epl_version.0;
-        Ok(SOA_SIZE)
+        buffer[4] = octet4;
+        buffer[5] = 0; // Reserved
+        buffer[6] = self.req_service_id as u8;
+        buffer[7] = self.target_node_id.0;
+        buffer[8] = self.epl_version.0;
+
+        // Per spec Table 21, data fields (incl. headers) up to octet 8 (pl_buffer[8])
+        // And reserved from 9..45. Total PL frame section = 46 bytes.
+        let pl_frame_len = pl_data_len.max(min_eth_payload_after_header); // Use derived length
+
+        // Apply padding
+        if buffer.len() < pl_frame_len {
+             return Err(PowerlinkError::BufferTooShort);
+        }
+        buffer[pl_data_len..pl_frame_len].fill(0); // Pad with zeros
+
+        Ok(pl_frame_len)
     }
 
-    fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        if buffer.len() < 60 {
+    /// Deserializes an SoA frame from the provided buffer.
+    /// Assumes buffer starts *after* the Ethernet header.
+    fn deserialize(eth_header: EthernetHeader, buffer: &[u8]) -> Result<Self, PowerlinkError> {
+        let pl_data_len = 9; // Minimum data length for SoA
+        if buffer.len() < pl_data_len {
             return Err(PowerlinkError::BufferTooShort);
         }
 
-        let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
         let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
-        let nmt_state = NmtState::try_from(buffer[17])?;
 
-        let octet4 = buffer[18];
+        if message_type != MessageType::SoA {
+            return Err(PowerlinkError::InvalidPlFrame);
+        }
+
+        let nmt_state = NmtState::try_from(buffer[3])?;
+        let octet4 = buffer[4];
         let flags = SoAFlags {
             ea: (octet4 & (1 << 2)) != 0,
             er: (octet4 & (1 << 1)) != 0,
         };
 
-        let req_service_id = RequestedServiceId::try_from(buffer[20])?;
-        let target_node_id = NodeId(buffer[21]);
-        let epl_version = EPLVersion(buffer[22]);
+        let req_service_id = RequestedServiceId::try_from(buffer[6])?;
+        let target_node_id = NodeId(buffer[7]);
+        let epl_version = EPLVersion(buffer[8]);
 
         Ok(Self {
-            eth_header,
+            eth_header, // Use passed-in header
             message_type,
             destination,
             source,
@@ -152,6 +173,7 @@ impl Codec for SoAFrame {
 mod tests {
     use super::*;
     use crate::types::C_DLL_MULTICAST_SOA;
+    use crate::frame::codec::CodecHelpers; // Import for test setup
 
     #[test]
     fn test_soaframe_new_constructor() {
@@ -193,19 +215,33 @@ mod tests {
             EPLVersion(1),
         );
 
-        let mut buffer = [0u8; 128];
-        let bytes_written = original_frame.serialize(&mut buffer).unwrap();
-        assert!(bytes_written >= 60);
+        let mut buffer = [0u8; 128]; // Full Ethernet frame buffer
+        // 1. Serialize Eth header
+        CodecHelpers::serialize_eth_header(&original_frame.eth_header, &mut buffer);
+        // 2. Serialize PL frame part
+        let pl_bytes_written = original_frame.serialize(&mut buffer[14..]).unwrap();
 
-        let deserialized_frame = SoAFrame::deserialize(&buffer[..bytes_written]).unwrap();
+        // SoA PL frame section is always 46 bytes (padded)
+        assert_eq!(pl_bytes_written, 46);
+        let total_frame_len = 14 + pl_bytes_written;
+
+        // 3. Deserialize full frame
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len])
+            .unwrap()
+            .into_soa() // Use helper
+            .unwrap();
 
         assert_eq!(original_frame, deserialized_frame);
     }
 
     #[test]
     fn test_soa_deserialize_short_buffer() {
-        let buffer = [0u8; 59]; // One byte too short
-        let result = SoAFrame::deserialize(&buffer);
+        // Test with buffer just short enough for the header but nothing else
+        let eth_header = EthernetHeader::new(MacAddress([0; 6]), MacAddress([0; 6]));
+        let short_buffer = [0u8; 8]; // Needs 9 bytes for PL part
+
+        let result = SoAFrame::deserialize(eth_header, &short_buffer);
+        // Line 245 in the original file corresponds to this assertion
         assert!(matches!(result, Err(PowerlinkError::BufferTooShort)));
     }
 }
