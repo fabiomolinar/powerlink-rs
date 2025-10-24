@@ -1,12 +1,11 @@
 // crates/powerlink-rs/src/node/mn/payload.rs
-// Modified payload builders: Added multiplex flags (MC in SoC, MS in PReq), priority queue handling in SoA, NMT command builder. Removed unused imports.
+// Refined PDO payload building: Added check against payload limit, improved error logging.
 //! Contains functions for building frames sent by the Managing Node.
 
-use crate::frame::basic::MacAddress;
 use crate::node::Node; // Import Node trait for nmt_state()
-use super::main::ManagingNode; // Removed AsyncRequest
+use super::main::ManagingNode;
 use crate::common::{NetTime, RelativeTime};
-// use crate::frame::basic::MacAddress; // Unused import
+use crate::frame::basic::MacAddress; // Import needed for build_nmt_command_frame
 use crate::frame::control::{SoAFlags, SocFlags};
 use crate::frame::poll::PReqFlags; // Import directly
 // Added ASndFrame and ServiceId for NMT commands
@@ -17,7 +16,7 @@ use crate::node::NodeAction;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 // Added needed constants
-use crate::types::{EPLVersion, NodeId, C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_ASND};
+use crate::types::{EPLVersion, NodeId, C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID}; // Added C_ADR_BROADCAST_NODE_ID
 use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -178,70 +177,76 @@ pub(super) fn build_tpdo_payload(
         od.read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_VERSION)
             .unwrap_or(0),
     );
+
+    // Get Payload Limit from 0x1F8B/NodeID (NMT_MNPReqPayloadLimitList_AU16)
     let payload_limit = od
         .read_u16(OD_IDX_MN_PREQ_PAYLOAD_LIMIT_LIST, target_node_id)
-        .unwrap_or(36) as usize; // Default to minimum allowed? Check spec. 36 seems reasonable minimum.
+        .unwrap_or(36) as usize; // Default to 36 if not found
 
-    let mut payload = vec![0u8; payload_limit.min(1490)];
-    let mut max_offset_len = 0;
+    // Clamp payload_limit to absolute maximum
+    let payload_limit = payload_limit.min(crate::types::C_DLL_ISOCHR_MAX_PAYL as usize);
+
+    // Pre-allocate buffer based on the limit
+    let mut payload = vec![0u8; payload_limit];
+    let mut max_offset_len = 0; // Track the actual highest byte written
 
     // Read mapping entries from 0x1Axx
     if let Some(mapping_cow) = od.read(mapping_index, 0) {
         if let ObjectValue::Unsigned8(num_entries) = *mapping_cow {
             for i in 1..=num_entries {
                 let Some(entry_cow) = od.read(mapping_index, i) else {
-                    warn!("Could not read mapping entry {} for TPDO channel {}", i, channel_index);
-                    continue;
+                    warn!("[MN] Could not read mapping entry {} for TPDO channel {}", i, channel_index);
+                    continue; // Skip this entry
                 };
                 let ObjectValue::Unsigned64(raw_mapping) = *entry_cow else {
-                    warn!("Mapping entry {} for TPDO channel {} is not U64", i, channel_index);
-                    continue;
+                    warn!("[MN] Mapping entry {} for TPDO channel {} is not U64", i, channel_index);
+                    continue; // Skip this entry
                 };
+
                 let entry = PdoMappingEntry::from_u64(raw_mapping);
 
-                let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length())
-                else {
+                // Assuming byte alignment for now
+                let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
                     warn!(
-                        "Bit-level TPDO mapping not supported for PReq 0x{:04X}/{}",
+                        "[MN] Bit-level TPDO mapping not supported for PReq 0x{:04X}/{}",
                         entry.index, entry.sub_index
                     );
-                    continue;
+                    continue; // Skip this entry
                 };
 
                 let end_pos = offset + length;
-                if end_pos > payload.len() {
-                    warn!(
-                        "TPDO mapping for PReq 0x{:04X}/{} exceeds PReq payload limit {}. Required: {} bytes.",
-                        entry.index, entry.sub_index, payload.len(), end_pos
+
+                // Check if mapping exceeds the payload limit defined in 0x1F8B/NodeID
+                if end_pos > payload_limit {
+                    error!(
+                        "[MN] TPDO mapping for PReq 0x{:04X}/{} (offset {}, len {}) exceeds PReq payload limit {} bytes for Node {}. Mapping invalid.",
+                        entry.index, entry.sub_index, offset, length, payload_limit, target_node_id
                     );
-                    return Err(PowerlinkError::ValidationError(
-                        "PDO mapping exceeds payload limit",
-                    ));
+                    // Return error according to spec 6.4.8.2 (E_PDO_MAP_OVERRUN)
+                    return Err(PowerlinkError::ValidationError("PDO mapping exceeds PReq payload limit"));
                 }
                 max_offset_len = max_offset_len.max(end_pos);
 
                 // Read value from OD to put into PReq payload
                 let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
                     warn!(
-                        "TPDO mapping for PReq 0x{:04X}/{} failed: OD entry not found.",
+                        "[MN] TPDO mapping for PReq 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
                         entry.index, entry.sub_index
                     );
+                    // Write zeros to the payload for this entry as per OD read failure
                     payload[offset..end_pos].fill(0);
-                    continue;
+                    continue; // Continue with next mapping entry
                 };
 
+                // Serialize and copy to payload buffer
                 let serialized_data = value_cow.serialize();
                 if serialized_data.len() != length {
                     warn!(
-                        "TPDO mapping for PReq 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes.",
-                        entry.index,
-                        entry.sub_index,
-                        length,
-                        serialized_data.len()
+                        "[MN] TPDO mapping for PReq 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes. Truncating/Padding.",
+                        entry.index, entry.sub_index, length, serialized_data.len()
                     );
                     let copy_len = serialized_data.len().min(length);
-                    payload[offset..offset + copy_len]
-                        .copy_from_slice(&serialized_data[..copy_len]);
+                    payload[offset..offset + copy_len].copy_from_slice(&serialized_data[..copy_len]);
                     // Zero out remaining bytes if object was shorter than mapping
                     if length > copy_len {
                          payload[offset + copy_len .. end_pos].fill(0);
@@ -250,16 +255,20 @@ pub(super) fn build_tpdo_payload(
                     payload[offset..end_pos].copy_from_slice(&serialized_data);
                 }
                 trace!(
-                    "Applied TPDO to PReq: Read {:?} from 0x{:04X}/{}",
+                    "[MN] Applied TPDO to PReq: Read {:?} from 0x{:04X}/{}",
                     value_cow, entry.index, entry.sub_index
                 );
             }
         } else {
-             trace!("TPDO Mapping object {:#06X} not found or sub-index 0 invalid.", mapping_index);
+             trace!("[MN] TPDO Mapping object {:#06X} not found or sub-index 0 invalid.", mapping_index);
         }
+    } else {
+         trace!("[MN] TPDO Mapping object {:#06X} not found.", mapping_index);
     }
 
+    // Truncate payload to the actual size needed based on mapping
     payload.truncate(max_offset_len);
+    trace!("[MN] Built PReq payload with actual size: {}", payload.len());
     Ok((payload, pdo_version))
 }
 
@@ -368,14 +377,15 @@ pub(super) fn build_nmt_command_frame(node: &ManagingNode, command: NmtCommand, 
         "[MN] Building ASnd(NMT Command={:?}) for Node {}",
         command, target_node_id.0
     );
-    // Fetch target MAC address
-     let mac_addr = node.get_cn_mac_address(target_node_id);
-    // Handle broadcast case
-    let dest_mac = if target_node_id.0 == C_ADR_BROADCAST_NODE_ID {
+
+    let is_broadcast = target_node_id.0 == C_ADR_BROADCAST_NODE_ID;
+
+    // Fetch target MAC address or use multicast for broadcast
+    let dest_mac = if is_broadcast {
          // Use the ASnd multicast MAC for broadcast NMT commands
-         MacAddress(C_DLL_MULTICAST_ASND)
+         MacAddress(crate::types::C_DLL_MULTICAST_ASND)
     } else {
-         let Some(mac) = mac_addr else {
+         let Some(mac) = node.get_cn_mac_address(target_node_id) else {
              error!(
                  "[MN] Cannot build NMT Command: MAC address for Node {} not found.",
                  target_node_id.0
