@@ -44,7 +44,7 @@ pub(super) enum CnState {
 
 /// Represents a complete POWERLINK Managing Node (MN).
 pub struct ManagingNode<'s> {
-    pub(super) od: ObjectDictionary<'s>,
+    pub od: ObjectDictionary<'s>,
     pub(super) nmt_state_machine: MnNmtStateMachine,
     dll_state_machine: DllMsStateMachine,
     dll_error_manager: DllErrorManager<MnErrorCounters, LoggingErrorHandler>,

@@ -1,0 +1,46 @@
+services:
+  cn_io_module:
+    container_name: powerlink-cn-io
+    build:
+      context: ../../../.. # Workspace root
+      dockerfile: ./crates/powerlink-io-linux/examples/io_module_resources/Dockerfile
+    environment:
+      POWERLINK_ROLE: "CN"
+      RUST_LOG: info
+      RUST_BACKTRACE: 1
+      # This MAC address must match the one assigned by Docker below
+      CN_MAC_ADDRESS: "02:00:00:00:00:42"
+    networks:
+      powerlink_net:
+        ipv4_address: 192.168.100.42
+        mac_address: "02:00:00:00:00:42" # Assign a static MAC
+    cap_add:
+      - NET_RAW
+    depends_on:
+      - mn_controller
+
+  mn_controller:
+    container_name: powerlink-mn-controller
+    build:
+      context: ../../../.. # Workspace root
+      dockerfile: ./crates/powerlink-io-linux/examples/io_module_resources/Dockerfile
+    environment:
+      POWERLINK_ROLE: "MN"
+      RUST_LOG: info
+      RUST_BACKTRACE: 1
+      # Pass the CN's MAC to the MN for its OD configuration
+      CN_MAC_ADDRESS: "02:00:00:00:00:42"
+    networks:
+      powerlink_net:
+        ipv4_address: 192.168.100.240
+        mac_address: "02:00:00:00:00:F0" # Assign a static MAC
+    cap_add:
+      - NET_RAW
+
+networks:
+  powerlink_net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.100.0/24

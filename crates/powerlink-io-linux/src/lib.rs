@@ -1,14 +1,16 @@
+// crates/powerlink-io-linux/src/lib.rs
 #![cfg(target_os = "linux")]
 
 use powerlink_rs::{NetworkInterface, PowerlinkError};
 use pnet::datalink::{self, Channel, NetworkInterface as PnetInterface};
+use std::io;
 use std::sync::Mutex;
 use std::time::Duration;
 
 pub struct LinuxPnetInterface {
     tx: Mutex<Box<dyn datalink::DataLinkSender>>,
-    // Use a receiver that can be configured with a timeout
     rx: Mutex<Box<dyn datalink::DataLinkReceiver>>,
+    pnet_iface: PnetInterface, // Store the interface for re-configuration
     node_id: u8,
     mac_address: [u8; 6],
 }
@@ -22,7 +24,7 @@ impl LinuxPnetInterface {
 
         let mac_address = interface.mac.ok_or("Interface has no MAC address")?.into();
 
-        // Configure the channel to be promiscuous and have a read timeout.
+        // Configure the channel to be promiscuous and have a default read timeout.
         let config = datalink::Config {
             read_timeout: Some(Duration::from_millis(100)),
             promiscuous: true,
@@ -38,9 +40,34 @@ impl LinuxPnetInterface {
         Ok(Self {
             tx: Mutex::new(tx),
             rx: Mutex::new(rx),
+            pnet_iface: interface, // Store the interface
             node_id,
             mac_address,
         })
+    }
+
+    /// Sets the read timeout for the underlying network channel.
+    /// This re-creates the channel, as pnet config is set at creation time.
+    pub fn set_read_timeout(&mut self, duration: Duration) -> Result<(), PowerlinkError> {
+        let config = datalink::Config {
+            read_timeout: Some(duration),
+            promiscuous: true,
+            ..Default::default()
+        };
+
+        match datalink::channel(&self.pnet_iface, config) {
+            Ok(Channel::Ethernet(tx, rx)) => {
+                // Replace the old sender and receiver with the new ones
+                *self.tx.lock().unwrap() = tx;
+                *self.rx.lock().unwrap() = rx;
+                Ok(())
+            }
+            Ok(_) => Err(PowerlinkError::IoError),
+            Err(e) => {
+                println!("Failed to set read timeout: {}", e);
+                Err(PowerlinkError::IoError)
+            }
+        }
     }
 }
 
@@ -60,22 +87,23 @@ impl NetworkInterface for LinuxPnetInterface {
         let mut rx_guard = self.rx.lock().unwrap();
 
         // 2. Call next() on the guard.
-        let frame = match rx_guard.next() {
-            Ok(frame) => frame,
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::TimedOut {
-                    return Ok(0);
+        match rx_guard.next() {
+            Ok(frame) => {
+                let len = frame.len();
+                if buffer.len() >= len {
+                    buffer[..len].copy_from_slice(frame);
+                    Ok(len)
+                } else {
+                    Err(PowerlinkError::BufferTooShort)
                 }
-                return Err(PowerlinkError::IoError);
             }
-        };
-        
-        let len = frame.len();
-        if buffer.len() >= len {
-            buffer[..len].copy_from_slice(frame);
-            Ok(len)
-        } else {
-            Err(PowerlinkError::BufferTooShort)
+            Err(e) => {
+                if e.kind() == io::ErrorKind::TimedOut {
+                    Ok(0) // Return 0 bytes on timeout, not an error
+                } else {
+                    Err(PowerlinkError::IoError)
+                }
+            }
         }
     }
 

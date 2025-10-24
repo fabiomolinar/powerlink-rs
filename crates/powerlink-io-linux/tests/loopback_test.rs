@@ -1,3 +1,4 @@
+// crates/powerlink-io-linux/tests/loopback_test.rs
 #![cfg(target_os = "linux")]
 
 use powerlink_io_linux::LinuxPnetInterface;
@@ -191,15 +192,15 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
         0x1F98, // NMT_CycleTiming_REC
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned16(1490), // 1: IsochrTxMaxPayload_U16
-                ObjectValue::Unsigned16(1490), // 2: IsochrRxMaxPayload_U16
+                ObjectValue::Unsigned16(1490),  // 1: IsochrTxMaxPayload_U16
+                ObjectValue::Unsigned16(1490),  // 2: IsochrRxMaxPayload_U16
                 ObjectValue::Unsigned32(10000), // 3: PresMaxLatency_U32 (10 us)
-                ObjectValue::Unsigned16(100),  // 4: PreqActPayloadLimit_U16
-                ObjectValue::Unsigned16(100),  // 5: PresActPayloadLimit_U16
+                ObjectValue::Unsigned16(100),   // 4: PreqActPayloadLimit_U16
+                ObjectValue::Unsigned16(100),   // 5: PresActPayloadLimit_U16
                 ObjectValue::Unsigned32(20000), // 6: AsndMaxLatency_U32 (20 us)
-                ObjectValue::Unsigned8(0),     // 7: MultiplCycleCnt_U8
-                ObjectValue::Unsigned16(300),  // 8: AsyncMTU_U16
-                ObjectValue::Unsigned16(2),    // 9: Prescaler_U16
+                ObjectValue::Unsigned8(0),      // 7: MultiplCycleCnt_U8
+                ObjectValue::Unsigned16(300),   // 8: AsyncMTU_U16
+                ObjectValue::Unsigned16(2),     // 9: Prescaler_U16
             ]),
             name: "NMT_CycleTiming_REC",
             category: Category::Mandatory,
@@ -243,7 +244,7 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
         0x1E40, // NWL_IpAddrTable_Xh_REC (Conditional, assume supported for test)
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned16(1), // 1: IfIndex_U16
+                ObjectValue::Unsigned16(1),                             // 1: IfIndex_U16
                 ObjectValue::Unsigned32(0xC0A86400 | node_id as u32), // 2: Addr_IPAD (192.168.100.node_id)
                 ObjectValue::Unsigned32(0xFFFFFF00), // 3: NetMask_IPAD (255.255.255.0)
                 ObjectValue::Unsigned16(1500),       // 4: ReasmMaxSize_U16
@@ -397,8 +398,8 @@ fn run_cn_logic(interface_name: &str) {
 
     let mut buffer = [0u8; 1518];
     let start_time = Instant::now();
-    let mut next_action = NodeAction::NoAction; // Store action from tick/process
 
+    // The main loop is driven by network events or timeouts.
     loop {
         if start_time.elapsed() > TEST_TIMEOUT {
             error!("[CN] Test timed out.");
@@ -406,67 +407,51 @@ fn run_cn_logic(interface_name: &str) {
         }
 
         let current_time_us = start_time.elapsed().as_micros() as u64;
+        let mut action;
 
-        // --- Frame Receiving First ---
+        // The pnet interface is configured with a read timeout.
+        // - Ok(bytes > 0) means a frame was received.
+        // - Ok(0) or Err(IoError) means a timeout occurred, which is our signal to call tick().
         match cn_interface.receive_frame(&mut buffer) {
-            Ok(bytes) if bytes > 0 => {
-                trace!("[CN] Received {} bytes.", bytes);
-                let received_slice = &buffer[..bytes];
+            Ok(bytes) => {
+                if bytes > 0 {
+                    trace!("[CN] Received {} bytes.", bytes);
+                    let received_slice = &buffer[..bytes];
 
-                if bytes >= 12 && received_slice[6..12] == cn_mac {
-                    trace!("[CN] Ignoring received frame from self.");
-                    continue;
-                }
+                    if bytes >= 12 && received_slice[6..12] == cn_mac {
+                        trace!("[CN] Ignoring received frame from self.");
+                        continue;
+                    }
 
-                let frame_action = node.process_raw_frame(received_slice, current_time_us);
-                debug!(
-                    "[CN] NMT state after processing frame: {:?}",
-                    node.nmt_state()
-                );
-
-                if frame_action != NodeAction::NoAction {
-                    next_action = frame_action; // Prioritize frame action
-                }
-            }
-            Ok(_) => { /* No frame */ }
-            Err(PowerlinkError::IoError) => { /* Expected on timeout */ }
-            Err(e) => error!("[CN] Receive error: {:?}", e),
-        }
-
-        // --- Execute Pending Actions ---
-        match next_action {
-            NodeAction::SendFrame(response) => {
-                info!("[CN] Sending response ({} bytes)...", response.len());
-                if let Err(e) = cn_interface.send_frame(&response) {
-                    error!("[CN] Failed to send response: {:?}", e);
-                }
-                next_action = NodeAction::NoAction; // Action handled
-            }
-            NodeAction::SetTimer(delay_us) => {
-                // pnet's timeout handles this, but we use it to avoid busy-wait
-                // Only sleep if the delay is significant to avoid tiny sleeps
-                let sleep_duration = Duration::from_micros(delay_us.min(100_000)); // Sleep at most 100ms
-                if sleep_duration > Duration::from_millis(1) {
-                    trace!("[CN] Sleeping for {:?}", sleep_duration);
-                    thread::sleep(sleep_duration);
-                }
-                next_action = NodeAction::NoAction; // Timer "event" implicitly handled by waking up
-            }
-            NodeAction::NoAction => {
-                // No action from frame processing, check for tick actions
-                let tick_action = node.tick(current_time_us);
-                if tick_action != NodeAction::NoAction {
-                    next_action = tick_action; // Prioritize tick action
+                    action = node.process_raw_frame(received_slice, current_time_us);
                     debug!(
-                        "[CN] NMT state after tick: {:?}",
+                        "[CN] NMT state after processing frame: {:?}",
                         node.nmt_state()
                     );
                 } else {
-                    // No frame and no tick action, sleep briefly
-                    thread::sleep(Duration::from_millis(2));
+                    // bytes == 0, means timeout.
+                    action = node.tick(current_time_us);
+                    debug!("[CN] NMT state after tick: {:?}", node.nmt_state());
                 }
             }
+            Err(PowerlinkError::IoError) => {
+                // This can also indicate a timeout in some pnet backends, treat it like Ok(0).
+                action = node.tick(current_time_us);
+            }
+            Err(e) => {
+                error!("[CN] Receive error: {:?}", e);
+                action = NodeAction::NoAction;
+            }
         }
+
+        // Execute any action returned by the node.
+        if let NodeAction::SendFrame(response) = action {
+            info!("[CN] Sending response ({} bytes)...", response.len());
+            if let Err(e) = cn_interface.send_frame(&response) {
+                error!("[CN] Failed to send response: {:?}", e);
+            }
+        }
+        // No need for a separate sleep, the receive timeout manages the loop rate.
     }
 }
 
@@ -553,7 +538,6 @@ fn run_mn_logic(interface_name: &str, test_to_run: &str) {
         "test_sdo_read_by_index_over_asnd" => {
             run_sdo_test_logic(&mut mn_interface, mn_mac, cn_node_id, &soc_buffer);
         }
-        // "test_cn_responds_to_preq" arm removed
         _ => panic!("Unknown test case: {}", test_to_run),
     }
 
@@ -757,4 +741,3 @@ fn test_cn_responds_to_ident_request() {
 fn test_sdo_read_by_index_over_asnd() {
     run_test_logic("test_sdo_read_by_index_over_asnd");
 }
-

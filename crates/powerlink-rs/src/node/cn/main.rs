@@ -17,7 +17,6 @@ use crate::sdo::SdoServer;
 use crate::types::NodeId;
 use crate::PowerlinkError;
 use alloc::vec;
-use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
 
 // Constants for OD access
@@ -27,7 +26,7 @@ const OD_IDX_LOSS_SOC_TOLERANCE: u16 = 0x1C14;
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct owns and manages all protocol layers and state machines.
 pub struct ControlledNode<'s> {
-    pub(super) od: ObjectDictionary<'s>,
+    pub od: ObjectDictionary<'s>,
     pub(super) nmt_state_machine: CnNmtStateMachine,
     dll_state_machine: DllCsStateMachine,
     dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
