@@ -1,5 +1,5 @@
-use crate::nmt::states::NmtState;
 use crate::frame::error::DllError;
+use crate::nmt::states::NmtState;
 use alloc::vec::Vec;
 use log::debug;
 
@@ -49,7 +49,11 @@ impl DllCsStateMachine {
 
     /// Processes an incoming event and transitions the state based on the current NMT state.
     /// The logic follows the state diagram in Figure 30 of the specification.
-    pub fn process_event(&mut self, event: DllCsEvent, nmt_state: NmtState) -> Option<Vec<DllError>>{
+    pub fn process_event(
+        &mut self,
+        event: DllCsEvent,
+        nmt_state: NmtState,
+    ) -> Option<Vec<DllError>> {
         debug!(
             "DLL_CS processing event {:?} in state {:?} (NMT state: {:?})",
             event, self.state, nmt_state
@@ -57,7 +61,10 @@ impl DllCsStateMachine {
         let mut errors: Vec<DllError> = Vec::new();
         // The DLL_CS is active only in specific NMT states.
         match nmt_state {
-            NmtState::NmtPreOperational2 | NmtState::NmtReadyToOperate | NmtState::NmtOperational | NmtState::NmtCsStopped => {
+            NmtState::NmtPreOperational2
+            | NmtState::NmtReadyToOperate
+            | NmtState::NmtOperational
+            | NmtState::NmtCsStopped => {
                 let next_state = match (self.state, event) {
                     // --- (DLL_CT02) ---
                     // Process the PReq frame and send a PRes frame
@@ -70,13 +77,13 @@ impl DllCsStateMachine {
                         errors.push(DllError::LossOfSoc);
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoc
-                    },
+                    }
                     // Synchronise to the next SoC, report error DLL_CEV_LOSS_SOC and DLL_CEV_LOSS_SOA
                     (DllCsState::WaitSoa, DllCsEvent::SocTimeout) => {
                         errors.push(DllError::LossOfSoc);
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoc
-                    },
+                    }
                     // --- (DLL_CT04) ---
                     // Process frame
                     (DllCsState::WaitSoc, DllCsEvent::Asnd) => DllCsState::WaitSoc,
@@ -84,22 +91,22 @@ impl DllCsStateMachine {
                     (DllCsState::WaitSoc, DllCsEvent::Preq) => {
                         errors.push(DllError::LossOfSoc);
                         DllCsState::WaitSoc
-                    },
+                    }
                     // Report error DLL_CEV_LOSS_SOC
                     (DllCsState::WaitSoc, DllCsEvent::Pres) => {
                         errors.push(DllError::LossOfSoc);
                         DllCsState::WaitSoc
-                    },
+                    }
                     // Report error DLL_CEV_LOSS_SOC
                     (DllCsState::WaitSoc, DllCsEvent::Soa) => {
                         errors.push(DllError::LossOfSoc);
                         DllCsState::WaitSoc
-                    },                    
+                    }
                     // Report error DLL_CEV_LOSS_SOC
                     (DllCsState::WaitSoc, DllCsEvent::SocTimeout) => {
                         errors.push(DllError::LossOfSoc);
                         DllCsState::WaitSoc
-                    },
+                    }
                     // --- (DLL_CT07) ---
                     // Process PRes frames (cross traffic)
                     (DllCsState::WaitPreq, DllCsEvent::Pres) => DllCsState::WaitPreq,
@@ -107,38 +114,38 @@ impl DllCsStateMachine {
                     (DllCsState::WaitPreq, DllCsEvent::Asnd) => {
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitPreq
-                    }, 
+                    }
                     // Synchronise to the cycle begin, report error DLL_CEV_LOSS_SOA
                     (DllCsState::WaitPreq, DllCsEvent::Soc) => {
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitPreq
-                    }, 
+                    }
                     // --- (DLL_CT08) ---
                     // Process SoA, if invited, transmit a legal Ethernet frame
                     (DllCsState::WaitPreq, DllCsEvent::Soa) => {
                         errors.push(DllError::LossOfPreq);
                         DllCsState::WaitSoc
-                    },
+                    }
                     //  Synchronise on the next SoC, report error DLL_CEV_LOSS_SOC and DLL_CEV_LOSS_SOA
                     (DllCsState::WaitPreq, DllCsEvent::SocTimeout) => {
                         errors.push(DllError::LossOfSoc);
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoc
-                    }, 
+                    }
                     // --- (DLL_CT09) ---
                     // Synchronise on the SoC, report error DLL_CEV_LOSS_SOA
                     (DllCsState::WaitSoa, DllCsEvent::Soc) => {
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitPreq
-                    },
+                    }
                     // --- (DLL_CT10) ---
                     // Process PRes frames (cross traffic)
                     (DllCsState::WaitSoa, DllCsEvent::Pres) => DllCsState::WaitSoa,
-                    // Report error DLL_CEV_LOSS_SOA 
+                    // Report error DLL_CEV_LOSS_SOA
                     (DllCsState::WaitSoa, DllCsEvent::Asnd) => {
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoa
-                    },                 
+                    }
                     // --- (DLL_CT01) ---
                     // A SoC can be received in any state and always resets the cycle to WaitPReq.
                     // Synchronise the start of cycle and generate a SoC trigger to the application
@@ -147,12 +154,15 @@ impl DllCsStateMachine {
                     // If an unexpected event occurs, remain in the current state.
                     // Error reporting would be triggered here.
                     (current, _) => {
-                        errors.push(DllError::UnexpectedEventInState { state: current as u8, event: event as u8 });
+                        errors.push(DllError::UnexpectedEventInState {
+                            state: current as u8,
+                            event: event as u8,
+                        });
                         current
-                    },
+                    }
                 };
                 self.state = next_state;
-            },
+            }
             _ => {
                 // In all other NMT states, the Dll state machine is considered non-cyclic.
                 self.state = DllCsState::NonCyclic;
@@ -173,7 +183,9 @@ impl DllCsStateMachine {
 
 impl Default for DllCsStateMachine {
     fn default() -> Self {
-        Self { state: DllCsState::NonCyclic }
+        Self {
+            state: DllCsState::NonCyclic,
+        }
     }
 }
 
@@ -214,7 +226,7 @@ mod tests {
         sm.process_event(DllCsEvent::Preq, op_state);
         sm.process_event(DllCsEvent::Soa, op_state); // -> WaitSoc
         let errors = sm.process_event(DllCsEvent::Preq, op_state);
-        assert_eq!(errors,Some(vec![DllError::LossOfSoc]));
+        assert_eq!(errors, Some(vec![DllError::LossOfSoc]));
         assert_eq!(sm.current_state(), DllCsState::WaitSoc);
     }
 

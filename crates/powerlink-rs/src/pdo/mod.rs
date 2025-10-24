@@ -1,3 +1,3 @@
 pub mod mapping;
 
-pub use mapping::{PdoMappingEntry, PDOVersion, PayloadSize, PayloadSizeError};
+pub use mapping::{PDOVersion, PayloadSize, PayloadSizeError, PdoMappingEntry};

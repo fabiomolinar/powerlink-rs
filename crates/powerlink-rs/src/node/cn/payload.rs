@@ -2,17 +2,15 @@
 
 use crate::frame::basic::MacAddress;
 use crate::frame::poll::PResFlags;
-use crate::frame::{
-    ASndFrame, PResFrame, PowerlinkFrame, ServiceId,
-};
+use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
 use crate::nmt::states::NmtState;
+use crate::node::NodeAction;
 use crate::od::{ObjectDictionary, ObjectValue};
-use crate::pdo::{PdoMappingEntry, PDOVersion};
+use crate::pdo::{PDOVersion, PdoMappingEntry};
+use crate::sdo::SdoServer;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
-use crate::sdo::SdoServer;
-use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
-use crate::node::NodeAction;
+use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use crate::{Codec, PowerlinkError};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -36,7 +34,7 @@ pub(super) fn build_ident_response(
     let payload = build_ident_response_payload(od);
     let asnd = ASndFrame::new(
         mac_address,
-        soa.eth_header.source_mac, // Send back to the MN's MAC
+        soa.eth_header.source_mac,    // Send back to the MN's MAC
         NodeId(C_ADR_MN_DEF_NODE_ID), // Destination Node ID is MN
         node_id,
         ServiceId::IdentResponse,
@@ -57,10 +55,7 @@ pub(super) fn build_pres_response(
     let (payload, pdo_version, payload_is_valid) = match build_tpdo_payload(od) {
         Ok((payload, version)) => (payload, version, true),
         Err(e) => {
-            warn!(
-                "Failed to build TPDO payload: {:?}. Sending empty PRes.",
-                e
-            );
+            warn!("Failed to build TPDO payload: {:?}. Sending empty PRes.", e);
             (Vec::new(), PDOVersion(0), false)
         }
     };
@@ -88,8 +83,8 @@ fn build_ident_response_payload(od: &ObjectDictionary) -> Vec<u8> {
     // Flags (Octet 0-1): PR/RS - Assume none pending for now
     // NMTState (Octet 2)
     payload[2] = od.read_u8(0x1F8C, 0).unwrap_or(0); // Read NMT_CurrNMTState_U8
-                                                     // Reserved (Octet 3)
-                                                     // EPLVersion (Octet 4) - from 0x1F83/0
+    // Reserved (Octet 3)
+    // EPLVersion (Octet 4) - from 0x1F83/0
     payload[4] = od.read_u8(0x1F83, 0).unwrap_or(0);
     // Reserved (Octet 5)
     // FeatureFlags (Octets 6-9) - from 0x1F82/0
@@ -299,15 +294,14 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
                     );
                     // Truncate or pad, for now just copy the valid part
                     let copy_len = serialized_data.len().min(length);
-                    payload[offset..offset + copy_len].copy_from_slice(&serialized_data[..copy_len]);
+                    payload[offset..offset + copy_len]
+                        .copy_from_slice(&serialized_data[..copy_len]);
                 } else {
                     payload[offset..end_pos].copy_from_slice(&serialized_data);
                 }
                 trace!(
                     "Applied TPDO: Read {:?} from 0x{:04X}/{}",
-                    value_cow,
-                    entry.index,
-                    entry.sub_index
+                    value_cow, entry.index, entry.sub_index
                 );
             }
         }

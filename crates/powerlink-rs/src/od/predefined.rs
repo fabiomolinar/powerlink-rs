@@ -1,8 +1,8 @@
 // crates/powerlink-rs/src/od/predefined.rs
 
+use super::ObjectDictionary;
 use super::entry::{AccessType, Category, Object, ObjectEntry, PdoMapping};
 use super::value::ObjectValue;
-use super::ObjectDictionary;
 use crate::PowerlinkError;
 use alloc::vec;
 
@@ -203,7 +203,10 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
 }
 
 /// Validates that the OD contains all mandatory objects required for a node to function.
-pub(super) fn validate_mandatory_objects(od: &ObjectDictionary, is_mn: bool) -> Result<(), PowerlinkError> {
+pub(super) fn validate_mandatory_objects(
+    od: &ObjectDictionary,
+    is_mn: bool,
+) -> Result<(), PowerlinkError> {
     const COMMON_MANDATORY_OBJECTS: &[u16] = &[
         0x1000, // NMT_DeviceType_U32
         0x1018, // NMT_IdentityObject_REC

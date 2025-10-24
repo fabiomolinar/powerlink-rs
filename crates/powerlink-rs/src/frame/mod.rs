@@ -11,15 +11,15 @@ pub mod poll;
 
 pub use basic::EthernetHeader;
 // Make frame types public so other modules (like `node`) can use them.
-pub use codec::{deserialize_frame, Codec};
+pub use codec::{Codec, deserialize_frame};
 pub use control::{ASndFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame};
 pub use cs_state_machine::{DllCsEvent, DllCsStateMachine};
 pub use error::{DllError, DllErrorManager, ErrorHandler, NmtAction, NoOpErrorHandler};
 pub use ms_state_machine::{DllMsEvent, DllMsStateMachine};
-pub use poll::{PReqFrame, PResFrame, PRFlag, RSFlag};
+pub use poll::{PRFlag, PReqFrame, PResFrame, RSFlag};
 
-use crate::nmt::events::NmtEvent;
 use crate::PowerlinkError;
+use crate::nmt::events::NmtEvent;
 
 /// Represents any POWERLINK frame
 #[derive(Debug, Clone, PartialEq, Eq)]

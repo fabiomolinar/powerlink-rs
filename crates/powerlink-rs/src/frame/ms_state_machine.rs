@@ -1,4 +1,4 @@
-use crate::{frame::error::DllError, nmt::states::NmtState, NodeId};
+use crate::{NodeId, frame::error::DllError, nmt::states::NmtState};
 use alloc::vec::Vec;
 use log::debug;
 
@@ -50,14 +50,21 @@ impl DllMsStateMachine {
     /// Processes an incoming event and transitions the state based on the current NMT state.
     /// The logic follows the state diagrams in Figure 31 and 32 of the specification.
     pub fn process_event(
-        &mut self, event: DllMsEvent, nmt_state: NmtState, response_expected: bool, 
-        async_in: bool, async_out: bool, isochr: bool, isochr_out: bool, dest_node_id: NodeId
+        &mut self,
+        event: DllMsEvent,
+        nmt_state: NmtState,
+        response_expected: bool,
+        async_in: bool,
+        async_out: bool,
+        isochr: bool,
+        isochr_out: bool,
+        dest_node_id: NodeId,
     ) -> Option<Vec<DllError>> {
         debug!(
             "DLL_MS processing event {:?} in state {:?} (NMT state: {:?})",
             event, self.state, nmt_state
         );
-        let mut errors : Vec<DllError> = Vec::new();
+        let mut errors: Vec<DllError> = Vec::new();
         match nmt_state {
             NmtState::NmtPreOperational1 => {
                 let next_state = match (self.state, event) {
@@ -74,8 +81,11 @@ impl DllMsStateMachine {
                             // Send SoA with Invite
                             (true, true, _) => DllMsState::WaitAsnd,
                         }
-                    },                    
-                    (DllMsState::WaitAsnd, e @ DllMsEvent::AsndTimeout | e @ DllMsEvent::SoaTrig) => {
+                    }
+                    (
+                        DllMsState::WaitAsnd,
+                        e @ DllMsEvent::AsndTimeout | e @ DllMsEvent::SoaTrig,
+                    ) => {
                         if e == DllMsEvent::AsndTimeout {
                             errors.push(DllError::MevAsndTimeout);
                         }
@@ -90,30 +100,35 @@ impl DllMsStateMachine {
                             (true, true) => {
                                 errors.push(DllError::MevAsndTimeout);
                                 DllMsState::WaitAsnd
-                            },
+                            }
                         }
-                    },
+                    }
                     // If an unexpected event occurs, remain in the current state.
                     (current, _) => {
-                        errors.push(DllError::UnexpectedEventInState { state: current as u8, event: event as u8 });
+                        errors.push(DllError::UnexpectedEventInState {
+                            state: current as u8,
+                            event: event as u8,
+                        });
                         current
-                    },                    
+                    }
                 };
                 self.state = next_state;
-            },
-            NmtState::NmtOperational | NmtState::NmtReadyToOperate | NmtState::NmtPreOperational2 => {
+            }
+            NmtState::NmtOperational
+            | NmtState::NmtReadyToOperate
+            | NmtState::NmtPreOperational2 => {
                 let next_state = match (self.state, event) {
                     (DllMsState::WaitSocTrig, DllMsEvent::SocTrig) => {
-                        match(isochr, async_in, isochr_out, async_out) {
-                            // --- DLL_MT1 --- 
+                        match (isochr, async_in, isochr_out, async_out) {
+                            // --- DLL_MT1 ---
                             // Send SoC, PReq
                             (true, _, _, _) => DllMsState::WaitPres,
-                            // --- DLL_MT6 --- 
+                            // --- DLL_MT6 ---
                             // Send SoC, PRes and SoA with Invite
-                            (false, true, true, _)  => DllMsState::WaitAsnd,
+                            (false, true, true, _) => DllMsState::WaitAsnd,
                             // Send SoC and SoA with Invite
-                            (false, true, _, _)  => DllMsState::WaitAsnd,
-                            // --- DLL_MT7 --- 
+                            (false, true, _, _) => DllMsState::WaitAsnd,
+                            // --- DLL_MT7 ---
                             // Send SoC, PRes
                             (false, false, true, _) => DllMsState::WaitSocTrig,
                             // Send SoC, SoA and ASnd
@@ -121,31 +136,33 @@ impl DllMsStateMachine {
                             // Send SoC
                             (false, false, _, _) => DllMsState::WaitSocTrig,
                         }
-                    },
+                    }
                     (DllMsState::WaitPres, e @ DllMsEvent::Pres | e @ DllMsEvent::PresTimeout) => {
                         if e == DllMsEvent::PresTimeout {
-                            errors.push(DllError::LossOfPres { node_id: dest_node_id });
+                            errors.push(DllError::LossOfPres {
+                                node_id: dest_node_id,
+                            });
                         }
-                        match(isochr, async_in, isochr_out, async_out) {
+                        match (isochr, async_in, isochr_out, async_out) {
                             // --- DLL_MT2 --- Send next PReq
                             (true, _, _, _) => DllMsState::WaitPres,
-                            // --- DLL_MT3 --- 
+                            // --- DLL_MT3 ---
                             // Send PRes and SoA
                             (false, false, true, _) => DllMsState::WaitSocTrig,
                             // Send PRes and ASnd
                             (false, false, _, true) => DllMsState::WaitSocTrig,
                             // Send PRes
                             (false, false, _, _) => DllMsState::WaitSocTrig,
-                            // --- DLL_MT4 --- 
+                            // --- DLL_MT4 ---
                             // Send PRes and SoA with Invite
-                            (false, true, true, _)  => DllMsState::WaitAsnd,
+                            (false, true, true, _) => DllMsState::WaitAsnd,
                             // Send PRes
-                            (false, true, _, _)  => DllMsState::WaitAsnd,
+                            (false, true, _, _) => DllMsState::WaitAsnd,
                         }
-                    },
+                    }
                     (DllMsState::WaitAsnd, DllMsEvent::SocTrig) => {
-                        match(isochr, async_in, isochr_out, async_out) {
-                            // --- DLL_MT5 --- 
+                        match (isochr, async_in, isochr_out, async_out) {
+                            // --- DLL_MT5 ---
                             // Send SoC and PRes
                             (false, false, true, _) => DllMsState::WaitSocTrig,
                             // Send SoC and SoA and ASnd
@@ -154,12 +171,12 @@ impl DllMsStateMachine {
                             (false, false, _, _) => DllMsState::WaitSocTrig,
                             // --- DLL_MT8 ---
                             // Send SoC and SoA with Invite
-                            (false, true, _, _) => DllMsState::WaitAsnd,                           
+                            (false, true, _, _) => DllMsState::WaitAsnd,
                             // --- DLL_MT9 ---
                             // Send SoC and PReq
-                            (true, _, _, _)  => DllMsState::WaitPres,                            
+                            (true, _, _, _) => DllMsState::WaitPres,
                         }
-                    },
+                    }
                     // --- DLL_MT8 --- Process the frame
                     (DllMsState::WaitAsnd, DllMsEvent::Asnd) => DllMsState::WaitAsnd,
 
@@ -167,16 +184,19 @@ impl DllMsStateMachine {
                     (DllMsState::NonCyclic, DllMsEvent::SocTrig) => DllMsState::WaitSocTrig,
 
                     (current, _) => {
-                        errors.push(DllError::UnexpectedEventInState { state: current as u8, event: event as u8 });
+                        errors.push(DllError::UnexpectedEventInState {
+                            state: current as u8,
+                            event: event as u8,
+                        });
                         current
-                    },                  
+                    }
                 };
                 self.state = next_state;
-            },
+            }
             _ => {
                 self.state = DllMsState::NonCyclic;
             }
-        }        
+        }
         if errors.is_empty() {
             None
         } else {
@@ -192,7 +212,9 @@ impl DllMsStateMachine {
 
 impl Default for DllMsStateMachine {
     fn default() -> Self {
-        Self { state: DllMsState::NonCyclic }
+        Self {
+            state: DllMsState::NonCyclic,
+        }
     }
 }
 
@@ -204,7 +226,7 @@ mod tests {
     fn test_dll_ms_pre_operational_1_cycle() {
         let mut sm = DllMsStateMachine::new();
         let preop1_state = NmtState::NmtPreOperational1;
-        
+
         // In PreOp1, the state machine should start in a state ready to send SoA.
         // For this test, we'll assume it's already in WAIT_SOA.
         sm.state = DllMsState::WaitSoa;
@@ -212,16 +234,28 @@ mod tests {
         // Event: Trigger SoA, expect a response from a CN.
         // isochr and async_out are false. async_in and response_expected are true.
         sm.process_event(
-            DllMsEvent::SoaTrig, preop1_state, true, true, 
-            false, false, false, NodeId(1), 
+            DllMsEvent::SoaTrig,
+            preop1_state,
+            true,
+            true,
+            false,
+            false,
+            false,
+            NodeId(1),
         );
         assert_eq!(sm.current_state(), DllMsState::WaitAsnd);
 
         // Event: Timeout waiting for ASnd. The MN should re-issue an SoA invite.
         // Since the next action is to re-invite, response_expected is true.
         sm.process_event(
-            DllMsEvent::AsndTimeout, preop1_state, true,
-             false, false, false, false, NodeId(1), 
+            DllMsEvent::AsndTimeout,
+            preop1_state,
+            true,
+            false,
+            false,
+            false,
+            false,
+            NodeId(1),
         );
         assert_eq!(sm.current_state(), DllMsState::WaitSoa);
     }
@@ -233,24 +267,60 @@ mod tests {
 
         // The machine starts in NonCyclic. An NMT state change would trigger the first SOC.
         assert_eq!(sm.current_state(), DllMsState::NonCyclic);
-        
+
         // (DLL_MT0) NMT signals the start of the cyclic phase.
-        sm.process_event(DllMsEvent::SocTrig, operational_state, false, false, false, false, false, NodeId(1),);
+        sm.process_event(
+            DllMsEvent::SocTrig,
+            operational_state,
+            false,
+            false,
+            false,
+            false,
+            false,
+            NodeId(1),
+        );
         assert_eq!(sm.current_state(), DllMsState::WaitSocTrig);
 
         // Event: A new cycle begins. MN sends SoC and first PReq.
         // isochr is true, indicating there are isochronous frames to send.
-        sm.process_event(DllMsEvent::SocTrig, operational_state, false, false, false, true, false, NodeId(1), );
+        sm.process_event(
+            DllMsEvent::SocTrig,
+            operational_state,
+            false,
+            false,
+            false,
+            true,
+            false,
+            NodeId(1),
+        );
         assert_eq!(sm.current_state(), DllMsState::WaitPres);
 
         // Event: MN receives a PRes, sends the next PReq.
         // isochr is still true.
-        sm.process_event(DllMsEvent::Pres, operational_state, false, false, false, true, false, NodeId(1), );
+        sm.process_event(
+            DllMsEvent::Pres,
+            operational_state,
+            false,
+            false,
+            false,
+            true,
+            false,
+            NodeId(1),
+        );
         assert_eq!(sm.current_state(), DllMsState::WaitPres);
-        
+
         // Event: MN receives the last PRes. Isochronous phase is over. No async phase.
         // isochr is now false. async_in is false.
-        sm.process_event(DllMsEvent::Pres, operational_state, false, false, false, false, false, NodeId(1), );
+        sm.process_event(
+            DllMsEvent::Pres,
+            operational_state,
+            false,
+            false,
+            false,
+            false,
+            false,
+            NodeId(1),
+        );
         assert_eq!(sm.current_state(), DllMsState::WaitSocTrig);
     }
 }

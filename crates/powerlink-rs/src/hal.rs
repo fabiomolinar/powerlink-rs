@@ -62,15 +62,24 @@ impl fmt::Display for PowerlinkError {
             Self::InvalidMessageType(v) => write!(f, "Invalid MessageType value: {v:#04x}"),
             Self::InvalidNmtState(v) => write!(f, "Invalid NMT State value: {v:#04x}"),
             Self::InvalidServiceId(v) => write!(f, "Invalid ServiceId value: {v:#04x}"),
-            Self::InvalidRequestedServiceId(v) => write!(f, "Invalid RequestedServiceId value: {v:#04x}"),
+            Self::InvalidRequestedServiceId(v) => {
+                write!(f, "Invalid RequestedServiceId value: {v:#04x}")
+            }
             Self::InvalidNodeId(v) => write!(f, "Invalid NodeId value: {v}"),
             Self::InvalidPayloadSize(v) => write!(f, "Invalid PayloadSize value: {v}"),
             Self::SliceConversion => write!(f, "Failed to convert slice to a fixed-size array"),
             Self::FrameTooLarge => write!(f, "Frame size exceeds maximum allowed MTU"),
             Self::NotReady => write!(f, "Device is not ready or configured"),
-            Self::ObjectNotFound => write!(f, "The requested Object Dictionary index was not found"),
-            Self::SubObjectNotFound => write!(f, "The requested sub-index was not found for this object"),
-            Self::TypeMismatch => write!(f, "The provided value's type does not match the object's type"), 
+            Self::ObjectNotFound => {
+                write!(f, "The requested Object Dictionary index was not found")
+            }
+            Self::SubObjectNotFound => {
+                write!(f, "The requested sub-index was not found for this object")
+            }
+            Self::TypeMismatch => write!(
+                f,
+                "The provided value's type does not match the object's type"
+            ),
             Self::InvalidEnumValue => write!(f, "A value in the frame is not a valid enum variant"),
             Self::StorageError(s) => write!(f, "Storage error: {}", s),
             Self::ValidationError(s) => write!(f, "OD Validation Error: {}", s),
@@ -153,8 +162,9 @@ pub trait ObjectDictionaryStorage {
     fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, PowerlinkError>;
 
     /// Saves the given storable parameters to non-volatile memory.
-    fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>) -> Result<(), PowerlinkError>;
-    
+    fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>)
+    -> Result<(), PowerlinkError>;
+
     /// Clears all stored parameters from non-volatile memory.
     fn clear(&mut self) -> Result<(), PowerlinkError>;
 

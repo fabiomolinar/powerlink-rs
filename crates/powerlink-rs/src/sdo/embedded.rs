@@ -1,13 +1,13 @@
+use crate::PowerlinkError;
 use crate::frame::Codec;
 use crate::sdo::command::{CommandId, Segmentation};
-use crate::PowerlinkError;
 use alloc::vec::Vec;
 
 /// Represents the 1-byte sequence layer header for SDOs embedded in PDOs.
 /// (Reference: EPSG DS 301, Table 87)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PdoSequenceLayerHeader {
-    pub sequence_number: u8, // 0-63
+    pub sequence_number: u8,  // 0-63
     pub connection_state: u8, // 0-3
 }
 

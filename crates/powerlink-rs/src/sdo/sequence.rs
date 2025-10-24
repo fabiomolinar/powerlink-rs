@@ -1,7 +1,7 @@
 // In crates/powerlink-rs/src/sdo/sequence.rs
 
-use crate::frame::Codec;
 use crate::PowerlinkError;
+use crate::frame::Codec;
 
 /// Defines the connection state for the SDO Sequence Layer.
 ///
@@ -65,15 +65,14 @@ impl TryFrom<u8> for SendConnState {
     }
 }
 
-
 /// Represents the 4-byte header for the Asynchronous SDO Sequence Layer.
 ///
 /// (Reference: EPSG DS 301, Table 52 and 53)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SequenceLayerHeader {
-    pub receive_sequence_number: u8, // rsnr (0-63)
-    pub receive_con: ReceiveConnState,   // rcon
-    pub send_sequence_number: u8,    // ssnr (0-63)
+    pub receive_sequence_number: u8,   // rsnr (0-63)
+    pub receive_con: ReceiveConnState, // rcon
+    pub send_sequence_number: u8,      // ssnr (0-63)
     pub send_con: SendConnState,       // scon
 }
 

@@ -1,11 +1,11 @@
 // crates/powerlink-rs/src/frame/poll/pres.rs
 
+use crate::PowerlinkError;
 use crate::frame::basic::{EthernetHeader, MacAddress};
 use crate::frame::codec::{Codec, CodecHelpers};
 use crate::nmt::states::NmtState;
 use crate::pdo::PDOVersion;
-use crate::types::{MessageType, NodeId, C_ADR_BROADCAST_NODE_ID, C_DLL_MULTICAST_PRES};
-use crate::PowerlinkError;
+use crate::types::{C_ADR_BROADCAST_NODE_ID, C_DLL_MULTICAST_PRES, MessageType, NodeId};
 use alloc::vec::Vec;
 
 /// A newtype wrapper for the 3-bit RS (Request to Send) flag.
@@ -180,7 +180,7 @@ impl Codec for PResFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{MessageType, C_DLL_MULTICAST_PRES};
+    use crate::types::{C_DLL_MULTICAST_PRES, MessageType};
     use alloc::vec;
 
     #[test]

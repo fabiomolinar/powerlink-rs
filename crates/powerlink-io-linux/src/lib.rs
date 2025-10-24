@@ -1,8 +1,8 @@
 // crates/powerlink-io-linux/src/lib.rs
 #![cfg(target_os = "linux")]
 
-use powerlink_rs::{NetworkInterface, PowerlinkError};
 use pnet::datalink::{self, Channel, NetworkInterface as PnetInterface};
+use powerlink_rs::{NetworkInterface, PowerlinkError};
 use std::io;
 use std::sync::Mutex;
 use std::time::Duration;

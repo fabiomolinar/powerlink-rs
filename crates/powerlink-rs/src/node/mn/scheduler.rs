@@ -1,9 +1,9 @@
 // crates/powerlink-rs/src/node/mn/scheduler.rs
 
 use super::main::{CnState, ManagingNode};
+use crate::Node;
 use crate::nmt::{NmtEvent, NmtStateMachine}; // Added NmtStateMachine import
 use crate::types::NodeId;
-use crate::Node;
 use log::info;
 
 /// Checks if all mandatory nodes are identified to trigger transition to PreOp2.
@@ -12,17 +12,16 @@ pub(super) fn check_bootup_state(node: &mut ManagingNode) {
         return; // Only check this in PreOp1
     }
 
-    let all_mandatory_identified = node.mandatory_nodes.iter().all(|node_id| {
-        node.node_states.get(node_id) == Some(&CnState::Identified)
-    });
+    let all_mandatory_identified = node
+        .mandatory_nodes
+        .iter()
+        .all(|node_id| node.node_states.get(node_id) == Some(&CnState::Identified));
 
     if all_mandatory_identified {
         info!("[MN] All mandatory nodes identified. Transitioning to PreOp2.");
         // Use the NmtStateMachine trait method
-        node.nmt_state_machine.process_event(
-            NmtEvent::AllCnsIdentified,
-            &mut node.od,
-        );
+        node.nmt_state_machine
+            .process_event(NmtEvent::AllCnsIdentified, &mut node.od);
     }
 }
 

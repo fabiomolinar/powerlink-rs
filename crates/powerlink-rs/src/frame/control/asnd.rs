@@ -1,9 +1,9 @@
 // crates/powerlink-rs/src/frame/control/asnd.rs
 
-use crate::frame::basic::{EthernetHeader, MacAddress, ETHERNET_HEADER_SIZE};
-use crate::types::{MessageType, NodeId};
-use crate::frame::codec::{Codec, CodecHelpers};
 use crate::PowerlinkError;
+use crate::frame::basic::{ETHERNET_HEADER_SIZE, EthernetHeader, MacAddress};
+use crate::frame::codec::{Codec, CodecHelpers};
+use crate::types::{MessageType, NodeId};
 use alloc::vec::Vec;
 
 /// Service IDs for ASnd frames.
@@ -14,13 +14,13 @@ pub enum ServiceId {
     /// Corresponds to `IDENT_RESPONSE`.
     IdentResponse = 0x01,
     /// Corresponds to `STATUS_RESPONSE`.
-    StatusResponse = 0x02, 
+    StatusResponse = 0x02,
     /// Corresponds to `NMT_REQUEST`.
-    NmtRequest = 0x03, 
+    NmtRequest = 0x03,
     /// Corresponds to `NMT_COMMAND`.
-    NmtCommand = 0x04,      
+    NmtCommand = 0x04,
     /// Corresponds to `SDO`.
-    Sdo = 0x05, 
+    Sdo = 0x05,
 }
 
 impl TryFrom<u8> for ServiceId {
@@ -59,9 +59,9 @@ impl ASndFrame {
         service_id: ServiceId,
         payload: Vec<u8>,
     ) -> Self {
-        let eth_header = EthernetHeader::new(dest_mac, source_mac);                
-        
-        ASndFrame { 
+        let eth_header = EthernetHeader::new(dest_mac, source_mac);
+
+        ASndFrame {
             eth_header,
             message_type: MessageType::ASnd,
             destination: target_node_id,
@@ -76,30 +76,41 @@ impl Codec for ASndFrame {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
         let header_size = 18; // 4 bytes for PL header
         let total_size = header_size + self.payload.len();
-        if buffer.len() < total_size { return Err(PowerlinkError::FrameTooLarge); }
-        
+        if buffer.len() < total_size {
+            return Err(PowerlinkError::FrameTooLarge);
+        }
+
         CodecHelpers::serialize_eth_header(&self.eth_header, buffer);
         CodecHelpers::serialize_pl_header(self.message_type, self.destination, self.source, buffer);
 
         buffer[17] = self.service_id as u8;
-        
+
         // Payload
         buffer[header_size..total_size].copy_from_slice(&self.payload);
-        
+
         Ok(total_size)
     }
 
     fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
         let header_size = ETHERNET_HEADER_SIZE + 4;
-        if buffer.len() < header_size { return Err(PowerlinkError::BufferTooShort); }
+        if buffer.len() < header_size {
+            return Err(PowerlinkError::BufferTooShort);
+        }
 
         let eth_header = CodecHelpers::deserialize_eth_header(buffer)?;
         let (message_type, destination, source) = CodecHelpers::deserialize_pl_header(buffer)?;
         let service_id = ServiceId::try_from(buffer[17])?;
-        
+
         let payload = buffer[header_size..].to_vec();
 
-        Ok(Self { eth_header, message_type, destination, source, service_id, payload })
+        Ok(Self {
+            eth_header,
+            message_type,
+            destination,
+            source,
+            service_id,
+            payload,
+        })
     }
 }
 

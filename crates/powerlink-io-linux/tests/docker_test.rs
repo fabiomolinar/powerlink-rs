@@ -3,11 +3,11 @@
 
 #![cfg(target_os = "linux")] // Docker setup relies on Linux commands
 
-use std::process::{Command, Output};
-use std::path::PathBuf;
-use std::env;
-use std::sync::Mutex;
 use lazy_static::lazy_static;
+use std::env;
+use std::path::PathBuf;
+use std::process::{Command, Output};
+use std::sync::Mutex;
 
 // Define a static Mutex to ensure docker-compose tests run serially
 lazy_static! {
@@ -28,11 +28,13 @@ impl DockerComposeGuard {
     fn run_compose_command(&self, args: &[&str]) -> std::io::Result<Output> {
         let mut cmd = Command::new("docker-compose");
         // Removed the -p project flag, will use default project name
-        cmd.arg("-f")
-           .arg(&self.compose_file_path)
-           .args(args);
+        cmd.arg("-f").arg(&self.compose_file_path).args(args);
 
-        println!("--- Running Docker Command: docker-compose -f {:?} {} ---", self.compose_file_path, args.join(" "));
+        println!(
+            "--- Running Docker Command: docker-compose -f {:?} {} ---",
+            self.compose_file_path,
+            args.join(" ")
+        );
         cmd.output()
     }
 }
@@ -49,7 +51,7 @@ impl Drop for DockerComposeGuard {
                         String::from_utf8_lossy(&output.stderr)
                     );
                 } else {
-                     println!("--- Docker environment teardown successful ---");
+                    println!("--- Docker environment teardown successful ---");
                 }
             }
             Err(e) => {
@@ -64,7 +66,10 @@ fn get_compose_file_path() -> PathBuf {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let compose_file_path = crate_root.join("tests/loopback_test_resources/docker-compose.yml");
     if !compose_file_path.exists() {
-         panic!("docker-compose.yml not found at expected path: {:?}", compose_file_path);
+        panic!(
+            "docker-compose.yml not found at expected path: {:?}",
+            compose_file_path
+        );
     }
     compose_file_path
 }
@@ -72,7 +77,7 @@ fn get_compose_file_path() -> PathBuf {
 /// Helper function to run a specific integration test case via Docker.
 fn run_docker_test(test_name: &str) {
     let compose_file_path = get_compose_file_path();
-    
+
     // Set environment variables for docker-compose to use.
     // This is unsafe because env::set_var modifies global state, but
     // we are ensuring serial execution with the Mutex.
@@ -81,7 +86,6 @@ fn run_docker_test(test_name: &str) {
         // Remove variables related to dynamic network config
     }
 
-
     // The guard ensures `docker-compose down` is called even if the test panics
     let guard = DockerComposeGuard::new(compose_file_path);
 
@@ -89,23 +93,35 @@ fn run_docker_test(test_name: &str) {
     // --build: Ensures the image is built if it doesn't exist or Dockerfile changed.
     // --abort-on-container-exit: Stops all containers if any container stops.
     // --exit-code-from: We'll check the 'mn' container for the test result.
-    let output = guard.run_compose_command(&[
-        "up",
-        "--build",
-        "--abort-on-container-exit",
-        "--exit-code-from", "mn", // MN drives the test, so its exit code is authoritative
-    ]).expect("Failed to execute docker-compose up command");
+    let output = guard
+        .run_compose_command(&[
+            "up",
+            "--build",
+            "--abort-on-container-exit",
+            "--exit-code-from",
+            "mn", // MN drives the test, so its exit code is authoritative
+        ])
+        .expect("Failed to execute docker-compose up command");
 
     // Print the combined output from docker-compose (which includes logs from both containers)
-    println!("--- docker-compose stdout ---\n{}", String::from_utf8_lossy(&output.stdout));
-    eprintln!("--- docker-compose stderr ---\n{}", String::from_utf8_lossy(&output.stderr));
+    println!(
+        "--- docker-compose stdout ---\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    eprintln!(
+        "--- docker-compose stderr ---\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Check if docker-compose itself exited successfully.
     // If a container fails (test fails), `up --abort-on-container-exit` will cause
     // docker-compose to return a non-zero exit code.
-    assert!(output.status.success(), "The Docker integration test '{}' failed. Check the logs above.", test_name);
+    assert!(
+        output.status.success(),
+        "The Docker integration test '{}' failed. Check the logs above.",
+        test_name
+    );
 }
-
 
 #[test]
 fn test_ident_request_sequence() {
@@ -122,4 +138,3 @@ fn test_sdo_read_sequence() {
     println!("--- [HOST] Running Test: test_sdo_read_by_index_over_asnd ---");
     run_docker_test("test_sdo_read_by_index_over_asnd");
 }
-

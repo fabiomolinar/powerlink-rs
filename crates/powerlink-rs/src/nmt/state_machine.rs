@@ -1,7 +1,7 @@
-use crate::frame::DllError;
-use crate::od::{ObjectDictionary, ObjectValue};
 use super::events::NmtEvent;
 use super::states::NmtState;
+use crate::frame::DllError;
+use crate::od::{ObjectDictionary, ObjectValue};
 use alloc::vec::Vec;
 use log::info;
 
@@ -14,13 +14,23 @@ pub trait NmtStateMachine {
     fn set_state(&mut self, new_state: NmtState);
 
     /// Processes an external event and transitions the NMT state accordingly.
-    fn process_event(&mut self, event: NmtEvent, od: &mut ObjectDictionary) -> Option<Vec<DllError>>;
+    fn process_event(
+        &mut self,
+        event: NmtEvent,
+        od: &mut ObjectDictionary,
+    ) -> Option<Vec<DllError>>;
 
     /// Writes the current NMT state to the Object Dictionary (Index 0x1F8C).
     /// This is a provided method to reduce code duplication.
     fn update_od_state(&self, od: &mut ObjectDictionary) {
         // This write is internal and should not fail. `unwrap` is acceptable here.
-        od.write_internal(0x1F8C, 0, ObjectValue::Unsigned8(self.current_state() as u8), false).unwrap();
+        od.write_internal(
+            0x1F8C,
+            0,
+            ObjectValue::Unsigned8(self.current_state() as u8),
+            false,
+        )
+        .unwrap();
     }
 
     /// Resets the state machine to a specific reset state. This is a default implementation.
@@ -58,7 +68,11 @@ pub trait NmtStateMachine {
         ];
 
         for &next_state in &sequence {
-            info!("[NMT] Internal transition from {:?} to {:?}", self.current_state(), next_state);
+            info!(
+                "[NMT] Internal transition from {:?} to {:?}",
+                self.current_state(),
+                next_state
+            );
             self.set_state(next_state);
             self.update_od_state(od);
         }

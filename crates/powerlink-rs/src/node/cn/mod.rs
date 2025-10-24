@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/node/cn/mod.rs
 
-mod payload;
 mod main;
+mod payload;
 
 pub use main::ControlledNode;

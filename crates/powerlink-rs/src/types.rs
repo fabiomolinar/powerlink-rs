@@ -34,7 +34,6 @@ pub type MacAddress = [u8; 6];
 /// Alias for a 4-byte IP Address.
 pub type IpAddress = [u8; 4];
 
-
 /// Represents a POWERLINK Node ID, wrapping a `u8` to ensure type safety.
 ///
 /// Valid Node IDs are in the range 1-240, with special values for broadcast (255)
@@ -86,7 +85,7 @@ pub const C_DLL_MULTICAST_SOC: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x01];
 // --- Core Protocol Identifiers ---
 
 /// Defines the mandatory POWERLINK Message Type IDs.
-/// (EPSG DS 301, Appendix 3.1) 
+/// (EPSG DS 301, Appendix 3.1)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MessageType {
@@ -126,7 +125,11 @@ pub enum NodeIdError {
 impl fmt::Display for NodeIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NodeIdError::InvalidRange(value) => write!(f, "Invalid NodeId value: {}. Valid range is 1-240 or 253-255.", value),
+            NodeIdError::InvalidRange(value) => write!(
+                f,
+                "Invalid NodeId value: {}. Valid range is 1-240 or 253-255.",
+                value
+            ),
         }
     }
 }
@@ -143,7 +146,9 @@ impl TryFrom<u8> for NodeId {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             1..=C_ADR_MN_DEF_NODE_ID => Ok(NodeId(value)),
-            C_ADR_DIAG_DEF_NODE_ID | C_ADR_RT1_DEF_NODE_ID | C_ADR_BROADCAST_NODE_ID => Ok(NodeId(value)),
+            C_ADR_DIAG_DEF_NODE_ID | C_ADR_RT1_DEF_NODE_ID | C_ADR_BROADCAST_NODE_ID => {
+                Ok(NodeId(value))
+            }
             _ => Err(NodeIdError::InvalidRange(value)),
         }
     }
@@ -155,7 +160,6 @@ impl From<NodeId> for u8 {
         node_id.0
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -1,12 +1,20 @@
 // crates/powerlink-io-linux/tests/loopback_test.rs
 #![cfg(target_os = "linux")]
 
+use log::{debug, error, info, trace, warn};
+use pnet::datalink::interfaces;
 use powerlink_io_linux::LinuxPnetInterface;
 use powerlink_rs::{
+    ControlledNode,
+    NetworkInterface,
+    Node,
+    NodeAction,
+    PowerlinkError,
     common::{NetTime, RelativeTime},
+    deserialize_frame,
     frame::{
-        basic::MacAddress, ASndFrame, Codec, PowerlinkFrame, RequestedServiceId, ServiceId,
-        SoAFrame, SocFrame,
+        ASndFrame, Codec, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame,
+        basic::MacAddress,
     },
     nmt::{flags::FeatureFlags, states::NmtState},
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
@@ -15,17 +23,14 @@ use powerlink_rs::{
         command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation},
         sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader},
     },
-    types::{NodeId, C_ADR_MN_DEF_NODE_ID, EPLVersion},
-    deserialize_frame, ControlledNode, NetworkInterface, Node, NodeAction, PowerlinkError,
+    types::{C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId},
 };
-use pnet::datalink::interfaces;
 use std::{
     env,
     num::ParseIntError,
     thread,
     time::{Duration, Instant},
 };
-use log::{debug, error, info, trace, warn};
 
 // Define constants for clarity
 const TEST_INTERFACE: &str = "eth0"; // Standard interface name inside Docker
@@ -244,7 +249,7 @@ fn get_test_od(node_id: u8) -> ObjectDictionary<'static> {
         0x1E40, // NWL_IpAddrTable_Xh_REC (Conditional, assume supported for test)
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned16(1),                             // 1: IfIndex_U16
+                ObjectValue::Unsigned16(1),                           // 1: IfIndex_U16
                 ObjectValue::Unsigned32(0xC0A86400 | node_id as u32), // 2: Addr_IPAD (192.168.100.node_id)
                 ObjectValue::Unsigned32(0xFFFFFF00), // 3: NetMask_IPAD (255.255.255.0)
                 ObjectValue::Unsigned16(1500),       // 4: ReasmMaxSize_U16
@@ -407,7 +412,7 @@ fn run_cn_logic(interface_name: &str) {
         }
 
         let current_time_us = start_time.elapsed().as_micros() as u64;
-        let mut action;
+        let action;
 
         // The pnet interface is configured with a read timeout.
         // - Ok(bytes > 0) means a frame was received.
@@ -464,14 +469,13 @@ fn run_mn_logic(interface_name: &str, test_to_run: &str) {
         cn_node_id, interface_name, test_to_run
     );
 
-    let mut mn_interface =
-        match LinuxPnetInterface::new(interface_name, C_ADR_MN_DEF_NODE_ID) {
-            Ok(iface) => iface,
-            Err(e) => {
-                error!("[MN] Failed to create interface: {}", e);
-                panic!("[MN] Interface creation failed.");
-            }
-        };
+    let mut mn_interface = match LinuxPnetInterface::new(interface_name, C_ADR_MN_DEF_NODE_ID) {
+        Ok(iface) => iface,
+        Err(e) => {
+            error!("[MN] Failed to create interface: {}", e);
+            panic!("[MN] Interface creation failed.");
+        }
+    };
     let mn_mac = mn_interface.local_mac_address();
 
     // Give CN time to initialize (Increased slightly)
@@ -589,11 +593,7 @@ fn run_sdo_test_logic(
     let mut init_asnd_buffer = vec![0u8; 1500];
     let init_asnd_size = init_asnd.serialize(&mut init_asnd_buffer).unwrap();
     init_asnd_buffer.truncate(init_asnd_size);
-    send_frame_helper(
-        mn_interface,
-        &init_asnd_buffer,
-        "ASnd(SDO Init Request)",
-    );
+    send_frame_helper(mn_interface, &init_asnd_buffer, "ASnd(SDO Init Request)");
 
     // 5b. Receive ASnd(SDO Init ACK)
     let _init_ack_frame = receive_frame_helper(
@@ -681,17 +681,17 @@ fn run_sdo_test_logic(
                         if seq.receive_sequence_number == current_mn_sdo_seq {
                             // Check if it ACKs our Read Request
                             last_acked_cn_sdo_seq = seq.send_sequence_number; // Store CN's sequence number
-                                                                              // Now deserialize the command part (starts after Seq Header)
-                            SdoCommand::deserialize(&asnd.payload[4..]).ok().and_then(
-                                |cmd| {
+                            // Now deserialize the command part (starts after Seq Header)
+                            SdoCommand::deserialize(&asnd.payload[4..])
+                                .ok()
+                                .and_then(|cmd| {
                                     if cmd.header.is_response && !cmd.header.is_aborted {
                                         Some(true) // Return Option<bool>
                                     } else {
                                         warn!("Received SDO Abort or non-response cmd: {:?}", cmd);
                                         None // Not the frame we want
                                     }
-                                },
-                            )
+                                })
                         } else {
                             None
                         } // Not the frame we want

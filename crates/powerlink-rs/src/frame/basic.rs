@@ -89,13 +89,13 @@ mod tests {
         header.ether_type = 0x0800; // IP packet
         assert!(!header.is_powerlink());
     }
-    
+
     #[test]
     fn test_ethernet_header_new() {
         let dest_mac = MacAddress::new([0x01, 0x11, 0x1E, 0x00, 0x00, 0x01]);
         let src_mac = MacAddress::new([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
         let header = EthernetHeader::new(dest_mac, src_mac);
-        
+
         assert_eq!(header.destination_mac, dest_mac);
         assert_eq!(header.source_mac, src_mac);
         assert_eq!(header.ether_type, C_DLL_ETHERTYPE_EPL.to_be());

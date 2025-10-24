@@ -11,18 +11,23 @@
 //! print the digital outputs it receives from the MN. The MN logic mirrors the
 //! CN's inputs back to its outputs.
 
+use log::{error, info};
 use powerlink_io_linux::LinuxPnetInterface;
 use powerlink_rs::{
+    ControlledNode,
+    NetworkInterface,
+    PowerlinkError,
     frame::basic::MacAddress,
     nmt::{flags::FeatureFlags, states::NmtState},
-    node::{Node, NodeAction, ManagingNode}, // Corrected import
+    node::{ManagingNode, Node, NodeAction}, // Corrected import
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
     pdo::PdoMappingEntry,
-    types::{NodeId, C_ADR_MN_DEF_NODE_ID},
-    ControlledNode, NetworkInterface, PowerlinkError,
+    types::C_ADR_MN_DEF_NODE_ID,
 };
-use std::{env, thread, time::{Duration, Instant}};
-use log::{error, info}; // Removed unused debug, trace, warn
+use std::{
+    env, thread,
+    time::{Duration, Instant},
+}; // Removed unused debug, trace, warn
 
 // --- Common Configuration (Moved to top level) ---
 
@@ -108,8 +113,12 @@ fn get_cn_od(node_id: u8) -> ObjectDictionary<'static> {
     // --- PDO Configuration ---
 
     // TPDO1: Transmit inputs from CN to MN (in PRes)
-    let tpdo1_map_di =
-        PdoMappingEntry { index: IDX_DIGITAL_INPUTS, sub_index: 0, offset_bits: 0, length_bits: 8 };
+    let tpdo1_map_di = PdoMappingEntry {
+        index: IDX_DIGITAL_INPUTS,
+        sub_index: 0,
+        offset_bits: 0,
+        length_bits: 8,
+    };
     let tpdo1_map_ai1 = PdoMappingEntry {
         index: IDX_ANALOG_INPUTS,
         sub_index: 1,
@@ -162,7 +171,7 @@ fn get_cn_od(node_id: u8) -> ObjectDictionary<'static> {
             pdo_mapping: None,
         },
     );
-    
+
     od
 }
 
@@ -276,8 +285,12 @@ fn get_mn_od(cn_mac: MacAddress) -> ObjectDictionary<'static> {
         },
     );
     // The RPDO mapping must match the CN's TPDO mapping
-    let rpdo1_map_di =
-        PdoMappingEntry { index: IDX_DIGITAL_INPUTS, sub_index: 0, offset_bits: 0, length_bits: 8 };
+    let rpdo1_map_di = PdoMappingEntry {
+        index: IDX_DIGITAL_INPUTS,
+        sub_index: 0,
+        offset_bits: 0,
+        length_bits: 8,
+    };
     let rpdo1_map_ai1 = PdoMappingEntry {
         index: IDX_ANALOG_INPUTS,
         sub_index: 1,
@@ -385,7 +398,7 @@ fn run_cn_logic(interface_name: &str) {
 
         // --- Network Stack Logic ---
         let action;
-        match interface.receive_frame(&mut buffer) {            
+        match interface.receive_frame(&mut buffer) {
             Ok(0) => {
                 // Timeout
                 action = node.tick(current_time_us);
@@ -417,8 +430,7 @@ fn run_mn_logic(interface_name: &str, cn_mac: MacAddress) {
     info!("[MN] Starting up as Managing Node.");
     let od = get_mn_od(cn_mac);
 
-    let (mut interface, mut node) =
-        setup_mn_node(interface_name, od).expect("Failed to setup MN");
+    let (mut interface, mut node) = setup_mn_node(interface_name, od).expect("Failed to setup MN");
 
     let start_time = Instant::now();
     let mut last_log_time = Instant::now();
@@ -445,7 +457,9 @@ fn run_mn_logic(interface_name: &str, cn_mac: MacAddress) {
         // Non-blocking receive for PRes/ASnd
         let mut buffer = [0u8; 1518];
         // In a real app, this should be truly non-blocking. Here we use a very short timeout.
-        interface.set_read_timeout(Duration::from_micros(100)).unwrap();
+        interface
+            .set_read_timeout(Duration::from_micros(100))
+            .unwrap();
         if let Ok(bytes) = interface.receive_frame(&mut buffer) {
             if bytes > 0 {
                 node.process_raw_frame(&buffer[..bytes], current_time_us);
@@ -505,7 +519,9 @@ fn add_mandatory_cn_objects(od: &mut ObjectDictionary, node_id: u8) {
             name: "NMT_DeviceType_U32",
             category: Category::Mandatory,
             access: Some(AccessType::Constant),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -519,7 +535,10 @@ fn add_mandatory_cn_objects(od: &mut ObjectDictionary, node_id: u8) {
             ]),
             name: "NMT_IdentityObject_REC",
             category: Category::Mandatory,
-            access: None, default_value: None, value_range: None, pdo_mapping: None,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     let flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND | FeatureFlags::SDO_UDP;
@@ -530,7 +549,9 @@ fn add_mandatory_cn_objects(od: &mut ObjectDictionary, node_id: u8) {
             name: "NMT_FeatureFlags_U32",
             category: Category::Mandatory,
             access: Some(AccessType::Constant),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -588,14 +609,16 @@ fn add_mandatory_cn_objects(od: &mut ObjectDictionary, node_id: u8) {
 
 // Add mandatory objects required for a basic MN
 fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
-     od.insert(
+    od.insert(
         0x1000, // NMT_DeviceType_U32
         ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(0x000F0191)), // Generic Device
             name: "NMT_DeviceType_U32",
             category: Category::Mandatory,
             access: Some(AccessType::Constant),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -609,7 +632,10 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
             ]),
             name: "NMT_IdentityObject_REC",
             category: Category::Mandatory,
-            access: None, default_value: None, value_range: None, pdo_mapping: None,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     let flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND | FeatureFlags::SDO_UDP;
@@ -620,7 +646,9 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
             name: "NMT_FeatureFlags_U32",
             category: Category::Mandatory,
             access: Some(AccessType::Constant),
-            default_value: None, value_range: None, pdo_mapping: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
         },
     );
     od.insert(
@@ -663,7 +691,7 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
         ObjectEntry {
             object: Object::Record(vec![
                 ObjectValue::Unsigned32(1_000_000), // MNWaitNotAct_U32 (1 sec)
-                ObjectValue::Unsigned32(500_000),  // MNTimeoutPreOp1_U32 (500 ms)
+                ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp1_U32 (500 ms)
             ]),
             name: "NMT_BootTime_REC",
             category: Category::Mandatory,
@@ -686,20 +714,20 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
             pdo_mapping: None,
         },
     );
-    
+
     od.insert(
         0x1F98, // NMT_CycleTiming_REC
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned16(1490), // 1: IsochrTxMaxPayload_U16
-                ObjectValue::Unsigned16(1490), // 2: IsochrRxMaxPayload_U16
+                ObjectValue::Unsigned16(1490),  // 1: IsochrTxMaxPayload_U16
+                ObjectValue::Unsigned16(1490),  // 2: IsochrRxMaxPayload_U16
                 ObjectValue::Unsigned32(10000), // 3: PresMaxLatency_U32 (10 us)
-                ObjectValue::Unsigned16(100),  // 4: PreqActPayloadLimit_U16 (not used by MN)
-                ObjectValue::Unsigned16(100),  // 5: PresActPayloadLimit_U16
+                ObjectValue::Unsigned16(100),   // 4: PreqActPayloadLimit_U16 (not used by MN)
+                ObjectValue::Unsigned16(100),   // 5: PresActPayloadLimit_U16
                 ObjectValue::Unsigned32(20000), // 6: AsndMaxLatency_U32 (20 us)
-                ObjectValue::Unsigned8(0),     // 7: MultiplCycleCnt_U8
-                ObjectValue::Unsigned16(300),  // 8: AsyncMTU_U16
-                ObjectValue::Unsigned16(2),    // 9: Prescaler_U16
+                ObjectValue::Unsigned8(0),      // 7: MultiplCycleCnt_U8
+                ObjectValue::Unsigned16(300),   // 8: AsyncMTU_U16
+                ObjectValue::Unsigned16(2),     // 9: Prescaler_U16
             ]),
             name: "NMT_CycleTiming_REC",
             category: Category::Mandatory,

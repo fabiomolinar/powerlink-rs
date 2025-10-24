@@ -1,10 +1,10 @@
 // crates/powerlink-rs/src/frame/poll/preq.rs
 
+use crate::PowerlinkError;
 use crate::frame::basic::{EthernetHeader, MacAddress};
 use crate::frame::codec::{Codec, CodecHelpers};
 use crate::pdo::PDOVersion;
-use crate::types::{MessageType, NodeId, C_ADR_MN_DEF_NODE_ID};
-use crate::PowerlinkError;
+use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::vec::Vec;
 
 /// Represents a Poll Request frame (MN unicast frame to CN).

@@ -267,7 +267,7 @@ impl<'a> ObjectDictionary<'a> {
             for (&index, entry) in &self.entries {
                 // Determine if this object's group (Comm, App, etc.) should be saved.
                 let should_save = match list_to_save {
-                    1 => true,                                     // Save All
+                    1 => true,                               // Save All
                     2 => (0x1000..=0x1FFF).contains(&index), // Save Communication
                     3 => (0x6000..=0x9FFF).contains(&index), // Save Application
                     _ => false, // Other sub-indices are manufacturer-specific
@@ -275,16 +275,17 @@ impl<'a> ObjectDictionary<'a> {
 
                 if should_save {
                     if let Some(access) = entry.access {
-                        if matches!(access, AccessType::ReadWriteStore | AccessType::WriteOnlyStore)
-                        {
+                        if matches!(
+                            access,
+                            AccessType::ReadWriteStore | AccessType::WriteOnlyStore
+                        ) {
                             match &entry.object {
                                 Object::Variable(val) => {
                                     storable_params.insert((index, 0), val.clone());
                                 }
                                 Object::Record(vals) | Object::Array(vals) => {
                                     for (i, val) in vals.iter().enumerate() {
-                                        storable_params
-                                            .insert((index, (i + 1) as u8), val.clone());
+                                        storable_params.insert((index, (i + 1) as u8), val.clone());
                                     }
                                 }
                             }

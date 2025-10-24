@@ -2,7 +2,7 @@
 
 use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler};
 use crate::od::{ObjectDictionary, ObjectValue};
-use crate::pdo::{PdoMappingEntry, PDOVersion};
+use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::NodeId;
 use log::{trace, warn};
 
@@ -43,9 +43,9 @@ pub trait PdoHandler<'s> {
         for i in 0..256 {
             let comm_param_index = OD_IDX_RPDO_COMM_PARAM_BASE + i as u16;
             // Use self.od() which now correctly returns &'s mut
-            if let Some(node_id_val) =
-                self.od()
-                    .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
+            if let Some(node_id_val) = self
+                .od()
+                .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
             {
                 if node_id_val == source_node_id.0 {
                     // Found the correct communication parameter object
@@ -75,7 +75,10 @@ pub trait PdoHandler<'s> {
         let mapping_index = match mapping_index {
             Some(index) => index,
             None => {
-                trace!("No RPDO mapping found for source Node {}.", source_node_id.0);
+                trace!(
+                    "No RPDO mapping found for source Node {}.",
+                    source_node_id.0
+                );
                 return;
             }
         };
@@ -107,7 +110,10 @@ pub trait PdoHandler<'s> {
     ) {
         // Get byte-aligned offset and length
         let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
-            warn!("Bit-level PDO mapping is not supported. Index: {}, SubIndex: {}.", entry.index, entry.sub_index);
+            warn!(
+                "Bit-level PDO mapping is not supported. Index: {}, SubIndex: {}.",
+                entry.index, entry.sub_index
+            );
             return;
         };
 
@@ -115,7 +121,11 @@ pub trait PdoHandler<'s> {
         if payload.len() < offset + length {
             warn!(
                 "RPDO mapping for 0x{:04X}/{} from Node {} is out of bounds. Payload size: {}, expected at least {}.",
-                entry.index, entry.sub_index, source_node_id.0, payload.len(), offset + length
+                entry.index,
+                entry.sub_index,
+                source_node_id.0,
+                payload.len(),
+                offset + length
             );
             // Use self.dll_error_manager()
             self.dll_error_manager()
@@ -134,7 +144,10 @@ pub trait PdoHandler<'s> {
             .map(|cow| cow.into_owned());
 
         let Some(type_template) = type_template_option else {
-            warn!("RPDO mapping for 0x{:04X}/{} failed: OD entry not found.", entry.index, entry.sub_index);
+            warn!(
+                "RPDO mapping for 0x{:04X}/{} failed: OD entry not found.",
+                entry.index, entry.sub_index
+            );
             return;
         };
 
@@ -142,14 +155,12 @@ pub trait PdoHandler<'s> {
             Ok(value) => {
                 trace!(
                     "Applying RPDO: Writing {:?} to 0x{:04X}/{}",
-                    value,
-                    entry.index,
-                    entry.sub_index
+                    value, entry.index, entry.sub_index
                 );
                 // Use self.od()
-                if let Err(e) =
-                    self.od()
-                        .write_internal(entry.index, entry.sub_index, value, false)
+                if let Err(e) = self
+                    .od()
+                    .write_internal(entry.index, entry.sub_index, value, false)
                 {
                     warn!(
                         "Failed to write RPDO data to 0x{:04X}/{}: {:?}",

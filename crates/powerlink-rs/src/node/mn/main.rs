@@ -1,23 +1,25 @@
 // crates/powerlink-rs/src/node/mn/main.rs
 
 use super::scheduler;
+use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
 use crate::frame::control::{SoAFlags, SocFlags};
 use crate::frame::{
-    deserialize_frame,
-    error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler, MnErrorCounters},
-    ASndFrame, DllMsStateMachine, PowerlinkFrame, PResFrame, RequestedServiceId, ServiceId,
-    SoAFrame, SocFrame, Codec,
+    ASndFrame, Codec, DllMsStateMachine, PResFrame, PowerlinkFrame, RequestedServiceId, ServiceId,
+    SoAFrame, SocFrame, deserialize_frame,
+    error::{
+        DllError, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler,
+        MnErrorCounters,
+    },
 };
+use crate::nmt::events::NmtEvent;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::nmt::events::NmtEvent;
 use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::{Object, ObjectDictionary, ObjectValue};
 use crate::types::{EPLVersion, NodeId};
-use crate::PowerlinkError;
 use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -124,7 +126,7 @@ impl<'s> ManagingNode<'s> {
         // Run the initial state transitions to get to NmtNotActive.
         node.nmt_state_machine
             .run_internal_initialisation(&mut node.od);
-        
+
         Ok(node)
     }
 
@@ -133,10 +135,10 @@ impl<'s> ManagingNode<'s> {
     fn process_frame(&mut self, frame: PowerlinkFrame, _current_time_us: u64) -> NodeAction {
         // 1. Update NMT state machine based on the frame type.
         if let Some(event) = frame.nmt_event() {
-             // Don't transition NMT state based on received frames if MN is not yet active
-             if self.nmt_state() != NmtState::NmtNotActive {
-                 self.nmt_state_machine.process_event(event, &mut self.od);
-             }
+            // Don't transition NMT state based on received frames if MN is not yet active
+            if self.nmt_state() != NmtState::NmtNotActive {
+                self.nmt_state_machine.process_event(event, &mut self.od);
+            }
         }
 
         // 2. Update DLL state machine.
@@ -144,11 +146,11 @@ impl<'s> ManagingNode<'s> {
         if let Some(errors) = self.dll_state_machine.process_event(
             frame.dll_mn_event(),
             self.nmt_state(),
-            false, /* response_expected */
-            false, /* async_in */
-            false, /* async_out */
-            false, /* isochr */
-            false, /* isochr_out */
+            false,     /* response_expected */
+            false,     /* async_in */
+            false,     /* async_out */
+            false,     /* isochr */
+            false,     /* isochr_out */
             NodeId(0), /* placeholder dest_node_id */
         ) {
             for error in errors {
@@ -156,9 +158,9 @@ impl<'s> ManagingNode<'s> {
                 let nmt_action = self.dll_error_manager.handle_error(error);
                 // TODO: Handle NmtAction::ResetNode(id)
                 if nmt_action != crate::frame::NmtAction::None {
-                     self.nmt_state_machine
-                         .process_event(NmtEvent::Error, &mut self.od);
-                 }
+                    self.nmt_state_machine
+                        .process_event(NmtEvent::Error, &mut self.od);
+                }
             }
         }
 
@@ -218,14 +220,18 @@ impl<'s> ManagingNode<'s> {
             }
             ServiceId::Sdo => {
                 // TODO: Handle SDO (which for MN is usually a client response)
-                 trace!(
+                trace!(
                     "[MN] Received SDO ASnd from CN {}. SDO Client functionality not yet implemented.",
                     frame.source.0
-                 );
+                );
             }
-             _ => { // Handle other Service IDs if necessary, or just trace
-                 trace!("[MN] Ignoring ASnd with unhandled ServiceID {:?} from Node {}", frame.service_id, frame.source.0);
-             }
+            _ => {
+                // Handle other Service IDs if necessary, or just trace
+                trace!(
+                    "[MN] Ignoring ASnd with unhandled ServiceID {:?} from Node {}",
+                    frame.service_id, frame.source.0
+                );
+            }
         }
     }
 
@@ -295,10 +301,7 @@ impl<'s> ManagingNode<'s> {
                 NodeAction::SendFrame(buf)
             }
             Err(e) => {
-                error!(
-                    "[MN] Failed to serialize SoA(IdentRequest) frame: {:?}",
-                    e
-                );
+                error!("[MN] Failed to serialize SoA(IdentRequest) frame: {:?}", e);
                 NodeAction::NoAction
             }
         }
@@ -312,9 +315,7 @@ impl<'s> PdoHandler<'s> for ManagingNode<'s> {
     }
 
     // Match the trait signature using `impl Trait`
-    fn dll_error_manager(
-        &mut self,
-    ) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
+    fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
         &mut self.dll_error_manager
     }
 }
@@ -358,7 +359,7 @@ impl<'s> Node for ManagingNode<'s> {
         }
 
         let mut action = NodeAction::NoAction;
-        
+
         // --- NotActive Timeout Check ---
         if self.nmt_state() == NmtState::NmtNotActive {
             info!("[MN] NotActive timeout expired. No other MN detected. Proceeding to boot.");
@@ -377,9 +378,9 @@ impl<'s> Node for ManagingNode<'s> {
             "[MN] Tick: Cycle/Action start at {}us (State: {:?})",
             current_time_us, nmt_state
         );
-        
+
         if nmt_state != NmtState::NmtNotActive {
-             self.dll_error_manager.on_cycle_complete();
+            self.dll_error_manager.on_cycle_complete();
         }
 
         action = match nmt_state {
@@ -392,20 +393,18 @@ impl<'s> Node for ManagingNode<'s> {
             }
             NmtState::NmtOperational
             | NmtState::NmtReadyToOperate
-            | NmtState::NmtPreOperational2 => {
-                self.build_soc_frame()
-            }
+            | NmtState::NmtPreOperational2 => self.build_soc_frame(),
             _ => NodeAction::NoAction,
         };
 
         // Schedule the next tick
         self.cycle_time_us = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
         if self.cycle_time_us > 0 {
-             self.next_tick_us = Some(current_time_us + self.cycle_time_us);
+            self.next_tick_us = Some(current_time_us + self.cycle_time_us);
         } else {
-             self.next_tick_us = None; // Stop scheduling if cycle time is 0
+            self.next_tick_us = None; // Stop scheduling if cycle time is 0
         }
-        
+
         action
     }
 
@@ -416,11 +415,11 @@ impl<'s> Node for ManagingNode<'s> {
     fn next_action_time(&self) -> Option<u64> {
         // If we are in NotActive for the first time, schedule the initial check.
         if self.nmt_state() == NmtState::NmtNotActive && self.next_tick_us.is_none() {
-             let timeout_ns = self.nmt_state_machine.wait_not_active_timeout;
-             // We need current_time to set an absolute deadline.
-             // This indicates to the user's loop that it should call tick() once immediately
-             // to get the first deadline scheduled.
-             return Some(0);
+            let timeout_ns = self.nmt_state_machine.wait_not_active_timeout;
+            // We need current_time to set an absolute deadline.
+            // This indicates to the user's loop that it should call tick() once immediately
+            // to get the first deadline scheduled.
+            return Some(0);
         }
         self.next_tick_us
     }

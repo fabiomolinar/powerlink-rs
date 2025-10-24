@@ -1,5 +1,5 @@
 // In crates/powerlink-rs/src/pdo/mapping.rs
-use crate::types::{UNSIGNED16, UNSIGNED64, UNSIGNED8};
+use crate::types::{UNSIGNED8, UNSIGNED16, UNSIGNED64};
 use core::fmt;
 
 /// Represents the 8-bit PDO Version, used for mapping validation.
@@ -125,4 +125,3 @@ mod tests {
         assert_eq!(entry, parsed_entry);
     }
 }
-

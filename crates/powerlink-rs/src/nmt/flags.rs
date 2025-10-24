@@ -68,8 +68,8 @@ mod tests {
     #[test]
     fn test_bitor_implementation() {
         let flags1 = FeatureFlags::ISOCHRONOUS; // Bit 0
-        let flags2 = FeatureFlags::SDO_ASND;    // Bit 2
-        
+        let flags2 = FeatureFlags::SDO_ASND; // Bit 2
+
         let combined = flags1 | flags2;
 
         assert_eq!(combined.0, 0b0000_0101); // Bit 0 and Bit 2 are set

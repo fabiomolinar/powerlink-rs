@@ -1,21 +1,22 @@
 // crates/powerlink-rs/src/node/cn/main.rs
 
 use super::payload;
+use crate::PowerlinkError;
 use crate::frame::{
-    basic::MacAddress, deserialize_frame, 
+    ASndFrame, Codec, DllCsEvent, DllCsStateMachine, DllError, NmtAction, PReqFrame, PResFrame,
+    PowerlinkFrame, RequestedServiceId, ServiceId,
+    basic::MacAddress,
+    deserialize_frame,
     error::{CnErrorCounters, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler},
-    ASndFrame, Codec, DllCsEvent, DllCsStateMachine, DllError, NmtAction, PReqFrame, PResFrame, 
-    PowerlinkFrame, RequestedServiceId, ServiceId
 };
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
+use crate::nmt::events::NmtEvent;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::nmt::events::NmtEvent;
 use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::ObjectDictionary;
 use crate::sdo::SdoServer;
 use crate::types::NodeId;
-use crate::PowerlinkError;
 use alloc::vec;
 use log::{debug, error, info, trace, warn};
 
@@ -142,7 +143,7 @@ impl<'s> ControlledNode<'s> {
                                 PowerlinkError::SubObjectNotFound => 0x0609_0011,
                                 PowerlinkError::TypeMismatch => 0x0607_0010,
                                 PowerlinkError::StorageError(_) => 0x0800_0020, // Cannot transfer data
-                                _ => 0x0800_0000, // General error
+                                _ => 0x0800_0000,                               // General error
                             };
                             return payload::build_sdo_abort_response(
                                 self.mac_address,
@@ -154,7 +155,9 @@ impl<'s> ControlledNode<'s> {
                                 asnd_frame.eth_header.source_mac, // Abort goes back to original sender MAC
                             );
                         } else {
-                            error!("Cannot send SDO Abort: Could not determine Transaction ID from invalid request.");
+                            error!(
+                                "Cannot send SDO Abort: Could not determine Transaction ID from invalid request."
+                            );
                         }
                     }
                 }
@@ -195,10 +198,10 @@ impl<'s> ControlledNode<'s> {
         }
 
         // 2. Update DLL state machine based on the frame type.
-        if let Some(errors) = self.dll_state_machine.process_event(
-            frame.dll_cn_event(),
-            self.nmt_state_machine.current_state(),
-        ) {
+        if let Some(errors) = self
+            .dll_state_machine
+            .process_event(frame.dll_cn_event(), self.nmt_state_machine.current_state())
+        {
             // If the DLL detects an error (like a lost frame), pass it to the error manager.
             for error in errors {
                 warn!("DLL state machine reported error: {:?}", error);
@@ -311,11 +314,11 @@ impl<'s> Node for ControlledNode<'s> {
             && buffer.len() > 14
             && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
         {
-            info!("[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1.");
-            self.nmt_state_machine.process_event(
-                NmtEvent::PowerlinkFrameReceived,
-                &mut self.od,
+            info!(
+                "[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1."
             );
+            self.nmt_state_machine
+                .process_event(NmtEvent::PowerlinkFrameReceived, &mut self.od);
             // After transitioning, fall through to process the frame that triggered it
         }
 
@@ -331,11 +334,7 @@ impl<'s> Node for ControlledNode<'s> {
                 // This looked like a POWERLINK frame (correct EtherType) but was malformed.
                 // This is an error condition.
                 warn!("[CN] Could not deserialize frame: {:?}", e);
-                if self
-                    .dll_error_manager
-                    .handle_error(DllError::InvalidFormat)
-                    != NmtAction::None
-                {
+                if self.dll_error_manager.handle_error(DllError::InvalidFormat) != NmtAction::None {
                     self.nmt_state_machine
                         .process_event(NmtEvent::Error, &mut self.od);
                 }
@@ -372,9 +371,9 @@ impl<'s> Node for ControlledNode<'s> {
             self.soc_timeout_check_active = false;
         } else if self.soc_timeout_check_active {
             warn!("SoC timeout detected at {}us!", current_time_us);
-            if let Some(errors) =
-                self.dll_state_machine
-                    .process_event(DllCsEvent::SocTimeout, current_nmt_state)
+            if let Some(errors) = self
+                .dll_state_machine
+                .process_event(DllCsEvent::SocTimeout, current_nmt_state)
             {
                 for error in errors {
                     if self.dll_error_manager.handle_error(error) != NmtAction::None {
@@ -401,7 +400,7 @@ impl<'s> Node for ControlledNode<'s> {
                 }
             }
         }
-        
+
         NodeAction::NoAction
     }
 

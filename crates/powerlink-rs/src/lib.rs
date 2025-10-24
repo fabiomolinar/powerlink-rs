@@ -4,9 +4,9 @@
 extern crate alloc;
 
 // --- Foundation Modules ---
-pub mod types;
-pub mod hal;
 pub mod common;
+pub mod hal;
+pub mod types;
 
 // --- Node Abstraction ---
 pub mod node;
@@ -21,11 +21,11 @@ pub mod pdo;
 pub mod sdo;
 
 // --- Top-level Exports ---
-pub use types::NodeId;
-pub use hal::{NetworkInterface, PowerlinkError, ObjectDictionaryStorage};
 pub use common::{NetTime, RelativeTime};
-pub use frame::error::{ErrorHandler, DllErrorManager, NoOpErrorHandler, LoggingErrorHandler};
 pub use frame::codec::{Codec, deserialize_frame};
-pub use node::{Node, NodeAction};
+pub use frame::error::{DllErrorManager, ErrorHandler, LoggingErrorHandler, NoOpErrorHandler};
+pub use hal::{NetworkInterface, ObjectDictionaryStorage, PowerlinkError};
 pub use node::cn::ControlledNode;
-pub use pdo::PdoMappingEntry; // Export the new PDO mapping struct
+pub use node::{Node, NodeAction};
+pub use pdo::PdoMappingEntry;
+pub use types::NodeId; // Export the new PDO mapping struct

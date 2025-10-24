@@ -1,7 +1,7 @@
 #![cfg(target_os = "windows")]
 
-use powerlink_rs::{NetworkInterface, PowerlinkError};
 use pnet::datalink::{self, Channel, NetworkInterface as PnetInterface};
+use powerlink_rs::{NetworkInterface, PowerlinkError};
 use std::sync::Mutex;
 
 pub struct WindowsPnetInterface {
@@ -49,10 +49,10 @@ impl NetworkInterface for WindowsPnetInterface {
     fn receive_frame(&mut self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
         // 1. Acquire the lock and bind it to a variable to extend its lifetime.
         let mut rx_guard = self.rx.lock().unwrap();
-        
+
         // 2. Call next() on the guard.
         let frame = rx_guard.next().map_err(|_| PowerlinkError::IoError)?;
-        
+
         // The lock is now held until the end of this function.
         let len = frame.len();
         if buffer.len() >= len {

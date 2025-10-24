@@ -245,7 +245,7 @@ impl SdoServer {
             is_response: true,
             is_aborted: false,
             segmentation: Segmentation::Segment, // Default unless first or last
-            command_id: CommandId::ReadByIndex, // Response to a read request
+            command_id: CommandId::ReadByIndex,  // Response to a read request
             segment_size: 0,
         };
 
@@ -326,7 +326,7 @@ impl SdoServer {
                             transaction_id: command.header.transaction_id,
                             total_size: command.data_size.unwrap_or(0) as usize,
                             data_buffer: req.data.to_vec(), // Store first segment
-                            offset: req.data.len(),          // Track bytes received
+                            offset: req.data.len(),         // Track bytes received
                             index: req.index,
                             sub_index: req.sub_index,
                         });
@@ -352,7 +352,9 @@ impl SdoServer {
                     }
 
                     // Append received data
-                    transfer_state.data_buffer.extend_from_slice(&command.payload);
+                    transfer_state
+                        .data_buffer
+                        .extend_from_slice(&command.payload);
                     transfer_state.offset += command.payload.len();
                     debug!(
                         "Received download segment: new offset={}",
@@ -378,8 +380,7 @@ impl SdoServer {
                         let data_buffer = transfer_state.data_buffer.clone(); // Clone data for OD write
 
                         // Finalize the write to OD
-                        let result =
-                            self.write_to_od(index, sub_index, &data_buffer, od);
+                        let result = self.write_to_od(index, sub_index, &data_buffer, od);
                         self.state = SdoServerState::Established; // Return to established state
 
                         match result {

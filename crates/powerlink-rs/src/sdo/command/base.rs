@@ -1,7 +1,7 @@
 // crates/powerlink-rs/src/sdo/command/base.rs
-use crate::frame::Codec;
-use crate::types::{UNSIGNED16, UNSIGNED32, UNSIGNED8};
 use crate::PowerlinkError;
+use crate::frame::Codec;
+use crate::types::{UNSIGNED8, UNSIGNED16, UNSIGNED32};
 use alloc::vec::Vec;
 
 /// Defines the SDO command IDs.
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(original, deserialized);
         assert_eq!(deserialized.data_size, Some(1000));
     }
-    
+
     #[test]
     fn test_enum_try_from() {
         assert_eq!(CommandId::try_from(0x01), Ok(CommandId::WriteByIndex));

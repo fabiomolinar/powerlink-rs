@@ -1,13 +1,13 @@
 // crates/powerlink-rs/src/frame/control/soa.rs
 
+use crate::PowerlinkError;
 use crate::frame::basic::{EthernetHeader, MacAddress};
+use crate::frame::codec::{Codec, CodecHelpers};
 use crate::nmt::states::NmtState;
 use crate::types::{
-    EPLVersion, NodeId, C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_SOA,
-    MessageType,
+    C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_SOA, EPLVersion, MessageType,
+    NodeId,
 };
-use crate::frame::codec::{Codec, CodecHelpers};
-use crate::PowerlinkError;
 
 /// Requested Service IDs for SoA frames.
 /// (Reference: EPSG DS 301, Appendix 3.4)
@@ -158,7 +158,10 @@ mod tests {
         let source_mac = MacAddress([0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54]);
         let target_node = NodeId(42);
         let service = RequestedServiceId::StatusRequest;
-        let flags = SoAFlags { ea: true, er: false };
+        let flags = SoAFlags {
+            ea: true,
+            er: false,
+        };
 
         let frame = SoAFrame::new(
             source_mac,
@@ -181,7 +184,10 @@ mod tests {
         let original_frame = SoAFrame::new(
             source_mac,
             NmtState::NmtPreOperational1,
-            SoAFlags { ea: true, er: false },
+            SoAFlags {
+                ea: true,
+                er: false,
+            },
             RequestedServiceId::StatusRequest,
             NodeId(42),
             EPLVersion(1),

@@ -1,13 +1,13 @@
 // crates/powerlink-rs/src/nmt/mn_state_machine.rs
 
+use super::flags::FeatureFlags;
 use super::state_machine::NmtStateMachine;
+use super::states::NmtState;
+use crate::PowerlinkError;
 use crate::frame::DllError;
 use crate::nmt::events::NmtEvent;
 use crate::od::{ObjectDictionary, ObjectValue};
-use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
-use crate::PowerlinkError;
-use super::flags::FeatureFlags;
-use super::states::NmtState;
+use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::vec::Vec;
 use log::{debug, info, warn};
 
@@ -49,7 +49,8 @@ impl MnNmtStateMachine {
         };
 
         // WaitNotActive timeout from OD entry 0x1F89, sub-index 1.
-        let wait_not_active_timeout_val = od.read(0x1F89, 1).ok_or(PowerlinkError::ObjectNotFound)?;
+        let wait_not_active_timeout_val =
+            od.read(0x1F89, 1).ok_or(PowerlinkError::ObjectNotFound)?;
         let wait_not_active_timeout =
             if let ObjectValue::Unsigned32(val) = &*wait_not_active_timeout_val {
                 *val
@@ -90,7 +91,11 @@ impl NmtStateMachine for MnNmtStateMachine {
 
     /// Processes an external event and transitions the NMT state accordingly.
     /// The logic follows the MN state diagram (Figure 73) from the specification.
-    fn process_event(&mut self, event: NmtEvent, od: &mut ObjectDictionary) -> Option<Vec<DllError>> {
+    fn process_event(
+        &mut self,
+        event: NmtEvent,
+        od: &mut ObjectDictionary,
+    ) -> Option<Vec<DllError>> {
         let errors: Vec<DllError> = Vec::new();
         let old_state = self.current_state;
 
@@ -147,8 +152,10 @@ impl NmtStateMachine for MnNmtStateMachine {
             (NmtState::NmtOperational, NmtEvent::Error) => NmtState::NmtPreOperational1,
 
             // (NMT_CT12) MN in BasicEthernet detects other POWERLINK traffic
-            (NmtState::NmtBasicEthernet, NmtEvent::PowerlinkFrameReceived) => NmtState::NmtPreOperational1,
-            
+            (NmtState::NmtBasicEthernet, NmtEvent::PowerlinkFrameReceived) => {
+                NmtState::NmtPreOperational1
+            }
+
             // If no specific transition is defined, remain in the current state.
             (current, _) => {
                 warn!("[NMT] Unhandled event {:?} in state {:?}", event, current);
@@ -164,7 +171,7 @@ impl NmtStateMachine for MnNmtStateMachine {
             self.current_state = next_state;
             self.update_od_state(od);
         }
-        
+
         if errors.is_empty() {
             None
         } else {
@@ -176,54 +183,66 @@ impl NmtStateMachine for MnNmtStateMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::od::{Object, ObjectEntry, AccessType};
+    use crate::od::{AccessType, Object, ObjectEntry};
     use alloc::vec;
 
     fn get_test_mn_od() -> ObjectDictionary<'static> {
         let mut od = ObjectDictionary::new(None);
         let flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND | FeatureFlags::SDO_UDP;
-        od.insert(0x1F82, ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned32(flags.0)),
-            name: "NMT_FeatureFlags_U32",
-            access: Some(AccessType::Constant),
-            default_value: Some(ObjectValue::Unsigned32(flags.0)),
-            value_range: None,
-            pdo_mapping: None,
-            category: crate::od::Category::Optional,
-        });
-        od.insert(0x1F80, ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned32(0)), // Default: Bit 13 is 0
-            name: "NMT_StartUp_U32",
-            access: Some(AccessType::ReadWrite),
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-            category: crate::od::Category::Optional,
-        });
-        od.insert(0x1F89, ObjectEntry {
-            object: Object::Record(vec![
-                ObjectValue::Unsigned32(1_000_000), // MNWaitNotAct_U32
-                ObjectValue::Unsigned32(500_000),  // MNTimeoutPreOp1_U32
-            ]),
-            name: "NMT_BootTime_REC",
-            access: Some(AccessType::ReadWrite),
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-            category: crate::od::Category::Optional,
-        });
-         od.insert(0x1F8C, ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned8(0)),
-            name: "NMT_CurrNMTState_U8",
-            access: Some(AccessType::ReadOnly),
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-            category: crate::od::Category::Optional,
-        });
+        od.insert(
+            0x1F82,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned32(flags.0)),
+                name: "NMT_FeatureFlags_U32",
+                access: Some(AccessType::Constant),
+                default_value: Some(ObjectValue::Unsigned32(flags.0)),
+                value_range: None,
+                pdo_mapping: None,
+                category: crate::od::Category::Optional,
+            },
+        );
+        od.insert(
+            0x1F80,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned32(0)), // Default: Bit 13 is 0
+                name: "NMT_StartUp_U32",
+                access: Some(AccessType::ReadWrite),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+                category: crate::od::Category::Optional,
+            },
+        );
+        od.insert(
+            0x1F89,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned32(1_000_000), // MNWaitNotAct_U32
+                    ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp1_U32
+                ]),
+                name: "NMT_BootTime_REC",
+                access: Some(AccessType::ReadWrite),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+                category: crate::od::Category::Optional,
+            },
+        );
+        od.insert(
+            0x1F8C,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned8(0)),
+                name: "NMT_CurrNMTState_U8",
+                access: Some(AccessType::ReadOnly),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+                category: crate::od::Category::Optional,
+            },
+        );
         od
     }
-    
+
     #[test]
     fn test_mn_from_od_reads_parameters() {
         let od = get_test_mn_od();
@@ -233,28 +252,31 @@ mod tests {
         assert_eq!(nmt.wait_not_active_timeout, 1_000_000);
         assert_eq!(nmt.startup_flags, 0);
     }
-    
+
     #[test]
     fn test_mn_boot_up_happy_path() {
         let mut od = get_test_mn_od();
         let mut nmt = MnNmtStateMachine::from_od(&od).unwrap();
-        
+
         // Assume initial state is NotActive after internal initialization
         nmt.current_state = NmtState::NmtNotActive;
-        
+
         // NMT_MT2
         nmt.process_event(NmtEvent::Timeout, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtPreOperational1);
-        assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtPreOperational1 as u8));
-        
+        assert_eq!(
+            od.read_u8(0x1F8C, 0),
+            Some(NmtState::NmtPreOperational1 as u8)
+        );
+
         // NMT_MT3
         nmt.process_event(NmtEvent::AllCnsIdentified, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtPreOperational2);
-        
+
         // NMT_MT4
         nmt.process_event(NmtEvent::ConfigurationCompleteCnsReady, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtReadyToOperate);
-        
+
         // NMT_MT5
         nmt.process_event(NmtEvent::StartNode, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtOperational);
@@ -265,26 +287,33 @@ mod tests {
     fn test_mn_boot_to_basic_ethernet() {
         let mut od = get_test_mn_od();
         // Set bit 13 in NMT_StartUp_U32
-        od.write(0x1F80, 0, ObjectValue::Unsigned32(1 << 13)).unwrap();
+        od.write(0x1F80, 0, ObjectValue::Unsigned32(1 << 13))
+            .unwrap();
         let mut nmt = MnNmtStateMachine::from_od(&od).unwrap();
-        
+
         nmt.current_state = NmtState::NmtNotActive;
-        
+
         // NMT_MT7
         nmt.process_event(NmtEvent::Timeout, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtBasicEthernet);
-        assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtBasicEthernet as u8));
+        assert_eq!(
+            od.read_u8(0x1F8C, 0),
+            Some(NmtState::NmtBasicEthernet as u8)
+        );
     }
-    
+
     #[test]
     fn test_mn_error_handling_transition() {
         let mut od = get_test_mn_od();
         let mut nmt = MnNmtStateMachine::from_od(&od).unwrap();
         nmt.current_state = NmtState::NmtOperational;
-        
+
         // NMT_MT6
         nmt.process_event(NmtEvent::Error, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtPreOperational1);
-        assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtPreOperational1 as u8));
+        assert_eq!(
+            od.read_u8(0x1F8C, 0),
+            Some(NmtState::NmtPreOperational1 as u8)
+        );
     }
 }

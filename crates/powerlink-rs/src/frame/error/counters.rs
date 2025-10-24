@@ -1,6 +1,6 @@
-use crate::types::NodeId;
 use super::traits::{ErrorCounters, ErrorHandler};
 use super::types::{DllError, NmtAction};
+use crate::types::NodeId;
 use alloc::collections::BTreeMap;
 
 /// Implements the 8:1 threshold counter logic from the specification.
@@ -186,7 +186,9 @@ impl ErrorCounters for MnErrorCounters {
         self.crc_errors.decrement();
         self.collision.decrement();
         self.cycle_time_exceeded.decrement();
-        self.cn_loss_of_pres.values_mut().for_each(|c| c.decrement());
+        self.cn_loss_of_pres
+            .values_mut()
+            .for_each(|c| c.decrement());
         self.cn_late_pres.values_mut().for_each(|c| c.decrement());
         self.cn_loss_of_status_response
             .values_mut()
@@ -250,7 +252,7 @@ impl ErrorCounters for MnErrorCounters {
 mod tests {
     use super::*;
     use alloc::vec::Vec;
-    
+
     // A mock error handler for testing purposes.
     struct TestErrorHandler {
         logged_errors: Vec<DllError>,
@@ -286,7 +288,9 @@ mod tests {
     #[test]
     fn test_cn_error_counters_handling() {
         let mut counters = CnErrorCounters::new();
-        let mut handler = TestErrorHandler { logged_errors: Vec::new() };
+        let mut handler = TestErrorHandler {
+            logged_errors: Vec::new(),
+        };
 
         // First error, no action yet.
         let action1 = counters.handle_error(DllError::LossOfSoc, &mut handler);
@@ -303,7 +307,9 @@ mod tests {
     #[test]
     fn test_mn_error_counters_handling() {
         let mut counters = MnErrorCounters::new();
-        let mut handler = TestErrorHandler { logged_errors: Vec::new() };
+        let mut handler = TestErrorHandler {
+            logged_errors: Vec::new(),
+        };
         let node_id = NodeId(5);
         let error = DllError::LossOfPres { node_id };
 
@@ -326,9 +332,28 @@ mod tests {
 
         let mut mn_counters = MnErrorCounters::new();
         let node_id = NodeId(10);
-        mn_counters.handle_error(DllError::LossOfPres { node_id }, &mut TestErrorHandler {logged_errors: Vec::new()});
-        assert_eq!(mn_counters.cn_loss_of_pres.get(&node_id).unwrap().threshold_cnt, 8);
+        mn_counters.handle_error(
+            DllError::LossOfPres { node_id },
+            &mut TestErrorHandler {
+                logged_errors: Vec::new(),
+            },
+        );
+        assert_eq!(
+            mn_counters
+                .cn_loss_of_pres
+                .get(&node_id)
+                .unwrap()
+                .threshold_cnt,
+            8
+        );
         mn_counters.on_cycle_complete();
-        assert_eq!(mn_counters.cn_loss_of_pres.get(&node_id).unwrap().threshold_cnt, 7);
+        assert_eq!(
+            mn_counters
+                .cn_loss_of_pres
+                .get(&node_id)
+                .unwrap()
+                .threshold_cnt,
+            7
+        );
     }
 }

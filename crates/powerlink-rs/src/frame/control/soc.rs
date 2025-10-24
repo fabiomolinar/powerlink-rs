@@ -1,12 +1,12 @@
 // crates/powerlink-rs/src/frame/control/soc.rs
 
+use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::{EthernetHeader, MacAddress};
 use crate::frame::codec::{Codec, CodecHelpers};
 use crate::types::{
-    MessageType, NodeId, C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_SOC,
+    C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, C_DLL_MULTICAST_SOC, MessageType, NodeId,
 };
-use crate::PowerlinkError;
 
 /// Represents a complete SoC frame.
 /// (Reference: EPSG DS 301, Section 4.6.1.1.2)
@@ -131,7 +131,10 @@ mod tests {
             seconds: 0xABCD,
             nanoseconds: 0xABCD,
         };
-        let flags = SocFlags { mc: true, ps: false };
+        let flags = SocFlags {
+            mc: true,
+            ps: false,
+        };
         let frame = SocFrame::new(source_mac, flags, dummy_time, dummy_rel_time);
 
         assert_eq!(frame.eth_header.destination_mac.0, C_DLL_MULTICAST_SOC);
@@ -154,7 +157,10 @@ mod tests {
             seconds: 789,
             nanoseconds: 101,
         };
-        let flags = SocFlags { mc: true, ps: false };
+        let flags = SocFlags {
+            mc: true,
+            ps: false,
+        };
         let original_frame = SocFrame::new(source_mac, flags, net_time, relative_time);
 
         let mut buffer = [0u8; 128];

@@ -19,7 +19,6 @@ pub enum NodeType {
 pub enum NmtState {
     // NMT States. Super states are not coded.
     // --- Generic States (GS) ---
-
     /// Corresponds to the `NMT_GS_OFF` state in the specification.
     NmtGsOff = 0b0000_0000,
     /// Common initialisation state after power-on or reset. Corresponds to `NMT_GS_INITIALISING` in the specification.
@@ -32,7 +31,6 @@ pub enum NmtState {
     NmtGsResetConfiguration = 0b0111_1001,
 
     // --- Controlled Node (CN) States (CS) ---
-
     /// The node is not part of the POWERLINK cycle. Corresponds to `NMT_CS_NOT_ACTIVE` and `NMT_MS_NOT_ACTIVE` in the specification.
     #[default]
     NmtNotActive = 0b0001_1100,
@@ -99,13 +97,13 @@ impl TryFrom<u8> for NmtState {
             0x29 => Ok(NmtState::NmtGsResetApplication),
             0x39 => Ok(NmtState::NmtGsResetCommunication),
             0x79 => Ok(NmtState::NmtGsResetConfiguration),
-            0x1C => Ok(NmtState::NmtNotActive),      // Also NmtMsNotActive
+            0x1C => Ok(NmtState::NmtNotActive), // Also NmtMsNotActive
             0x1D => Ok(NmtState::NmtPreOperational1), // Also NmtMsPreOperational1
             0x5D => Ok(NmtState::NmtPreOperational2), // Also NmtMsPreOperational2
-            0x6D => Ok(NmtState::NmtReadyToOperate),  // Also NmtMsReadyToOperate
-            0xFD => Ok(NmtState::NmtOperational),     // Also NmtMsOperational
+            0x6D => Ok(NmtState::NmtReadyToOperate), // Also NmtMsReadyToOperate
+            0xFD => Ok(NmtState::NmtOperational), // Also NmtMsOperational
             0x4D => Ok(NmtState::NmtCsStopped),
-            0x1E => Ok(NmtState::NmtBasicEthernet),   // Also NmtMsBasicEthernet
+            0x1E => Ok(NmtState::NmtBasicEthernet), // Also NmtMsBasicEthernet
             _ => Err(PowerlinkError::InvalidNmtState(value)),
         }
     }

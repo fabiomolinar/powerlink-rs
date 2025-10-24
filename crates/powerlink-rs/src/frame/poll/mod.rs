@@ -6,4 +6,4 @@ mod preq;
 mod pres;
 
 pub use preq::{PReqFlags, PReqFrame};
-pub use pres::{PResFlags, PResFrame, PRFlag, RSFlag};
+pub use pres::{PRFlag, PResFlags, PResFrame, RSFlag};

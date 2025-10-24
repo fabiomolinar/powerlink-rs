@@ -1,11 +1,11 @@
 // crates/powerlink-rs/src/od/value.rs
 
+use crate::PowerlinkError;
 use crate::common::{NetTime, TimeDifference, TimeOfDay};
 use crate::types::{
-    BOOLEAN, INTEGER16, INTEGER32, INTEGER64, INTEGER8, REAL32, REAL64, UNSIGNED16, UNSIGNED32,
-    UNSIGNED64, UNSIGNED8, IpAddress, MacAddress,
+    BOOLEAN, INTEGER8, INTEGER16, INTEGER32, INTEGER64, IpAddress, MacAddress, REAL32, REAL64,
+    UNSIGNED8, UNSIGNED16, UNSIGNED32, UNSIGNED64,
 };
-use crate::PowerlinkError;
 use alloc::{string::String, vec, vec::Vec};
 
 /// Represents any value that can be stored in an Object Dictionary entry.
