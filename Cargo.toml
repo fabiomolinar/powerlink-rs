@@ -11,7 +11,7 @@ default-members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.0"
 authors = ["Fabio Thomaz Molinar <fabiomolinar@gmail.com>"]
 description = "Robust, reliable, and platform-independent Rust implementation of the Ethernet Powerlink protocol."
 readme = "README.md"
