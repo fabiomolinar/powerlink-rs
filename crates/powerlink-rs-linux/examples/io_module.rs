@@ -12,7 +12,7 @@
 //! CN's inputs back to its outputs.
 
 use log::{error, info};
-use powerlink_io_linux::LinuxPnetInterface;
+use powerlink_rs_linux::LinuxPnetInterface;
 use powerlink_rs::{
     ControlledNode,
     NetworkInterface,

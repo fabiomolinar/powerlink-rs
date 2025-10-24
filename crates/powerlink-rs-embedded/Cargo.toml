@@ -1,5 +1,5 @@
 [package]
-name = "powerlink-io-embedded"
+name = "powerlink-rs-embedded"
 description = "Hardware Abstraction Layer implementation for microcontrollers (no_std)."
 # Inherit package metadata
 version.workspace = true

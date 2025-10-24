@@ -1,5 +1,5 @@
 [package]
-name = "powerlink-io-windows"
+name = "powerlink-rs-windows"
 description = "Raw Ethernet I/O driver for Windows, adhering to the powerlink-core HAL."
 # Inherit package metadata
 version.workspace = true

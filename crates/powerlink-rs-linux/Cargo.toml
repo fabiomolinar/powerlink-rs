@@ -1,5 +1,5 @@
 [package]
-name = "powerlink-io-linux"
+name = "powerlink-rs-linux"
 description = "Raw Ethernet I/O driver for Linux, adhering to the powerlink-core HAL."
 # Inherit package metadata
 version.workspace = true
