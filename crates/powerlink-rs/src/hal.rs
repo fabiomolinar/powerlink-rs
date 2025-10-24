@@ -1,3 +1,6 @@
+// crates/powerlink-rs/src/hal.rs
+// Added SdoInvalidCommandPayload error.
+
 use crate::od::ObjectValue;
 use crate::pdo::PayloadSizeError;
 use crate::types::{InvalidMessageTypeError, NodeIdError};
@@ -12,9 +15,9 @@ pub enum PowerlinkError {
     BufferTooShort,
     /// An underlying I/O error occurred.
     IoError,
-    /// A received frame is fundamentally invalid (e.g., wrong EtherType, bad message type).
+    /// A received frame is fundamentally invalid (e.g., wrong EtherType).
     InvalidEthernetFrame,
-    /// A received powerlink frame is fundamentally invalid (e.g., too short to contain required headers).
+    /// A received powerlink frame is fundamentally invalid (e.g., too short for headers).
     InvalidPlFrame,
     /// A value in the frame is not a valid MessageType.
     InvalidMessageType(u8),
@@ -28,9 +31,9 @@ pub enum PowerlinkError {
     InvalidNodeId(u8),
     /// A value in the frame is not a valid PayloadSize.
     InvalidPayloadSize(u16),
-    /// A value in a frame is not a valid enum variant.
+    /// A value in a frame is not a valid enum variant (e.g., Segmentation, CommandId).
     InvalidEnumValue,
-    /// A multi-byte value could not be parsed from a slice.
+    /// A multi-byte value could not be parsed from a slice (often due to wrong length).
     SliceConversion,
     /// The frame size exceeds the maximum physical or configured MTU.
     FrameTooLarge,
@@ -40,51 +43,48 @@ pub enum PowerlinkError {
     ObjectNotFound,
     /// The requested sub-index does not exist for the given object.
     SubObjectNotFound,
-    /// An attempt was made to write a value with an incorrect data type to an object.
+    /// An attempt was made to write/deserialize a value with an incorrect data type.
     TypeMismatch,
     /// An error occurred in the storage backend.
     StorageError(&'static str),
-    /// A mandatory object was missing from the Object Dictionary during validation.
+    /// A mandatory object was missing or invalid during validation.
     ValidationError(&'static str),
-    /// SDO Sequence number was unexpected (e.g., a lost frame was detected).
-    SdoSequenceError,
+    /// SDO Sequence number was unexpected or connection state mismatch.
+    SdoSequenceError(&'static str), // Added context string
     /// SDO command layer received an abort message.
-    SdoAborted,
+    SdoAborted(u32), // Include abort code
+    /// SDO command payload could not be parsed correctly (e.g., ReadByIndexRequest format).
+    SdoInvalidCommandPayload,
+    /// Internal logic error.
+    InternalError(&'static str),
 }
 
 impl fmt::Display for PowerlinkError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BufferTooShort => write!(f, "Buffer is too short for the frame"),
-            Self::IoError => write!(f, "An underlying I/O error occurred"),
-            Self::InvalidEthernetFrame => write!(f, "Frame is not a valid Ethernet II frame"),
-            Self::InvalidPlFrame => write!(f, "Frame is not a valid POWERLINK frame"),
-            Self::InvalidMessageType(v) => write!(f, "Invalid MessageType value: {v:#04x}"),
-            Self::InvalidNmtState(v) => write!(f, "Invalid NMT State value: {v:#04x}"),
-            Self::InvalidServiceId(v) => write!(f, "Invalid ServiceId value: {v:#04x}"),
-            Self::InvalidRequestedServiceId(v) => {
-                write!(f, "Invalid RequestedServiceId value: {v:#04x}")
-            }
-            Self::InvalidNodeId(v) => write!(f, "Invalid NodeId value: {v}"),
-            Self::InvalidPayloadSize(v) => write!(f, "Invalid PayloadSize value: {v}"),
-            Self::SliceConversion => write!(f, "Failed to convert slice to a fixed-size array"),
-            Self::FrameTooLarge => write!(f, "Frame size exceeds maximum allowed MTU"),
-            Self::NotReady => write!(f, "Device is not ready or configured"),
-            Self::ObjectNotFound => {
-                write!(f, "The requested Object Dictionary index was not found")
-            }
-            Self::SubObjectNotFound => {
-                write!(f, "The requested sub-index was not found for this object")
-            }
-            Self::TypeMismatch => write!(
-                f,
-                "The provided value's type does not match the object's type"
-            ),
-            Self::InvalidEnumValue => write!(f, "A value in the frame is not a valid enum variant"),
+            Self::BufferTooShort => write!(f, "Buffer is too short"),
+            Self::IoError => write!(f, "Underlying I/O error"),
+            Self::InvalidEthernetFrame => write!(f, "Invalid Ethernet frame (e.g., wrong EtherType)"),
+            Self::InvalidPlFrame => write!(f, "Invalid POWERLINK frame (e.g., too short)"),
+            Self::InvalidMessageType(v) => write!(f, "Invalid MessageType: {:#04x}", v),
+            Self::InvalidNmtState(v) => write!(f, "Invalid NMT State: {:#04x}", v),
+            Self::InvalidServiceId(v) => write!(f, "Invalid ServiceId: {:#04x}", v),
+            Self::InvalidRequestedServiceId(v) => write!(f, "Invalid RequestedServiceId: {:#04x}", v),
+            Self::InvalidNodeId(v) => write!(f, "Invalid NodeId: {}", v),
+            Self::InvalidPayloadSize(v) => write!(f, "Invalid PayloadSize: {}", v),
+            Self::InvalidEnumValue => write!(f, "Invalid enum value in frame"),
+            Self::SliceConversion => write!(f, "Failed to convert slice to fixed-size array"),
+            Self::FrameTooLarge => write!(f, "Frame size exceeds MTU"),
+            Self::NotReady => write!(f, "Device not ready or configured"),
+            Self::ObjectNotFound => write!(f, "OD index not found"),
+            Self::SubObjectNotFound => write!(f, "OD sub-index not found"),
+            Self::TypeMismatch => write!(f, "Data type mismatch"),
             Self::StorageError(s) => write!(f, "Storage error: {}", s),
-            Self::ValidationError(s) => write!(f, "OD Validation Error: {}", s),
-            Self::SdoSequenceError => write!(f, "SDO sequence number mismatch detected"),
-            Self::SdoAborted => write!(f, "SDO transfer was aborted"),
+            Self::ValidationError(s) => write!(f, "Validation error: {}", s),
+            Self::SdoSequenceError(s) => write!(f, "SDO sequence error: {}", s),
+            Self::SdoAborted(code) => write!(f, "SDO transfer aborted with code {:#010X}", code),
+            Self::SdoInvalidCommandPayload => write!(f, "Invalid SDO command payload format"),
+            Self::InternalError(s) => write!(f, "Internal error: {}", s),
         }
     }
 }
@@ -96,12 +96,14 @@ impl std::error::Error for PowerlinkError {}
 
 impl From<InvalidMessageTypeError> for PowerlinkError {
     fn from(_: InvalidMessageTypeError) -> Self {
-        PowerlinkError::InvalidEnumValue
+        PowerlinkError::InvalidEnumValue // Or InvalidMessageType if needed
     }
 }
 
 impl From<TryFromSliceError> for PowerlinkError {
     fn from(_: TryFromSliceError) -> Self {
+        // This often happens due to incorrect slice length passed to try_into
+        // Map it to SliceConversion or potentially BufferTooShort depending on context
         PowerlinkError::SliceConversion
     }
 }
@@ -124,9 +126,11 @@ impl From<PayloadSizeError> for PowerlinkError {
 
 impl From<&'static str> for PowerlinkError {
     fn from(s: &'static str) -> Self {
-        PowerlinkError::StorageError(s)
+        // Generic conversion from string slice, useful for internal errors
+        PowerlinkError::InternalError(s)
     }
 }
+
 
 /// Hardware Abstraction Layer (HAL) for raw Ethernet packet transmission.
 ///
@@ -143,6 +147,7 @@ pub trait NetworkInterface {
     /// if non-blocking operation is configured.
     ///
     /// Returns the number of bytes read if successful, or an error.
+    /// Returns Ok(0) specifically on a read timeout if configured.
     /// The buffer must be large enough to hold the maximum possible Ethernet frame (e'g', 1518 bytes).
     fn receive_frame(&mut self, buffer: &mut [u8]) -> Result<usize, PowerlinkError>;
 
