@@ -1,4 +1,3 @@
-// crates/powerlink-io-linux/src/lib.rs
 #![cfg(target_os = "linux")]
 
 use pnet::datalink::{self, Channel, NetworkInterface as PnetInterface};
