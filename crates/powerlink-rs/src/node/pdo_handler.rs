@@ -1,23 +1,21 @@
 // crates/powerlink-rs/src/node/pdo_handler.rs
 
-use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler}; // Added imports
+use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler};
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PdoMappingEntry, PDOVersion};
 use crate::types::NodeId;
 use log::{trace, warn};
 
-// Constants remain the same...
 const OD_IDX_RPDO_COMM_PARAM_BASE: u16 = 0x1400;
 const OD_IDX_RPDO_MAPP_PARAM_BASE: u16 = 0x1600;
 const OD_SUBIDX_PDO_COMM_NODEID: u8 = 1;
 const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
 
-
 /// A trait for handling Process Data Object (PDO) logic.
 /// The lifetime parameter 's matches the lifetime of the Node implementing this trait.
-pub trait PdoHandler<'s> { // Added lifetime 's
+pub trait PdoHandler<'s> {
     /// Provides access to the node's Object Dictionary with the correct lifetime.
-    fn od(&mut self) -> &mut ObjectDictionary<'s>; // Use lifetime 's
+    fn od(&mut self) -> &mut ObjectDictionary<'s>;
 
     /// Provides access to the node's DLL error manager.
     fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler>;
@@ -87,7 +85,7 @@ pub trait PdoHandler<'s> { // Added lifetime 's
         if let Some(mapping_cow) = self.od().read(mapping_index, 0) {
             if let ObjectValue::Unsigned8(num_entries) = *mapping_cow {
                 for i in 1..=num_entries {
-                     // Use self.od()
+                    // Use self.od()
                     if let Some(entry_cow) = self.od().read(mapping_index, i) {
                         if let ObjectValue::Unsigned64(raw_mapping) = *entry_cow {
                             let entry = PdoMappingEntry::from_u64(raw_mapping);
@@ -102,7 +100,7 @@ pub trait PdoHandler<'s> { // Added lifetime 's
     /// Helper for `consume_pdo_payload` to apply a single mapping entry.
     /// Note: This method needs mutable access to self to call od() and dll_error_manager() mutably.
     fn apply_rpdo_mapping_entry(
-        &mut self, // Changed to &mut self
+        &mut self,
         entry: &PdoMappingEntry,
         payload: &[u8],
         source_node_id: NodeId,
@@ -119,7 +117,7 @@ pub trait PdoHandler<'s> { // Added lifetime 's
                 "RPDO mapping for 0x{:04X}/{} from Node {} is out of bounds. Payload size: {}, expected at least {}.",
                 entry.index, entry.sub_index, source_node_id.0, payload.len(), offset + length
             );
-             // Use self.dll_error_manager()
+            // Use self.dll_error_manager()
             self.dll_error_manager()
                 .handle_error(DllError::PdoPayloadShort {
                     node_id: source_node_id,
@@ -130,11 +128,14 @@ pub trait PdoHandler<'s> { // Added lifetime 's
         let data_slice = &payload[offset..offset + length];
         // Use self.od() to read the template. Need a separate borrow or clone.
         // Cloning is simpler here to avoid complex borrow checker issues with self.od().write_internal later.
-        let type_template_option = self.od().read(entry.index, entry.sub_index).map(|cow| cow.into_owned());
+        let type_template_option = self
+            .od()
+            .read(entry.index, entry.sub_index)
+            .map(|cow| cow.into_owned());
 
         let Some(type_template) = type_template_option else {
-             warn!("RPDO mapping for 0x{:04X}/{} failed: OD entry not found.", entry.index, entry.sub_index);
-             return;
+            warn!("RPDO mapping for 0x{:04X}/{} failed: OD entry not found.", entry.index, entry.sub_index);
+            return;
         };
 
         match ObjectValue::deserialize(data_slice, &type_template) {
@@ -145,7 +146,7 @@ pub trait PdoHandler<'s> { // Added lifetime 's
                     entry.index,
                     entry.sub_index
                 );
-                 // Use self.od()
+                // Use self.od()
                 if let Err(e) =
                     self.od()
                         .write_internal(entry.index, entry.sub_index, value, false)

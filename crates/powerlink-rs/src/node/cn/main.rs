@@ -3,7 +3,7 @@
 use super::payload;
 use crate::frame::{
     basic::MacAddress, deserialize_frame, 
-    error::{CnErrorCounters, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler}, 
+    error::{CnErrorCounters, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler},
     ASndFrame, Codec, DllCsEvent, DllCsStateMachine, DllError, NmtAction, PReqFrame, PResFrame, 
     PowerlinkFrame, RequestedServiceId, ServiceId
 };
@@ -17,6 +17,7 @@ use crate::sdo::SdoServer;
 use crate::types::NodeId;
 use crate::PowerlinkError;
 use alloc::vec;
+use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
 
 // Constants for OD access
@@ -36,6 +37,8 @@ pub struct ControlledNode<'s> {
     last_soc_reception_time_us: u64,
     /// Flag indicating if the SoC timeout check is currently active.
     soc_timeout_check_active: bool,
+    /// The absolute time in microseconds for the next scheduled tick.
+    next_tick_us: Option<u64>,
 }
 
 impl<'s> ControlledNode<'s> {
@@ -69,6 +72,7 @@ impl<'s> ControlledNode<'s> {
             sdo_server: SdoServer::new(),
             last_soc_reception_time_us: 0,
             soc_timeout_check_active: false,
+            next_tick_us: None,
         };
 
         // Run the initial state transitions to get to NmtNotActive.
@@ -85,16 +89,22 @@ impl<'s> ControlledNode<'s> {
             if asnd_frame.service_id == ServiceId::Sdo {
                 debug!("Received SDO/ASnd frame for processing.");
                 // Extract SDO Headers first to get Transaction ID for potential abort
-                let transaction_id = if asnd_frame.payload.len() >= 4 { // Seq header
-                    crate::sdo::sequence::SequenceLayerHeader::deserialize(&asnd_frame.payload[0..4])
-                        .ok() // Ignore deserialization errors here, let SDO server handle payload
-                        .and_then(|_seq_header| {
-                             if asnd_frame.payload.len() >= 8 { // Cmd header
-                                crate::sdo::command::SdoCommand::deserialize(&asnd_frame.payload[4..])
-                                    .ok()
-                                    .map(|cmd| cmd.header.transaction_id)
-                             } else { None }
-                        })
+                let transaction_id = if asnd_frame.payload.len() >= 4 {
+                    // Seq header
+                    crate::sdo::sequence::SequenceLayerHeader::deserialize(
+                        &asnd_frame.payload[0..4],
+                    )
+                    .ok() // Ignore deserialization errors here, let SDO server handle payload
+                    .and_then(|_seq_header| {
+                        if asnd_frame.payload.len() >= 8 {
+                            // Cmd header
+                            crate::sdo::command::SdoCommand::deserialize(&asnd_frame.payload[4..])
+                                .ok()
+                                .map(|cmd| cmd.header.transaction_id)
+                        } else {
+                            None
+                        }
+                    })
                 } else {
                     None
                 };
@@ -133,7 +143,7 @@ impl<'s> ControlledNode<'s> {
                                 PowerlinkError::SubObjectNotFound => 0x0609_0011,
                                 PowerlinkError::TypeMismatch => 0x0607_0010,
                                 PowerlinkError::StorageError(_) => 0x0800_0020, // Cannot transfer data
-                                _ => 0x0800_0000,                               // General error
+                                _ => 0x0800_0000, // General error
                             };
                             return payload::build_sdo_abort_response(
                                 self.mac_address,
@@ -158,13 +168,23 @@ impl<'s> ControlledNode<'s> {
         if matches!(frame, PowerlinkFrame::Soc(_)) {
             trace!("SoC received at time {}", current_time_us);
             self.last_soc_reception_time_us = current_time_us;
-            self.soc_timeout_check_active = true; // Enable timeout check after first SoC
-            // Request timer for next SoC check based on cycle time + tolerance
-            if let Some(action) = self.request_soc_timeout_check() {
-                return action; // Return early as SoC processing is done
-            } else {
-                // Could not read cycle time or tolerance, proceed without timer request
-                warn!("Could not read cycle time/tolerance to set SoC timeout timer.");
+            self.soc_timeout_check_active = true;
+            // A CN's cycle is defined by the reception of an SoC.
+            // This is the correct place to decrement threshold counters.
+            self.dll_error_manager.on_cycle_complete();
+
+            // Schedule the next SoC timeout check.
+            if let (Some(cycle_time_us), Some(tolerance_ns)) = (
+                self.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64),
+                self.od
+                    .read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)
+                    .map(|v| v as u64),
+            ) {
+                if cycle_time_us > 0 {
+                    let tolerance_us = tolerance_ns / 1000;
+                    let deadline = current_time_us + cycle_time_us + tolerance_us;
+                    self.next_tick_us = Some(deadline);
+                }
             }
         }
 
@@ -184,7 +204,6 @@ impl<'s> ControlledNode<'s> {
             for error in errors {
                 warn!("DLL state machine reported error: {:?}", error);
                 if self.dll_error_manager.handle_error(error) != NmtAction::None {
-                    // Per Table 27, most DLL errors on a CN trigger an NMT state change to PreOp1 [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Table 27].
                     self.nmt_state_machine
                         .process_event(NmtEvent::Error, &mut self.od);
                 }
@@ -252,28 +271,7 @@ impl<'s> ControlledNode<'s> {
         NodeAction::NoAction
     }
 
-    /// Calculates the next timer event based on expected SoC arrival.
-    /// Returns None if cycle time or tolerance cannot be read.
-    fn request_soc_timeout_check(&self) -> Option<NodeAction> {
-        let cycle_time_us = self.od.read_u32(OD_IDX_CYCLE_TIME, 0)? as u64;
-        // Spec 4.7.8.20: Tolerance is in ns, convert to us
-        let tolerance_ns = self.od.read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)? as u64;
-        let tolerance_us = tolerance_ns / 1000;
-
-        if cycle_time_us == 0 {
-            warn!("Cycle Time (0x1006) is zero, cannot check for SoC timeout.");
-            return None; // Cannot calculate next check if cycle time is zero
-        }
-
-        let next_check_delay_us = cycle_time_us + tolerance_us;
-        trace!(
-            "Requesting next SoC timeout check in {} us",
-            next_check_delay_us
-        );
-        Some(NodeAction::SetTimer(next_check_delay_us))
-    }
-
-    /// Consumes the payload of a PReq frame based on RPDO mapping 0x1400/0x1600.
+    /// Consumes the payload of a PReq frame based on RPDO mapping.
     fn consume_preq_payload(&mut self, preq: &PReqFrame) {
         self.consume_pdo_payload(
             NodeId(0), // Node ID 0 is reserved for PReq
@@ -283,7 +281,7 @@ impl<'s> ControlledNode<'s> {
         );
     }
 
-    /// Consumes the payload of a PRes frame based on RPDO mapping 0x14xx/0x16xx.
+    /// Consumes the payload of a PRes frame based on RPDO mapping.
     fn consume_pres_payload(&mut self, pres: &PResFrame) {
         self.consume_pdo_payload(
             pres.source, // Source Node ID of the PRes
@@ -297,7 +295,7 @@ impl<'s> ControlledNode<'s> {
 // Implement the PdoHandler trait for ControlledNode
 impl<'s> PdoHandler<'s> for ControlledNode<'s> {
     fn od(&mut self) -> &mut ObjectDictionary<'s> {
-        &mut self.od // This now correctly returns the reference with lifetime 's
+        &mut self.od
     }
 
     // Match the trait signature using `impl Trait`
@@ -349,53 +347,46 @@ impl<'s> Node for ControlledNode<'s> {
 
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
         let current_nmt_state = self.nmt_state();
+        let mut deadline_passed = self.next_tick_us.map_or(false, |d| current_time_us >= d);
 
-        // --- Basic Ethernet Timeout Check ---
-        if current_nmt_state == NmtState::NmtNotActive {
-            if self.last_soc_reception_time_us == 0 {
-                // If it's still 0, no SoC seen yet, start the timer check.
+        // Special case for NmtNotActive: the first time tick is called, start the timer.
+        if current_nmt_state == NmtState::NmtNotActive && self.next_tick_us.is_none() {
+            let timeout_us = self.nmt_state_machine.basic_ethernet_timeout as u64;
+            if timeout_us > 0 {
                 debug!("No SoC seen, starting BasicEthernet timeout check.");
-                self.last_soc_reception_time_us = current_time_us;
-                let timeout_duration_us = self.nmt_state_machine.basic_ethernet_timeout as u64;
-                return NodeAction::SetTimer(timeout_duration_us);
+                self.next_tick_us = Some(current_time_us + timeout_us);
             }
-
-            let timeout_duration_us = self.nmt_state_machine.basic_ethernet_timeout as u64;
-            if current_time_us.saturating_sub(self.last_soc_reception_time_us)
-                >= timeout_duration_us
-            {
-                // Timeout expired without seeing a SoC, transition to BasicEthernet
-                // [cite: EPSG_301_V-1-5-1_DS-c710608e.pdf, Section 7.1.4.1.1].
-                warn!("BasicEthernet timeout expired. Transitioning state.");
-                self.nmt_state_machine
-                    .process_event(NmtEvent::Timeout, &mut self.od);
-                self.last_soc_reception_time_us = 0; // Reset timer flag
-                self.soc_timeout_check_active = false; // Disable SoC check in BasicEthernet
-                return NodeAction::NoAction; // No further timer needed for this mode
-            } else {
-                // Timeout not yet reached, request another check later.
-                let remaining_time = timeout_duration_us.saturating_sub(
-                    current_time_us.saturating_sub(self.last_soc_reception_time_us),
-                );
-                trace!(
-                    "BasicEthernet timeout check pending, next check in {} us",
-                    remaining_time
-                );
-                return NodeAction::SetTimer(remaining_time);
-            }
+            deadline_passed = false; // Don't act on this first call, just set the timer.
         }
 
-        // --- SoC Timeout Check (only in cyclic states and if activated) ---
-        if self.soc_timeout_check_active
-            && matches!(
-                current_nmt_state,
-                NmtState::NmtPreOperational1 // Check during PreOp1 as well
-                    | NmtState::NmtPreOperational2
-                    | NmtState::NmtReadyToOperate
-                    | NmtState::NmtOperational
-                    | NmtState::NmtCsStopped
-            )
-        {
+        if !deadline_passed {
+            return NodeAction::NoAction;
+        }
+
+        // A deadline has passed, perform time-based actions.
+        self.next_tick_us = None; // Consume the deadline
+
+        if current_nmt_state == NmtState::NmtNotActive {
+            warn!("BasicEthernet timeout expired. Transitioning state.");
+            self.nmt_state_machine
+                .process_event(NmtEvent::Timeout, &mut self.od);
+            self.soc_timeout_check_active = false;
+        } else if self.soc_timeout_check_active {
+            warn!("SoC timeout detected at {}us!", current_time_us);
+            if let Some(errors) =
+                self.dll_state_machine
+                    .process_event(DllCsEvent::SocTimeout, current_nmt_state)
+            {
+                for error in errors {
+                    if self.dll_error_manager.handle_error(error) != NmtAction::None {
+                        self.nmt_state_machine
+                            .process_event(NmtEvent::Error, &mut self.od);
+                        self.soc_timeout_check_active = false;
+                        return NodeAction::NoAction;
+                    }
+                }
+            }
+            // If still active, schedule the next timeout check based on the last *expected* SoC time.
             if let (Some(cycle_time_us), Some(tolerance_ns)) = (
                 self.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64),
                 self.od
@@ -403,82 +394,23 @@ impl<'s> Node for ControlledNode<'s> {
                     .map(|v| v as u64),
             ) {
                 if cycle_time_us > 0 {
-                    let tolerance_us = tolerance_ns / 1000;
-                    let expected_soc_time_us = self
-                        .last_soc_reception_time_us
-                        .saturating_add(cycle_time_us);
-                    let timeout_threshold_us = expected_soc_time_us.saturating_add(tolerance_us);
-
-                    if current_time_us >= timeout_threshold_us {
-                        warn!(
-                            "SoC timeout detected! Current: {}, Last SoC: {}, Expected: {}, Threshold: {}",
-                            current_time_us, self.last_soc_reception_time_us, expected_soc_time_us, timeout_threshold_us
-                        );
-                        // --- SoC Timeout Occurred ---
-                        // Inform DLL state machine
-                        if let Some(errors) = self.dll_state_machine.process_event(
-                            DllCsEvent::SocTimeout,
-                            current_nmt_state,
-                        ) {
-                            for error in errors {
-                                // Handle resulting DLL errors (e.g., LossOfSoc)
-                                if self.dll_error_manager.handle_error(error) != NmtAction::None {
-                                    // Trigger NMT error transition if threshold met
-                                    self.nmt_state_machine
-                                        .process_event(NmtEvent::Error, &mut self.od);
-                                    // Stop checking SoC timeout if we reset NMT state
-                                    self.soc_timeout_check_active = false;
-                                    // Return early after NMT change
-                                    return NodeAction::NoAction;
-                                }
-                            }
-                        }
-                        // Assume next SoC should have arrived at expected_soc_time_us for next calc
-                        self.last_soc_reception_time_us = expected_soc_time_us;
-                        // Request timer for the *next* timeout check
-                        let next_check_delay = cycle_time_us + tolerance_us;
-                        trace!(
-                            "SoC timeout processed, requesting next check in {} us",
-                            next_check_delay
-                        );
-                        return NodeAction::SetTimer(next_check_delay);
-                    } else {
-                        // Timeout not yet reached, request timer for the threshold time.
-                        let remaining_time = timeout_threshold_us.saturating_sub(current_time_us);
-                        trace!(
-                            "SoC timeout check pending, next check in {} us",
-                            remaining_time
-                        );
-                        return NodeAction::SetTimer(remaining_time);
-                    }
-                } else {
-                    // Cycle time is 0, disable check for this cycle.
-                    self.soc_timeout_check_active = false;
-                    warn!(
-                        "Cycle Time (0x1006) is zero, disabling SoC timeout check for this cycle."
-                    );
+                    // Assume SoC should have arrived at the deadline we just met
+                    self.last_soc_reception_time_us += cycle_time_us;
+                    let next_deadline =
+                        self.last_soc_reception_time_us + cycle_time_us + (tolerance_ns / 1000);
+                    self.next_tick_us = Some(next_deadline);
                 }
-            } else {
-                // Could not read OD values, disable check for this cycle.
-                self.soc_timeout_check_active = false;
-                warn!("Could not read Cycle Time (0x1006) or Tolerance (0x1C14), disabling SoC timeout check for this cycle.");
             }
-        } else if !matches!(current_nmt_state, NmtState::NmtNotActive) {
-            // If in a cyclic state but check is not active (e.g., after timeout error),
-            // reset the time to ensure the check restarts correctly when a SoC is received.
-            self.last_soc_reception_time_us = 0;
-        } else {
-            // If not in NotActive or cyclic state where check is active, reset flag.
-            self.soc_timeout_check_active = false;
         }
-
-        // Decrement DLL error counters at the end of the tick
-        self.dll_error_manager.on_cycle_complete();
-
-        NodeAction::NoAction // Default if no specific timer requested
+        
+        NodeAction::NoAction
     }
 
     fn nmt_state(&self) -> NmtState {
         self.nmt_state_machine.current_state()
+    }
+
+    fn next_action_time(&self) -> Option<u64> {
+        self.next_tick_us
     }
 }

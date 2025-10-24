@@ -49,11 +49,12 @@ pub struct ManagingNode<'s> {
     dll_state_machine: DllMsStateMachine,
     dll_error_manager: DllErrorManager<MnErrorCounters, LoggingErrorHandler>,
     mac_address: MacAddress,
-    last_soc_time_us: u64,
     cycle_time_us: u64,
     pub(super) node_states: BTreeMap<NodeId, CnState>,
     pub(super) mandatory_nodes: Vec<NodeId>,
     pub(super) last_ident_poll_node_id: NodeId,
+    /// The absolute time in microseconds for the next scheduled tick.
+    next_tick_us: Option<u64>,
 }
 
 impl<'s> ManagingNode<'s> {
@@ -113,17 +114,17 @@ impl<'s> ManagingNode<'s> {
             dll_state_machine: DllMsStateMachine::new(),
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
             mac_address,
-            last_soc_time_us: 0,
             cycle_time_us,
             node_states,
             mandatory_nodes,
-            last_ident_poll_node_id: NodeId(0), // Start polling from the beginning
+            last_ident_poll_node_id: NodeId(0),
+            next_tick_us: None, // Initialize to None
         };
 
         // Run the initial state transitions to get to NmtNotActive.
         node.nmt_state_machine
             .run_internal_initialisation(&mut node.od);
-
+        
         Ok(node)
     }
 
@@ -139,7 +140,7 @@ impl<'s> ManagingNode<'s> {
         }
 
         // 2. Update DLL state machine.
-        // TODO: Pass correct context (response_expected, async_in, etc.)
+        // TODO: This logic needs to be fully implemented.
         if let Some(errors) = self.dll_state_machine.process_event(
             frame.dll_mn_event(),
             self.nmt_state(),
@@ -222,13 +223,9 @@ impl<'s> ManagingNode<'s> {
                     frame.source.0
                  );
             }
-            _ => {
-                trace!(
-                    "[MN] Ignoring ASnd with unhandled ServiceID {:?} from Node {}",
-                    frame.service_id,
-                    frame.source.0
-                );
-            }
+             _ => { // Handle other Service IDs if necessary, or just trace
+                 trace!("[MN] Ignoring ASnd with unhandled ServiceID {:?} from Node {}", frame.service_id, frame.source.0);
+             }
         }
     }
 
@@ -311,7 +308,7 @@ impl<'s> ManagingNode<'s> {
 // Implement the PdoHandler trait for ManagingNode
 impl<'s> PdoHandler<'s> for ManagingNode<'s> {
     fn od(&mut self) -> &mut ObjectDictionary<'s> {
-        &mut self.od // This now correctly returns the reference with lifetime 's
+        &mut self.od
     }
 
     // Match the trait signature using `impl Trait`
@@ -355,97 +352,76 @@ impl<'s> Node for ManagingNode<'s> {
 
     /// The MN's tick is its primary scheduler.
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
-        let nmt_state = self.nmt_state();
+        let deadline_passed = self.next_tick_us.map_or(true, |d| current_time_us >= d);
+        if !deadline_passed {
+            return NodeAction::NoAction;
+        }
 
+        let mut action = NodeAction::NoAction;
+        
         // --- NotActive Timeout Check ---
-        if nmt_state == NmtState::NmtNotActive {
-            if self.last_soc_time_us == 0 {
-                // First tick in this state, set timer
-                self.last_soc_time_us = current_time_us;
-                let timeout_ns = self.nmt_state_machine.wait_not_active_timeout;
-                return NodeAction::SetTimer(timeout_ns as u64 / 1000); // ns to us
-            }
-
-            let elapsed_us = current_time_us.saturating_sub(self.last_soc_time_us);
-            let timeout_us = self.nmt_state_machine.wait_not_active_timeout as u64 / 1000;
-
-            if elapsed_us >= timeout_us {
-                info!("[MN] NotActive timeout expired. No other MN detected. Proceeding to boot.");
-                self.nmt_state_machine
-                    .process_event(NmtEvent::Timeout, &mut self.od);
-                self.last_soc_time_us = 0; // Reset for next state's timing
-                                           // Fall through to start the first action of the new state (PreOp1)
-            } else {
-                return NodeAction::SetTimer(timeout_us - elapsed_us);
-            }
+        if self.nmt_state() == NmtState::NmtNotActive {
+            info!("[MN] NotActive timeout expired. No other MN detected. Proceeding to boot.");
+            self.nmt_state_machine
+                .process_event(NmtEvent::Timeout, &mut self.od);
+            // After transitioning, immediately schedule the next action for the new state.
+            let cycle_time_us = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
+            self.next_tick_us = Some(current_time_us + cycle_time_us);
+            // Fall through to execute the first action of PreOp1 immediately.
         }
 
-        // --- Cycle Timer Check (for cyclic states) ---
-        // Re-read cycle_len_us as it might have changed if OD was updated
-        self.cycle_time_us = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
-
-        if self.cycle_time_us == 0
-            && matches!(
-                nmt_state,
-                NmtState::NmtOperational
-                    | NmtState::NmtReadyToOperate
-                    | NmtState::NmtPreOperational2
-                    | NmtState::NmtPreOperational1 // Also applies in PreOp1 for scheduling SoA
-            )
-        {
-            warn!("MN cycle time (0x1006) is 0. Halting cycle.");
-            return NodeAction::NoAction; // Cannot run cycle
-        }
-
-        let elapsed_since_last_action = current_time_us.saturating_sub(self.last_soc_time_us); // Use last_soc_time_us as the anchor
-
-        // Check if it's time for the next cycle action (SoC or SoA in PreOp1)
-        let cycle_interval = match nmt_state {
-            NmtState::NmtPreOperational1 => self.cycle_time_us, // Or a faster polling interval? For now, use cycle time.
-            NmtState::NmtOperational | NmtState::NmtReadyToOperate | NmtState::NmtPreOperational2 => self.cycle_time_us,
-            _ => 0, // No cyclic action in other states
-        };
-
-        if cycle_interval > 0 && elapsed_since_last_action < cycle_interval {
-            // Not time for the next cycle action yet
-            return NodeAction::SetTimer(cycle_interval - elapsed_since_last_action);
-        }
-
-        // --- Time to start a new cycle or send next frame ---
-        self.last_soc_time_us = current_time_us; // Update anchor time
-        self.dll_error_manager.on_cycle_complete(); // Decrement error counters
+        // Re-evaluate state in case it changed
+        let nmt_state = self.nmt_state();
 
         debug!(
             "[MN] Tick: Cycle/Action start at {}us (State: {:?})",
-            current_time_us,
-            self.nmt_state()
+            current_time_us, nmt_state
         );
+        
+        if nmt_state != NmtState::NmtNotActive {
+             self.dll_error_manager.on_cycle_complete();
+        }
 
-        match self.nmt_state() {
+        action = match nmt_state {
             NmtState::NmtPreOperational1 => {
-                // Send SoA(IdentRequest) to the next unknown CN.
                 if let Some(node_to_poll) = scheduler::find_next_node_to_identify(self) {
                     self.build_soa_ident_request(node_to_poll)
                 } else {
-                    // No more nodes to identify, send a non-inviting SoA
-                    // or potentially transition if check_bootup_state allows?
-                    // For now, send NoService SoA. check_bootup_state is called after IdentResponse received.
                     self.build_soa_ident_request(NodeId(0))
                 }
             }
             NmtState::NmtOperational
             | NmtState::NmtReadyToOperate
             | NmtState::NmtPreOperational2 => {
-                // Start of the isochronous cycle. Send SoC.
-                // The DLL state machine will handle PReq/PRes sequence afterward.
-                // TODO: Need DLL state machine integration to send PReqs after SoC.
                 self.build_soc_frame()
             }
-            _ => NodeAction::NoAction, // No cyclic actions in other states like NotActive, BasicEthernet, Reset states
+            _ => NodeAction::NoAction,
+        };
+
+        // Schedule the next tick
+        self.cycle_time_us = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
+        if self.cycle_time_us > 0 {
+             self.next_tick_us = Some(current_time_us + self.cycle_time_us);
+        } else {
+             self.next_tick_us = None; // Stop scheduling if cycle time is 0
         }
+        
+        action
     }
 
     fn nmt_state(&self) -> NmtState {
         self.nmt_state_machine.current_state()
+    }
+
+    fn next_action_time(&self) -> Option<u64> {
+        // If we are in NotActive for the first time, schedule the initial check.
+        if self.nmt_state() == NmtState::NmtNotActive && self.next_tick_us.is_none() {
+             let timeout_ns = self.nmt_state_machine.wait_not_active_timeout;
+             // We need current_time to set an absolute deadline.
+             // This indicates to the user's loop that it should call tick() once immediately
+             // to get the first deadline scheduled.
+             return Some(0);
+        }
+        self.next_tick_us
     }
 }
