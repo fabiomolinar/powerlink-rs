@@ -279,14 +279,14 @@ dependencies = [
 
 [[package]]
 name = "powerlink-io-embedded"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "powerlink-rs",
 ]
 
 [[package]]
 name = "powerlink-io-linux"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "env_logger",
  "lazy_static",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "powerlink-io-windows"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "pnet",
  "powerlink-rs",
@@ -305,7 +305,7 @@ dependencies = [
 
 [[package]]
 name = "powerlink-rs"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "log",
 ]

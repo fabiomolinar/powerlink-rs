@@ -11,4 +11,4 @@ edition.workspace = true
 
 [dependencies]
 # Note: Explicitly exclude default features if powerlink-core later gains default 'std' feature
-powerlink-rs = { path = "../powerlink-rs", version = "0.1.0" } 
+powerlink-rs = { path = "../powerlink-rs", version = "0.0.0" } 

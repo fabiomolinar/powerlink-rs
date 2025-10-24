@@ -10,7 +10,7 @@ repository.workspace = true
 edition.workspace = true
 
 [dependencies]
-powerlink-rs = { path = "../powerlink-rs", version = "0.1.0", features = ["std"] }
+powerlink-rs = { path = "../powerlink-rs", version = "0.0.0", features = ["std"] }
 pnet = "0.35"
 
 [dev-dependencies]
