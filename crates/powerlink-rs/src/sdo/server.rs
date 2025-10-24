@@ -522,7 +522,7 @@ impl SdoServer {
                         self.send_sequence_number
                     );
                     self.state = SdoServerState::Closed; // Reset state on error
-                    return Err(PowerlinkError::SdoSequenceError);
+                    return Err(PowerlinkError::SdoSequenceError("Invalid sequence state during SDO opening."));
                 }
             }
             SdoServerState::Established
@@ -572,7 +572,7 @@ impl SdoServer {
                     response.receive_sequence_number = self.last_received_sequence_number;
                     response.send_con = SendConnState::ConnectionValid;
                     response.send_sequence_number = self.send_sequence_number; // Resend our last frame's number
-                    return Err(PowerlinkError::SdoSequenceError); // Signal error upstream
+                    return Err(PowerlinkError::SdoSequenceError("SDO sequence number mismatch.")); // Signal error upstream
                 }
                 // --- Sequence OK ---
                 else {
