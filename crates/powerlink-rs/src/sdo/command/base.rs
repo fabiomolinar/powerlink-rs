@@ -6,9 +6,10 @@ use alloc::vec::Vec;
 
 /// Defines the SDO command IDs.
 /// (Reference: EPSG DS 301, Table 58)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum CommandId {
+    #[default]
     Nil = 0x00,
     // SDO protocol
     WriteByIndex = 0x01,
@@ -26,12 +27,6 @@ pub enum CommandId {
     // Parameter service
     MaxSegmentSize = 0x70,
     // Manufacturer specific from 0x80 to 0xFF
-}
-
-impl Default for CommandId {
-    fn default() -> Self {
-        CommandId::Nil
-    }
 }
 
 impl TryFrom<u8> for CommandId {
@@ -82,7 +77,7 @@ impl TryFrom<u8> for Segmentation {
 
 /// Represents the fixed part of the SDO Command Layer header.
 /// (Reference: EPSG DS 301, Table 54)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CommandLayerHeader {
     pub transaction_id: UNSIGNED8,
     pub is_response: bool,
@@ -90,19 +85,6 @@ pub struct CommandLayerHeader {
     pub segmentation: Segmentation,
     pub command_id: CommandId,
     pub segment_size: UNSIGNED16,
-}
-
-impl Default for CommandLayerHeader {
-    fn default() -> Self {
-        Self {
-            transaction_id: 0,
-            is_response: false,
-            is_aborted: false,
-            segmentation: Segmentation::default(),
-            command_id: CommandId::default(),
-            segment_size: 0,
-        }
-    }
 }
 
 /// Represents a complete SDO command layer frame, including the header and payload.

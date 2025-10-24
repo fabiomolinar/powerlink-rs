@@ -353,7 +353,7 @@ impl<'s> Node for ManagingNode<'s> {
 
     /// The MN's tick is its primary scheduler.
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
-        let deadline_passed = self.next_tick_us.map_or(true, |d| current_time_us >= d);
+        let deadline_passed = self.next_tick_us.is_none_or(|d| current_time_us >= d);
         if !deadline_passed {
             return NodeAction::NoAction;
         }

@@ -27,7 +27,7 @@ impl RSFlag {
 
 /// An enum for the 3-bit PR (Priority) flag.
 /// (EPSG DS 301, Appendix 3.2)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum PRFlag {
     PrioNmtRequest = 0b111,
@@ -37,13 +37,7 @@ pub enum PRFlag {
     PrioGenericRequest = 0b011,
     Low3 = 0b010,
     Low2 = 0b001,
-    Low1 = 0b000,
-}
-
-impl Default for PRFlag {
-    fn default() -> Self {
-        PRFlag::Low1
-    }
+    #[default] Low1 = 0b000,
 }
 
 /// Represents a Poll Response frame (CN multicast frame).
@@ -150,7 +144,7 @@ impl Codec for PResFrame {
             en: (octet4 & (1 << 4)) != 0,
             rd: (octet4 & (1 << 0)) != 0,
             // Safety: The 3 bits for PR are always a valid PRFlag variant.
-            pr: unsafe { core::mem::transmute((octet5 >> 3) & 0b111) },
+            pr: unsafe { core::mem::transmute::<u8, PRFlag>((octet5 >> 3) & 0b111) },
             rs: RSFlag::new(octet5 & 0b111),
         };
 

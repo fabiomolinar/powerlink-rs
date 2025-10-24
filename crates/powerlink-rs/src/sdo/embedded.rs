@@ -35,7 +35,7 @@ impl Codec for PdoSequenceLayerHeader {
 /// Note the differences from the asynchronous SdoCommand:
 /// - Uses a 1-byte sequence header.
 /// - Has a `valid_payload_length` instead of `segment_size`.
-/// (Reference: EPSG DS 301, Table 85)
+/// Reference: EPSG DS 301, Table 85
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PdoSdoCommand {
     pub sequence_header: PdoSequenceLayerHeader,

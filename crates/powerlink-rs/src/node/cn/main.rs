@@ -345,7 +345,7 @@ impl<'s> Node for ControlledNode<'s> {
 
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
         let current_nmt_state = self.nmt_state();
-        let mut deadline_passed = self.next_tick_us.map_or(false, |d| current_time_us >= d);
+        let mut deadline_passed = self.next_tick_us.is_some_and(|d| current_time_us >= d);
 
         // Special case for NmtNotActive: the first time tick is called, start the timer.
         if current_nmt_state == NmtState::NmtNotActive && self.next_tick_us.is_none() {
