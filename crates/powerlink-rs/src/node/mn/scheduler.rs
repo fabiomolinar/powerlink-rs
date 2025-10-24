@@ -12,10 +12,13 @@ pub(super) fn check_bootup_state(node: &mut ManagingNode) {
         return; // Only check this in PreOp1
     }
 
-    let all_mandatory_identified = node
-        .mandatory_nodes // Access pub(super) field
-        .iter()
-        .all(|node_id| node.node_states.get(node_id).copied().unwrap_or(CnState::Unknown) >= CnState::Identified); // Check if Identified or later state
+    let all_mandatory_identified = node.mandatory_nodes.iter().all(|node_id| {
+        let state = node.node_states.get(node_id).copied().unwrap_or(CnState::Unknown);
+        // A node is considered identified for bootup if it is in any state
+        // from Identified up to Operational. Missing or Stopped nodes are not
+        // considered ready.
+        state >= CnState::Identified && state <= CnState::Operational
+    });
 
     if all_mandatory_identified {
         info!("[MN] All mandatory nodes identified. Transitioning to PreOp2.");
