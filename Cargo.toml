@@ -1,9 +1,9 @@
 [workspace]
 members = [
     "crates/powerlink-rs",
-    "crates/powerlink-io-linux",
-    "crates/powerlink-io-windows",
-    "crates/powerlink-io-embedded",
+    "crates/powerlink-rs-linux",
+    "crates/powerlink-rs-windows",
+    "crates/powerlink-rs-embedded",
 ]
 default-members = [
     "crates/powerlink-rs",
