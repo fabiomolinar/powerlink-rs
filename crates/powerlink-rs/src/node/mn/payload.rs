@@ -1,3 +1,4 @@
+use crate::node::mn::main::CyclePhase;
 // crates/powerlink-rs/src/node/mn/payload.rs
 // path: crates/powerlink-rs/src/node/mn/payload.rs
 use crate::node::Node; // Import Node trait for nmt_state()
@@ -7,20 +8,23 @@ use crate::frame::basic::MacAddress; // Import needed for build_nmt_command_fram
 use crate::frame::control::{SoAFlags, SocFlags};
 use crate::frame::poll::PReqFlags; // Import directly
 // Added ASndFrame and ServiceId for NMT commands
-use crate::frame::{Codec, PReqFrame, RequestedServiceId, SoAFrame, SocFrame, ASndFrame, ServiceId, DllMsEvent};
+use crate::frame::{
+    ASndFrame, Codec, DllMsEvent, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId,
+    SoAFrame, SocFrame,
+};
 // Added NmtCommand
+use crate::frame::codec::CodecHelpers;
 use crate::nmt::events::NmtCommand;
 use crate::node::NodeAction;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 // Added needed constants
-use crate::types::{EPLVersion, NodeId, C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID}; // Added C_ADR_BROADCAST_NODE_ID
+use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId}; // Added C_ADR_BROADCAST_NODE_ID
 use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
 // Need CodecHelpers for serialize_eth_header
-use crate::frame::codec::CodecHelpers;
 
 
 // Constants for OD access
@@ -34,7 +38,11 @@ const OD_IDX_MN_CYCLE_TIMING_REC: u16 = 0x1F8A;
 const OD_SUBIDX_ASYNC_SLOT_TIMEOUT: u8 = 2;
 
 /// Builds and serializes a SoC frame.
-pub(super) fn build_soc_frame(node: &ManagingNode, current_multiplex_cycle: u8, multiplex_cycle_len: u8) -> NodeAction {
+pub(super) fn build_soc_frame(
+    node: &ManagingNode,
+    current_multiplex_cycle: u8,
+    multiplex_cycle_len: u8,
+) -> NodeAction {
     trace!("[MN] Building SoC frame.");
     // TODO: Get real NetTime and RelativeTime from system clock or PTP
     let net_time = NetTime {
@@ -54,12 +62,15 @@ pub(super) fn build_soc_frame(node: &ManagingNode, current_multiplex_cycle: u8, 
     // TODO: Implement PS flag logic based on Prescaler (OD 0x1F98/9)
     let ps_flag = false;
 
-    let soc_flags = SocFlags { mc: mc_flag, ps: ps_flag };
+    let soc_flags = SocFlags {
+        mc: mc_flag,
+        ps: ps_flag,
+    };
 
     let soc_frame = SocFrame::new(node.mac_address, soc_flags, net_time, relative_time);
 
     let mut buf = vec![0u8; 64]; // Buffer for POWERLINK section (min size is 46, use 64 for safety)
-    // Serialize only the POWERLINK part
+                                 // Serialize only the POWERLINK part
     match soc_frame.serialize(&mut buf) {
         Ok(pl_size) => {
             // Serialize returns padded size for min frames
@@ -77,10 +88,13 @@ pub(super) fn build_soc_frame(node: &ManagingNode, current_multiplex_cycle: u8, 
     }
 }
 
-
 /// Builds and serializes a PReq frame for a specific CN.
 /// Includes MS flag based on whether the node is multiplexed.
-pub(super) fn build_preq_frame(node: &mut ManagingNode, target_node_id: NodeId, is_multiplexed: bool) -> NodeAction {
+pub(super) fn build_preq_frame(
+    node: &mut ManagingNode,
+    target_node_id: NodeId,
+    is_multiplexed: bool,
+) -> NodeAction {
     trace!("[MN] Building PReq for Node {}.", target_node_id.0);
     // Fetch MAC using pub(super) method
     let mac_addr = node.get_cn_mac_address(target_node_id);
@@ -116,10 +130,11 @@ pub(super) fn build_preq_frame(node: &mut ManagingNode, target_node_id: NodeId, 
             // Use the Node trait method, now in scope
             let rd_flag = node.nmt_state() == crate::nmt::states::NmtState::NmtOperational;
             // TODO: Determine other PReq flags (EA)
-            let flags = PReqFlags { // Use imported PReqFlags directly
+            let flags = PReqFlags {
+                // Use imported PReqFlags directly
                 rd: rd_flag,
                 ms: is_multiplexed, // Set MS flag based on argument
-                ea: false, // TODO: Implement Exception Acknowledge logic
+                ea: false,          // TODO: Implement Exception Acknowledge logic
             };
 
             let preq = PReqFrame::new(
@@ -132,7 +147,7 @@ pub(super) fn build_preq_frame(node: &mut ManagingNode, target_node_id: NodeId, 
             );
 
             let mut buf = vec![0u8; 1500]; // Buffer for POWERLINK section + Eth Header
-            // Serialize Eth header first
+                                           // Serialize Eth header first
             CodecHelpers::serialize_eth_header(&preq.eth_header, &mut buf);
             // Then serialize PL part
             match preq.serialize(&mut buf[14..]) {
@@ -157,7 +172,6 @@ pub(super) fn build_preq_frame(node: &mut ManagingNode, target_node_id: NodeId, 
         }
     }
 }
-
 
 /// Builds the payload for a TPDO (PReq) frame destined for a specific channel.
 /// Takes OD as an immutable reference.
@@ -223,7 +237,9 @@ pub(super) fn build_tpdo_payload(
                         entry.index, entry.sub_index, offset, length, payload_limit, target_node_id
                     );
                     // Return error according to spec 6.4.8.2 (E_PDO_MAP_OVERRUN)
-                    return Err(PowerlinkError::ValidationError("PDO mapping exceeds PReq payload limit"));
+                    return Err(PowerlinkError::ValidationError(
+                        "PDO mapping exceeds PReq payload limit",
+                    ));
                 }
                 max_offset_len = max_offset_len.max(end_pos);
 
@@ -246,24 +262,33 @@ pub(super) fn build_tpdo_payload(
                         entry.index, entry.sub_index, length, serialized_data.len()
                     );
                     let copy_len = serialized_data.len().min(length);
-                    payload[offset..offset + copy_len].copy_from_slice(&serialized_data[..copy_len]);
+                    payload[offset..offset + copy_len]
+                        .copy_from_slice(&serialized_data[..copy_len]);
                     // Zero out remaining bytes if object was shorter than mapping
                     if length > copy_len {
-                         payload[offset + copy_len .. end_pos].fill(0);
+                        payload[offset + copy_len..end_pos].fill(0);
                     }
                 } else {
                     payload[offset..end_pos].copy_from_slice(&serialized_data);
                 }
                 trace!(
                     "[MN] Applied TPDO to PReq: Read {:?} from 0x{:04X}/{}",
-                    value_cow, entry.index, entry.sub_index
+                    value_cow,
+                    entry.index,
+                    entry.sub_index
                 );
             }
         } else {
-             trace!("[MN] TPDO Mapping object {:#06X} not found or sub-index 0 invalid.", mapping_index);
+            trace!(
+                "[MN] TPDO Mapping object {:#06X} not found or sub-index 0 invalid.",
+                mapping_index
+            );
         }
     } else {
-         trace!("[MN] TPDO Mapping object {:#06X} not found.", mapping_index);
+        trace!(
+            "[MN] TPDO Mapping object {:#06X} not found.",
+            mapping_index
+        );
     }
 
     // Truncate payload to the actual size needed based on mapping
@@ -287,18 +312,24 @@ pub(super) fn build_soa_frame(
     let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
 
     // If a slot is being granted, set the phase and schedule a timeout.
+    // This now also handles the MN granting the slot to itself.
     if req_service != RequestedServiceId::NoService {
-        node.current_phase = super::main::CyclePhase::AsynchronousSoA;
-        let timeout_ns = node
-            .od
-            .read_u32(OD_IDX_MN_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_SLOT_TIMEOUT)
-            .unwrap_or(100_000) as u64; // Default 100us in ns
-        node.schedule_timeout(
-            current_time_us + (timeout_ns / 1000),
-            DllMsEvent::AsndTimeout,
-        );
+        // If the MN is granting the slot to a CN, it waits for an ASnd.
+        // If granting to itself, it enters AwaitingMnAsyncSend and doesn't need a timeout.
+        if target_node.0 != C_ADR_MN_DEF_NODE_ID {
+            node.current_phase = super::main::CyclePhase::AsynchronousSoA;
+            let timeout_ns = node
+                .od
+                .read_u32(OD_IDX_MN_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_SLOT_TIMEOUT)
+                .unwrap_or(100_000) as u64; // Default 100us in ns
+            node.schedule_timeout(
+                current_time_us + (timeout_ns / 1000),
+                DllMsEvent::AsndTimeout,
+            );
+        }
+    // The AwaitingMnAsyncSend state is set in the caller (schedule_next_isochronous_action)
     } else {
-        node.current_phase = super::main::CyclePhase::Idle;
+        node.current_phase = CyclePhase::Idle;
     }
 
     let soa_frame = SoAFrame::new(
@@ -324,38 +355,6 @@ pub(super) fn build_soa_frame(
     }
 }
 
-
-/// Builds an SoA frame that grants the async slot to the MN itself.
-pub(super) fn build_soa_frame_for_mn(node: &ManagingNode) -> NodeAction {
-    trace!("[MN] Building SoA frame for MN self-invite.");
-    let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
-
-    // When MN sends to itself, it typically uses UnspecifiedInvite.
-    let soa_frame = SoAFrame::new(
-        node.mac_address,
-        node.nmt_state(),
-        SoAFlags::default(),
-        RequestedServiceId::UnspecifiedInvite,
-        NodeId(C_ADR_MN_DEF_NODE_ID), // Target is self
-        epl_version,
-    );
-
-    let mut buf = vec![0u8; 64];
-    CodecHelpers::serialize_eth_header(&soa_frame.eth_header, &mut buf);
-    match soa_frame.serialize(&mut buf[14..]) {
-        Ok(pl_size) => {
-            let total_size = 14 + pl_size;
-            buf.truncate(total_size);
-            NodeAction::SendFrame(buf)
-        }
-        Err(e) => {
-            error!("[MN] Failed to serialize SoA frame for self: {:?}", e);
-            NodeAction::NoAction
-        }
-    }
-}
-
-
 /// Builds and serializes an SoA(IdentRequest) frame.
 pub(super) fn build_soa_ident_request(node: &ManagingNode, target_node_id: NodeId) -> NodeAction {
     debug!(
@@ -380,7 +379,7 @@ pub(super) fn build_soa_ident_request(node: &ManagingNode, target_node_id: NodeI
         epl_version,
     );
     let mut buf = vec![0u8; 64]; // Buffer for POWERLINK section + Eth Header
-    // Serialize Eth header first
+                                 // Serialize Eth header first
     CodecHelpers::serialize_eth_header(&soa_frame.eth_header, &mut buf);
     // Serialize PL part
     match soa_frame.serialize(&mut buf[14..]) {
@@ -398,8 +397,12 @@ pub(super) fn build_soa_ident_request(node: &ManagingNode, target_node_id: NodeI
 }
 
 /// Builds and serializes an ASnd(NMT Command) frame.
-pub(super) fn build_nmt_command_frame(node: &ManagingNode, command: NmtCommand, target_node_id: NodeId) -> NodeAction {
-     debug!(
+pub(super) fn build_nmt_command_frame(
+    node: &ManagingNode,
+    command: NmtCommand,
+    target_node_id: NodeId,
+) -> NodeAction {
+    debug!(
         "[MN] Building ASnd(NMT Command={:?}) for Node {}",
         command, target_node_id.0
     );
@@ -408,19 +411,18 @@ pub(super) fn build_nmt_command_frame(node: &ManagingNode, command: NmtCommand, 
 
     // Fetch target MAC address or use multicast for broadcast
     let dest_mac = if is_broadcast {
-         // Use the ASnd multicast MAC for broadcast NMT commands
-         MacAddress(crate::types::C_DLL_MULTICAST_ASND)
+        // Use the ASnd multicast MAC for broadcast NMT commands
+        MacAddress(crate::types::C_DLL_MULTICAST_ASND)
     } else {
-         let Some(mac) = node.get_cn_mac_address(target_node_id) else {
-             error!(
-                 "[MN] Cannot build NMT Command: MAC address for Node {} not found.",
-                 target_node_id.0
-             );
-             return NodeAction::NoAction;
-         };
-         mac
-     };
-
+        let Some(mac) = node.get_cn_mac_address(target_node_id) else {
+            error!(
+                "[MN] Cannot build NMT Command: MAC address for Node {} not found.",
+                target_node_id.0
+            );
+            return NodeAction::NoAction;
+        };
+        mac
+    };
 
     // Construct NMT command payload (NMT Service Slot format)
     // Ref: Table 123
@@ -429,14 +431,14 @@ pub(super) fn build_nmt_command_frame(node: &ManagingNode, command: NmtCommand, 
     let asnd = ASndFrame::new(
         node.mac_address,
         dest_mac,
-        target_node_id, // Target node ID (can be broadcast)
+        target_node_id,               // Target node ID (can be broadcast)
         NodeId(C_ADR_MN_DEF_NODE_ID), // Source is MN
         ServiceId::NmtCommand,
         nmt_payload,
     );
 
     let mut buf = vec![0u8; 64]; // Buffer for POWERLINK section + Eth Header (min size)
-    // Serialize Eth header first
+                                 // Serialize Eth header first
     CodecHelpers::serialize_eth_header(&asnd.eth_header, &mut buf);
     // Serialize PL part
     match asnd.serialize(&mut buf[14..]) {

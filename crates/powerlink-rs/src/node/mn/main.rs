@@ -1,7 +1,6 @@
 use super::payload;
 use super::scheduler;
 use crate::common::{NetTime, RelativeTime};
-use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::{
     ASndFrame, DllMsEvent, DllMsStateMachine, PResFrame, PowerlinkFrame, ServiceId, SocFrame,
@@ -11,17 +10,19 @@ use crate::frame::{
         MnErrorCounters, NmtAction,
     },
 };
+use crate::frame::codec::CodecHelpers;
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::{Object, ObjectDictionary, ObjectValue};
-use crate::types::{C_ADR_BROADCAST_NODE_ID, NodeId};
+use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
+use crate::PowerlinkError;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
 use core::cmp::Ordering; // For BinaryHeap ordering
-use log::{debug, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 // Constants for OD access
 const OD_IDX_NODE_ASSIGNMENT: u16 = 0x1F81;
@@ -33,7 +34,8 @@ const OD_IDX_MULTIPLEX_ASSIGN: u16 = 0x1F9B; // NMT_MultiplCycleAssign_AU8
 
 /// Internal state tracking for each configured CN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
-pub(super) enum CnState { // Made pub(super)
+pub(super) enum CnState {
+    // Made pub(super)
     /// Initial state, node is configured but not heard from.
     Unknown,
     /// Node has responded to IdentRequest.
@@ -50,7 +52,8 @@ pub(super) enum CnState { // Made pub(super)
 
 /// Tracks the current phase within the POWERLINK cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum CyclePhase { // Made pub(super)
+pub(super) enum CyclePhase {
+    // Made pub(super)
     Idle,            // Waiting for next cycle start or PreOp1 SoA
     SoCSent,         // SoC has been sent, start isochronous phase
     IsochronousPReq, // PReq sent, waiting for PRes or timeout
@@ -61,17 +64,18 @@ pub(super) enum CyclePhase { // Made pub(super)
 
 /// Represents a pending asynchronous transmission request from a CN.
 #[derive(Debug, Clone, Copy, Eq)]
-pub(super) struct AsyncRequest { // Made pub(super)
+pub(super) struct AsyncRequest {
+    // Made pub(super)
     pub(super) node_id: NodeId,
     pub(super) priority: u8, // Higher value = higher priority (7 = NMT)
-    // Add timestamp or sequence for FIFO within priority? For now, no.
+                             // Add timestamp or sequence for FIFO within priority? For now, no.
 }
 
 // Implement Ord and PartialOrd for AsyncRequest to use it in BinaryHeap (Max Heap)
 impl Ord for AsyncRequest {
     fn cmp(&self, other: &Self) -> Ordering {
         self.priority.cmp(&other.priority) // Compare priorities directly
-        // Add secondary comparison (e.g., timestamp) if needed for stable ordering
+                                           // Add secondary comparison (e.g., timestamp) if needed for stable ordering
     }
 }
 
@@ -115,7 +119,9 @@ pub struct ManagingNode<'s> {
     /// Priority queue for pending asynchronous requests from CNs. Max heap based on priority.
     pub(super) async_request_queue: BinaryHeap<AsyncRequest>, // Changed to BinaryHeap
     /// Queue for NMT commands the MN needs to send (e.g., from error handling).
-    pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
+    pub(super) pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
+    /// Queue for generic async frames the MN application wants to send.
+    pub(super) mn_async_send_queue: Vec<PowerlinkFrame>,
     pub(super) last_ident_poll_node_id: NodeId,
     pub(super) last_status_poll_node_id: NodeId, // NEW
     /// The absolute time in microseconds for the next scheduled tick (cycle start or timeout).
@@ -155,9 +161,14 @@ impl<'s> ManagingNode<'s> {
         }
 
         // Read multiplex cycle length (from NMT_CycleTiming_REC)
-        let multiplex_cycle_len = od.read_u8(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_MULTIPLEX_CYCLE_LEN).unwrap_or(0);
+        let multiplex_cycle_len =
+            od.read_u8(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_MULTIPLEX_CYCLE_LEN)
+                .unwrap_or(0);
         if multiplex_cycle_len > 0 {
-            info!("Multiplexed cycle enabled with length: {}", multiplex_cycle_len);
+            info!(
+                "Multiplexed cycle enabled with length: {}",
+                multiplex_cycle_len
+            );
         }
 
         // Read node assignment list (0x1F81) to build local state tracker
@@ -186,17 +197,21 @@ impl<'s> ManagingNode<'s> {
                                 isochronous_nodes.push(node_id);
 
                                 // Read multiplex assignment for this node (default to 0 = continuous)
-                                let mux_cycle_no = od.read_u8(OD_IDX_MULTIPLEX_ASSIGN, node_id.0).unwrap_or(0);
+                                let mux_cycle_no =
+                                    od.read_u8(OD_IDX_MULTIPLEX_ASSIGN, node_id.0).unwrap_or(0);
                                 if mux_cycle_no > 0 && multiplex_cycle_len == 0 {
-                                     warn!("Node {} assigned to multiplex cycle {}, but multiplex cycle length is 0. Treating as continuous.", node_id.0, mux_cycle_no);
-                                     multiplex_assign.insert(node_id, 0);
+                                    warn!("Node {} assigned to multiplex cycle {}, but multiplex cycle length is 0. Treating as continuous.", node_id.0, mux_cycle_no);
+                                    multiplex_assign.insert(node_id, 0);
                                 } else if mux_cycle_no > 0 && mux_cycle_no > multiplex_cycle_len {
                                     warn!("Node {} assigned to multiplex cycle {} which is > cycle length {}. Treating as continuous.", node_id.0, mux_cycle_no, multiplex_cycle_len);
                                     multiplex_assign.insert(node_id, 0);
                                 } else {
-                                     if mux_cycle_no > 0 {
-                                        debug!("Node {} assigned to multiplex cycle {}", node_id.0, mux_cycle_no);
-                                     }
+                                    if mux_cycle_no > 0 {
+                                        debug!(
+                                            "Node {} assigned to multiplex cycle {}",
+                                            node_id.0, mux_cycle_no
+                                        );
+                                    }
                                     multiplex_assign.insert(node_id, mux_cycle_no);
                                 }
                             } else {
@@ -240,9 +255,10 @@ impl<'s> ManagingNode<'s> {
             current_polled_cn: None,
             async_request_queue: BinaryHeap::new(), // Use BinaryHeap
             pending_nmt_commands: Vec::new(),
+            mn_async_send_queue: Vec::new(),
             last_ident_poll_node_id: NodeId(0), // Use NodeId(0) as initial invalid value
             last_status_poll_node_id: NodeId(0), // NEW
-            next_tick_us: None, // Initialize to None
+            next_tick_us: None,                 // Initialize to None
             pending_timeout_event: None,
             current_cycle_start_time_us: 0,
             initial_operational_actions_done: false,
@@ -253,6 +269,17 @@ impl<'s> ManagingNode<'s> {
             .run_internal_initialisation(&mut node.od);
 
         Ok(node)
+    }
+
+    /// Queues a generic asynchronous frame to be sent by the MN.
+    /// The MN will schedule this frame to be sent in the next available
+    /// asynchronous slot according to its scheduling priorities.
+    ///
+    /// # Arguments
+    /// * `frame` - The `PowerlinkFrame` to send. This should typically be an `ASnd` frame.
+    pub fn queue_mn_async_frame(&mut self, frame: PowerlinkFrame) {
+        info!("[MN] Queuing MN-initiated async frame: {:?}", frame);
+        self.mn_async_send_queue.push(frame);
     }
 
     /// Internal function to process a deserialized `PowerlinkFrame`.
@@ -350,8 +377,9 @@ impl<'s> ManagingNode<'s> {
         let response_expected = matches!(event, DllMsEvent::Pres | DllMsEvent::Asnd); // Simplified
         let async_in = !self.async_request_queue.is_empty(); // Simplified
         let async_out = false; // TODO: Track MN's own async requests
-        // Check remaining nodes *for the current multiplex cycle*
-        let isochr_nodes_remaining = scheduler::has_more_isochronous_nodes(self, self.current_multiplex_cycle);
+                               // Check remaining nodes *for the current multiplex cycle*
+        let isochr_nodes_remaining =
+            scheduler::has_more_isochronous_nodes(self, self.current_multiplex_cycle);
         let isochr = isochr_nodes_remaining || self.current_phase == CyclePhase::IsochronousPReq;
         let isochr_out = false; // TODO: Track MN PRes feature flag
 
@@ -425,10 +453,13 @@ impl<'s> ManagingNode<'s> {
                         scheduler::check_bootup_state(self);
                     } else {
                         // Node already identified, could be a response to a periodic check
-                        trace!("[MN] Received subsequent IdentResponse from Node {}.", node_id.0);
+                        trace!(
+                            "[MN] Received subsequent IdentResponse from Node {}.",
+                            node_id.0
+                        );
                         // Potentially update MAC address mapping here if needed
                     }
-                     // Update state based on NMTState field in IdentResponse payload
+                    // Update state based on NMTState field in IdentResponse payload
                     if frame.payload.len() > 2 {
                         if let Ok(nmt_state) = NmtState::try_from(frame.payload[2]) {
                             self.update_cn_state(node_id, nmt_state);
@@ -443,13 +474,16 @@ impl<'s> ManagingNode<'s> {
             }
             ServiceId::StatusResponse => {
                 let node_id = frame.source;
-                 // Update state based on NMTState field in StatusResponse payload
+                // Update state based on NMTState field in StatusResponse payload
                 if frame.payload.len() > 2 {
-                     if let Ok(nmt_state) = NmtState::try_from(frame.payload[2]) {
-                         self.update_cn_state(node_id, nmt_state);
-                     }
+                    if let Ok(nmt_state) = NmtState::try_from(frame.payload[2]) {
+                        self.update_cn_state(node_id, nmt_state);
+                    }
                 } else {
-                    warn!("[MN] Received StatusResponse from Node {} with invalid payload length.", node_id.0);
+                    warn!(
+                        "[MN] Received StatusResponse from Node {} with invalid payload length.",
+                        node_id.0
+                    );
                 }
                 // TODO: Process error flags (EN, EC) from StatusResponse payload (needs payload parsing)
                 trace!(
@@ -459,7 +493,7 @@ impl<'s> ManagingNode<'s> {
             }
             ServiceId::NmtRequest => {
                 // TODO: Parse NMT request payload and queue it for MN execution
-                 warn!(
+                warn!(
                     "[MN] NMTRequest from CN {} not yet supported.",
                     frame.source.0
                 );
@@ -471,8 +505,12 @@ impl<'s> ManagingNode<'s> {
                     frame.source.0
                 );
             }
-            ServiceId::NmtCommand => { // Added missing arm
-                 warn!("[MN] Received unexpected NMT Command via ASnd from Node {}. Ignoring.", frame.source.0);
+            ServiceId::NmtCommand => {
+                // Added missing arm
+                warn!(
+                    "[MN] Received unexpected NMT Command via ASnd from Node {}. Ignoring.",
+                    frame.source.0
+                );
             }
         }
     }
@@ -499,36 +537,44 @@ impl<'s> ManagingNode<'s> {
         }
     }
 
-     /// Updates the MN's internal state tracker for a CN based on its reported NMT state.
+    /// Updates the MN's internal state tracker for a CN based on its reported NMT state.
     fn update_cn_state(&mut self, node_id: NodeId, reported_state: NmtState) {
-         if let Some(current_state_ref) = self.node_states.get_mut(&node_id) {
+        if let Some(current_state_ref) = self.node_states.get_mut(&node_id) {
             // Map reported NMT state to internal CnState enum
             let new_state = match reported_state {
                 NmtState::NmtPreOperational1 => CnState::Identified, // Can receive PRes/Status in PreOp1
-                NmtState::NmtPreOperational2 | NmtState::NmtReadyToOperate => CnState::PreOperational,
+                NmtState::NmtPreOperational2 | NmtState::NmtReadyToOperate => {
+                    CnState::PreOperational
+                }
                 NmtState::NmtOperational => CnState::Operational,
                 NmtState::NmtCsStopped => CnState::Stopped,
                 // If CN reports a reset state, mark as Unknown until identified again
-                NmtState::NmtGsInitialising | NmtState::NmtGsResetApplication |
-                NmtState::NmtGsResetCommunication | NmtState::NmtGsResetConfiguration => CnState::Unknown,
+                NmtState::NmtGsInitialising
+                | NmtState::NmtGsResetApplication
+                | NmtState::NmtGsResetCommunication
+                | NmtState::NmtGsResetConfiguration => CnState::Unknown,
                 // Keep current state if reported state is unexpected or non-CN state
                 _ => *current_state_ref,
             };
 
             if *current_state_ref != new_state {
-                info!("[MN] Node {} state changed: {:?} -> {:?}", node_id.0, *current_state_ref, new_state);
+                info!(
+                    "[MN] Node {} state changed: {:?} -> {:?}",
+                    node_id.0, *current_state_ref, new_state
+                );
                 *current_state_ref = new_state;
-                 // After state update, check if MN NMT state can transition
-                 scheduler::check_bootup_state(self); // Check if NMT state can advance
+                // After state update, check if MN NMT state can transition
+                scheduler::check_bootup_state(self); // Check if NMT state can advance
             }
         }
     }
 
-
     /// Determines the next action in the isochronous phase (send next PReq or SoA).
     fn schedule_next_isochronous_action(&mut self, current_time_us: u64) -> NodeAction {
         // Find the next active node to poll using the helper function, passing current multiplex cycle
-        if let Some(node_id) = scheduler::get_next_isochronous_node_to_poll(self, self.current_multiplex_cycle) {
+        if let Some(node_id) =
+            scheduler::get_next_isochronous_node_to_poll(self, self.current_multiplex_cycle)
+        {
             // Found the next node
             self.current_polled_cn = Some(node_id);
             self.current_phase = CyclePhase::IsochronousPReq;
@@ -552,13 +598,21 @@ impl<'s> ManagingNode<'s> {
         }
 
         // No more isochronous nodes to poll, end of isochronous phase
-        debug!("[MN] Isochronous phase complete for cycle {}.", self.current_multiplex_cycle);
+        debug!(
+            "[MN] Isochronous phase complete for cycle {}.",
+            self.current_multiplex_cycle
+        );
         self.current_polled_cn = None;
         self.current_phase = CyclePhase::IsochronousDone;
-        
+
         // Let the scheduler decide the next async action (Ident, Status, or CN request)
         let (req_service, target_node) = scheduler::determine_next_async_action(self);
-        
+
+        // NEW: If the target is the MN itself, update the cycle phase.
+        if target_node.0 == C_ADR_MN_DEF_NODE_ID {
+            self.current_phase = CyclePhase::AwaitingMnAsyncSend;
+        }
+
         payload::build_soa_frame(self, current_time_us, req_service, target_node)
     }
 
@@ -577,13 +631,15 @@ impl<'s> ManagingNode<'s> {
             self.next_tick_us = Some(next_event_time);
             // Store the event associated ONLY if it's the timeout deadline we just set
             if next_event_time == deadline_us {
-                 // Only store if no other event is already pending for this exact time
-                 if self.pending_timeout_event.is_none() || self.next_tick_us.unwrap() != deadline_us {
+                // Only store if no other event is already pending for this exact time
+                if self.pending_timeout_event.is_none()
+                    || self.next_tick_us.unwrap() != deadline_us
+                {
                     self.pending_timeout_event = Some(event);
                     debug!("[MN] Scheduled {:?} timeout at {}us", event, deadline_us);
-                 } else {
-                     warn!("[MN] Could not schedule {:?} timeout at {}us, another event {:?} already pending for same time.", event, deadline_us, self.pending_timeout_event.unwrap());
-                 }
+                } else {
+                    warn!("[MN] Could not schedule {:?} timeout at {}us, another event {:?} already pending for same time.", event, deadline_us, self.pending_timeout_event.unwrap());
+                }
             } else {
                 // The next cycle start is sooner, clear any pending timeout event
                 self.pending_timeout_event = None;
@@ -602,7 +658,12 @@ impl<'s> ManagingNode<'s> {
                 warn!("[MN] Could not schedule {:?} timeout at {}us, another event {:?} already pending for same time.", event, deadline_us, self.pending_timeout_event.unwrap());
             }
         } else {
-             debug!("[MN] Timeout {:?} at {}us is later than next scheduled event at {}us. Ignoring schedule.", event, deadline_us, self.next_tick_us.unwrap_or(0));
+            debug!(
+                "[MN] Timeout {:?} at {}us is later than next scheduled event at {}us. Ignoring schedule.",
+                event,
+                deadline_us,
+                self.next_tick_us.unwrap_or(0)
+            );
         }
     }
 
@@ -612,33 +673,74 @@ impl<'s> ManagingNode<'s> {
         const OD_IDX_MAC_MAP: u16 = 0x1F84; // Using DeviceType list index as placeholder
         if let Some(Object::Array(entries)) = self.od.read_object(OD_IDX_MAC_MAP) {
             // OD Array sub-index = Node ID. Index 0 = count.
-             // Ensure sub-index access is within bounds of the actual array length
+            // Ensure sub-index access is within bounds of the actual array length
             if (node_id.0 as usize) < entries.len() {
                 // Assuming the U32 holds MAC address bytes (needs proper OD object)
-                if let Some(ObjectValue::Unsigned32(mac_val_u32)) = entries.get(node_id.0 as usize) {
+                if let Some(ObjectValue::Unsigned32(mac_val_u32)) =
+                    entries.get(node_id.0 as usize)
+                {
                     let mac_bytes = mac_val_u32.to_le_bytes(); // Assuming LE storage in U32
-                    // Use only first 6 bytes if stored in U32
-                    if mac_bytes[0..6].iter().any(|&b| b != 0) { // Check if not all zero
+                                                              // Use only first 6 bytes if stored in U32
+                    if mac_bytes[0..6].iter().any(|&b| b != 0) {
+                        // Check if not all zero
                         return Some(MacAddress(mac_bytes[0..6].try_into().unwrap()));
                     } else {
-                        trace!("[MN] Zero MAC entry found for Node {} in OD {:#06X}.", node_id.0, OD_IDX_MAC_MAP);
+                        trace!(
+                            "[MN] Zero MAC entry found for Node {} in OD {:#06X}.",
+                            node_id.0,
+                            OD_IDX_MAC_MAP
+                        );
                     }
                 } else {
-                     trace!(
+                    trace!(
                         "[MN] No MAC entry (or wrong type) found for Node {} in OD {:#06X}.",
-                         node_id.0, OD_IDX_MAC_MAP
+                        node_id.0,
+                        OD_IDX_MAC_MAP
                     );
                 }
             } else {
-                 trace!(
+                trace!(
                     "[MN] Node ID {} out of bounds for MAC map OD {:#06X} (len {}).",
-                     node_id.0, OD_IDX_MAC_MAP, entries.len()
-                 );
+                    node_id.0,
+                    OD_IDX_MAC_MAP,
+                    entries.len()
+                );
             }
         } else {
-            trace!("[MN] OD object {:#06X} (MAC map placeholder) not found or not an array.", OD_IDX_MAC_MAP);
+            trace!(
+                "[MN] OD object {:#06X} (MAC map placeholder) not found or not an array.",
+                OD_IDX_MAC_MAP
+            );
         }
         None // Not found or invalid
+    }
+
+    /// Helper to serialize a PowerlinkFrame and prepare the NodeAction.
+    fn serialize_and_prepare_action(&self, frame: PowerlinkFrame) -> NodeAction {
+        let mut buf = vec![0u8; 1500];
+        // Serialize Eth header first
+        let eth_header = match &frame {
+            PowerlinkFrame::Soc(f) => f.eth_header,
+            PowerlinkFrame::PReq(f) => f.eth_header,
+            PowerlinkFrame::PRes(f) => f.eth_header,
+            PowerlinkFrame::SoA(f) => f.eth_header,
+            PowerlinkFrame::ASnd(f) => f.eth_header,
+        };
+        CodecHelpers::serialize_eth_header(&eth_header, &mut buf);
+        // Then serialize PL part
+        match frame.serialize(&mut buf[14..]) {
+            Ok(pl_size) => {
+                let total_size = 14 + pl_size;
+                buf.truncate(total_size);
+                info!("Sending response frame: {:?}", frame);
+                trace!("Sending frame bytes ({}): {:?}", total_size, &buf);
+                NodeAction::SendFrame(buf)
+            }
+            Err(e) => {
+                error!("Failed to serialize response frame: {:?}", e);
+                NodeAction::NoAction
+            }
+        }
     }
 }
 
@@ -662,8 +764,8 @@ impl<'s> Node for ManagingNode<'s> {
             && buffer.len() >= 14 // Check length before slicing
             && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
         {
-             // Check if the source MAC is different from our own
-             if buffer.len() >= 12 && buffer[6..12] != self.mac_address.0 {
+            // Check if the source MAC is different from our own
+            if buffer.len() >= 12 && buffer[6..12] != self.mac_address.0 {
                 warn!(
                     "[MN] POWERLINK frame detected while in NotActive state from different MAC {:02X?}. Another MN may be present.",
                     &buffer[6..12]
@@ -672,18 +774,18 @@ impl<'s> Node for ManagingNode<'s> {
                 let (_, _) = self.dll_error_manager.handle_error(DllError::MultipleMn);
                 // NMT state machine will handle this error (e.g., stay in NotActive)
                 // We still try to deserialize to check frame type for DLL state machine context.
-             } else {
-                 trace!("[MN] Ignoring received frame from self in NotActive state.");
-                 return NodeAction::NoAction;
-             }
+            } else {
+                trace!("[MN] Ignoring received frame from self in NotActive state.");
+                return NodeAction::NoAction;
+            }
         }
 
         // --- Deserialize Frame ---
         // Pass the *full* buffer (including Eth header) to the new deserialize_frame
         match deserialize_frame(buffer) {
             Ok(frame) => {
-                 // deserialize_frame now returns a frame with the correct Eth header
-                 self.process_frame(frame, current_time_us)
+                // deserialize_frame now returns a frame with the correct Eth header
+                self.process_frame(frame, current_time_us)
             }
             Err(PowerlinkError::InvalidEthernetFrame) => {
                 trace!("Ignoring non-POWERLINK frame (wrong EtherType).");
@@ -691,24 +793,30 @@ impl<'s> Node for ManagingNode<'s> {
             }
             // BufferTooShort can happen if eth header itself is truncated
             Err(PowerlinkError::BufferTooShort) => {
-                 warn!("[MN] Received truncated Ethernet frame.");
-                 let (_, _) = self.dll_error_manager.handle_error(DllError::InvalidFormat); // Treat as invalid format
-                 NodeAction::NoAction
+                warn!("[MN] Received truncated Ethernet frame.");
+                let (_, _) = self.dll_error_manager.handle_error(DllError::InvalidFormat); // Treat as invalid format
+                NodeAction::NoAction
             }
             Err(PowerlinkError::InvalidPlFrame) | Err(PowerlinkError::InvalidMessageType(_)) => {
-                 // This error is now more reliable since deserialize_frame checks EtherType first
-                 warn!("[MN] Could not deserialize POWERLINK frame (correct EtherType): {:?}. Buffer: {:02X?}", buffer, buffer);
-                 let (_, _) = self.dll_error_manager.handle_error(DllError::InvalidFormat);
-                 NodeAction::NoAction
+                // This error is now more reliable since deserialize_frame checks EtherType first
+                warn!(
+                    "[MN] Could not deserialize POWERLINK frame (correct EtherType): {:?}. Buffer: {:02X?}",
+                    buffer, buffer
+                );
+                let (_, _) = self.dll_error_manager.handle_error(DllError::InvalidFormat);
+                NodeAction::NoAction
             }
-            Err(e) => { // Handle other potential errors from deserialize_frame
-                warn!("[MN] Error during frame deserialization: {:?}. Buffer: {:02X?}", e, buffer);
-                 let (_, _) = self.dll_error_manager.handle_error(DllError::InvalidFormat); // Treat others as invalid format too
+            Err(e) => {
+                // Handle other potential errors from deserialize_frame
+                warn!(
+                    "[MN] Error during frame deserialization: {:?}. Buffer: {:02X?}",
+                    e, buffer
+                );
+                let (_, _) = self.dll_error_manager.handle_error(DllError::InvalidFormat); // Treat others as invalid format too
                 NodeAction::NoAction
             }
         }
     }
-
 
     /// The MN's tick is its primary scheduler.
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
@@ -743,6 +851,7 @@ impl<'s> Node for ManagingNode<'s> {
         // --- Handle immediate action for AwaitingMnAsyncSend ---
         // NEW: This block handles sending the ASnd after the SoA has been sent.
         if self.current_phase == CyclePhase::AwaitingMnAsyncSend {
+            // Priority: NMT commands first, then generic MN requests.
             if let Some((command, target_node)) = self.pending_nmt_commands.pop() {
                 // remove(0) for FIFO, but pop() is fine for now as it's the only consumer.
                 info!(
@@ -753,11 +862,12 @@ impl<'s> Node for ManagingNode<'s> {
                 return payload::build_nmt_command_frame(self, command, target_node);
             } else {
                 // This case should ideally not happen if the state was set correctly.
-                warn!("[MN] Was in AwaitingMnAsyncSend, but NMT command queue is empty. Resetting phase.");
+                warn!(
+                    "[MN] Was in AwaitingMnAsyncSend, but NMT command queue is empty. Resetting phase."
+                );
                 self.current_phase = CyclePhase::Idle;
             }
         }
-
 
         // Skip if not in NotActive and deadline hasn't passed
         if !deadline_passed && self.nmt_state() != NmtState::NmtNotActive {
@@ -771,8 +881,8 @@ impl<'s> Node for ManagingNode<'s> {
         // Process timeout ONLY if the deadline has passed AND there's a pending timeout event
         if deadline_passed && self.next_tick_us.is_some() {
             if let Some(timeout_event) = self.pending_timeout_event.take() {
-                 // Check if the current time actually met or exceeded the specific timeout deadline
-                 if current_time_us >= deadline {
+                // Check if the current time actually met or exceeded the specific timeout deadline
+                if current_time_us >= deadline {
                     let missed_node = self.current_polled_cn.unwrap_or(NodeId(0));
                     warn!(
                         "[MN] Timeout event {:?} occurred at {}us (expected Node: {})",
@@ -784,44 +894,54 @@ impl<'s> Node for ManagingNode<'s> {
                     let dummy_frame = PowerlinkFrame::Soc(SocFrame::new(
                         self.mac_address,
                         Default::default(),
-                        NetTime { seconds: 0, nanoseconds: 0, },
-                        RelativeTime { seconds: 0, nanoseconds: 0, },
+                        NetTime {
+                            seconds: 0,
+                            nanoseconds: 0,
+                        },
+                        RelativeTime {
+                            seconds: 0,
+                            nanoseconds: 0,
+                        },
                     ));
                     self.handle_dll_event(timeout_event, &dummy_frame);
 
-                     // Mark the node as missing if it was a PRes timeout
+                    // Mark the node as missing if it was a PRes timeout
                     if timeout_event == DllMsEvent::PresTimeout {
                         if let Some(state) = self.node_states.get_mut(&missed_node) {
                             // Only mark as missing if currently expected to be present
-                           if *state >= CnState::Identified && *state != CnState::Stopped {
+                            if *state >= CnState::Identified && *state != CnState::Stopped {
                                 *state = CnState::Missing;
-                           }
-                       }
+                            }
+                        }
                         // After timeout, immediately schedule the next isochronous action or SoA
-                       action = self.schedule_next_isochronous_action(current_time_us);
+                        action = self.schedule_next_isochronous_action(current_time_us);
                         // Don't schedule the next main cycle yet, the scheduler handles timing now
                         schedule_next_cycle = false;
+                    } else if timeout_event == DllMsEvent::AsndTimeout {
+                        warn!("[MN] ASnd timeout occurred for Node {}", missed_node.0);
+                        self.current_phase = CyclePhase::Idle; // Async phase ended by timeout
+                                                               // Don't schedule next cycle yet, let main logic do it below
+                        schedule_next_cycle = true; // Let cycle scheduling happen below
                     }
-                    else if timeout_event == DllMsEvent::AsndTimeout {
-                         warn!("[MN] ASnd timeout occurred for Node {}", missed_node.0);
-                         self.current_phase = CyclePhase::Idle; // Async phase ended by timeout
-                         // Don't schedule next cycle yet, let main logic do it below
-                         schedule_next_cycle = true; // Let cycle scheduling happen below
-                    }
-                 } else {
-                     // Tick called before timeout deadline, put the event back
-                     self.pending_timeout_event = Some(timeout_event);
-                     debug!("[MN] Tick called at {}us before timeout deadline {}us, deferring.", current_time_us, deadline);
-                     return NodeAction::NoAction; // No action now
-                 }
+                } else {
+                    // Tick called before timeout deadline, put the event back
+                    self.pending_timeout_event = Some(timeout_event);
+                    debug!(
+                        "[MN] Tick called at {}us before timeout deadline {}us, deferring.",
+                        current_time_us, deadline
+                    );
+                    return NodeAction::NoAction; // No action now
+                }
             }
         }
-
 
         // --- NotActive Timeout Check ---
         // Only run this if we are in NotActive AND the timeout specifically scheduled for it has passed.
         // Also check pending_timeout_event is None to ensure this isn't a different timeout event.
-        if self.nmt_state() == NmtState::NmtNotActive && deadline_passed && self.pending_timeout_event.is_none() {
+        if self.nmt_state() == NmtState::NmtNotActive
+            && deadline_passed
+            && self.pending_timeout_event.is_none()
+        {
             info!("[MN] NotActive timeout expired. No other MN detected. Proceeding to boot.");
             self.nmt_state_machine
                 .process_event(NmtEvent::Timeout, &mut self.od);
@@ -834,14 +954,14 @@ impl<'s> Node for ManagingNode<'s> {
         // Re-evaluate state in case it changed
         let nmt_state = self.nmt_state();
 
-
         // Only proceed with cycle logic if a specific action wasn't determined by timeout handling above
         // AND if the tick is for the start of the cycle (or first action in PreOp1)
         // AND no timeout event is currently pending (meaning we are at the cycle start boundary)
         if action == NodeAction::NoAction
             && (self.current_phase == CyclePhase::Idle || nmt_state == NmtState::NmtPreOperational1)
             && self.pending_timeout_event.is_none()
-            && deadline_passed // Ensure we are at or past the scheduled time
+            && deadline_passed
+        // Ensure we are at or past the scheduled time
         {
             // We are at the start of a cycle or taking the first action in PreOp1
             self.current_cycle_start_time_us = current_time_us; // Record cycle start time
@@ -850,12 +970,16 @@ impl<'s> Node for ManagingNode<'s> {
                 current_time_us, nmt_state, self.current_phase
             );
 
-             // Increment multiplex cycle counter at the start of each *isochronous* cycle
-             // Corrected comparison using derive(PartialOrd) on NmtState
-             if nmt_state >= NmtState::NmtPreOperational2 && self.multiplex_cycle_len > 0 {
-                self.current_multiplex_cycle = (self.current_multiplex_cycle + 1) % self.multiplex_cycle_len;
-                debug!("[MN] Advanced to multiplex cycle {}", self.current_multiplex_cycle);
-             }
+            // Increment multiplex cycle counter at the start of each *isochronous* cycle
+            // Corrected comparison using derive(PartialOrd) on NmtState
+            if nmt_state >= NmtState::NmtPreOperational2 && self.multiplex_cycle_len > 0 {
+                self.current_multiplex_cycle =
+                    (self.current_multiplex_cycle + 1) % self.multiplex_cycle_len;
+                debug!(
+                    "[MN] Advanced to multiplex cycle {}",
+                    self.current_multiplex_cycle
+                );
+            }
 
             if nmt_state != NmtState::NmtNotActive && nmt_state != NmtState::NmtBasicEthernet {
                 self.dll_error_manager.on_cycle_complete();
@@ -880,8 +1004,12 @@ impl<'s> Node for ManagingNode<'s> {
                     self.next_isoch_node_idx = 0; // Reset for polling
                     self.current_polled_cn = None;
                     self.pending_timeout_event = None; // Clear any stale timeout event
-                    // Pass multiplex info to SoC builder
-                    payload::build_soc_frame(self, self.current_multiplex_cycle, self.multiplex_cycle_len) // Use payload module
+                                                       // Pass multiplex info to SoC builder
+                    payload::build_soc_frame(
+                        self,
+                        self.current_multiplex_cycle,
+                        self.multiplex_cycle_len,
+                    ) // Use payload module
                 }
                 _ => NodeAction::NoAction, // No cyclic actions in other states
             };
@@ -897,25 +1025,32 @@ impl<'s> Node for ManagingNode<'s> {
                 schedule_next_cycle = true; // Let the logic below handle scheduling
                 self.current_phase = CyclePhase::Idle; // Reset phase after action
             }
-        } else if action == NodeAction::NoAction && self.pending_timeout_event.is_none() && deadline_passed {
-             // Deadline passed, but it wasn't a timeout event and wasn't the start of a cycle/PreOp1 action.
-             // This likely means we were waiting for the cycle start, which has now arrived.
-             // We should schedule the *next* cycle start, but don't perform any immediate action.
-             schedule_next_cycle = true;
-             debug!("[MN] Reached scheduled cycle start at {}us, but no immediate action. Scheduling next cycle.", current_time_us);
+        } else if action == NodeAction::NoAction
+            && self.pending_timeout_event.is_none()
+            && deadline_passed
+        {
+            // Deadline passed, but it wasn't a timeout event and wasn't the start of a cycle/PreOp1 action.
+            // This likely means we were waiting for the cycle start, which has now arrived.
+            // We should schedule the *next* cycle start, but don't perform any immediate action.
+            schedule_next_cycle = true;
+            debug!(
+                "[MN] Reached scheduled cycle start at {}us, but no immediate action. Scheduling next cycle.",
+                current_time_us
+            );
         }
-
 
         // Schedule the next main cycle tick only if not waiting for a specific timeout within the cycle
         if schedule_next_cycle {
             self.cycle_time_us = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
-             if self.cycle_time_us > 0
+            if self.cycle_time_us > 0
                 && nmt_state != NmtState::NmtNotActive
                 && nmt_state != NmtState::NmtBasicEthernet
             {
                 // Calculate next cycle start based on current time and cycle time
                 // Use current_cycle_start_time_us for alignment if available and recent, otherwise use current_time_us
-                let base_time = if self.current_cycle_start_time_us > 0 && current_time_us < self.current_cycle_start_time_us + self.cycle_time_us {
+                let base_time = if self.current_cycle_start_time_us > 0
+                    && current_time_us < self.current_cycle_start_time_us + self.cycle_time_us
+                {
                     self.current_cycle_start_time_us
                 } else {
                     current_time_us
@@ -924,36 +1059,44 @@ impl<'s> Node for ManagingNode<'s> {
                 let next_cycle_start = (cycles_passed + 1) * self.cycle_time_us;
 
                 // Only update if this is sooner than any pending timeout, or if no timeout pending
-                 // Or if the pending timeout deadline is the same as the cycle start (cycle start takes precedence)
-                 // Or if the calculated next cycle start is different from the currently scheduled one (prevents redundant logging)
+                // Or if the pending timeout deadline is the same as the cycle start (cycle start takes precedence)
+                // Or if the calculated next cycle start is different from the currently scheduled one (prevents redundant logging)
                 if self.pending_timeout_event.is_none()
-                   || next_cycle_start <= self.next_tick_us.unwrap_or(u64::MAX) // Check <= existing deadline
-                   || self.next_tick_us != Some(next_cycle_start) // Avoid redundant logs if already scheduled
+                    || next_cycle_start <= self.next_tick_us.unwrap_or(u64::MAX) // Check <= existing deadline
+                    || self.next_tick_us != Some(next_cycle_start)
+                // Avoid redundant logs if already scheduled
                 {
                     self.next_tick_us = Some(next_cycle_start);
                     // If cycle start takes precedence, clear the timeout event
                     if self.pending_timeout_event.is_some() && next_cycle_start <= deadline {
-                         self.pending_timeout_event = None;
+                        self.pending_timeout_event = None;
                     }
                     debug!("[MN] Scheduling next cycle start at {}us", next_cycle_start);
                 } else {
-                    debug!("[MN] Next cycle start {}us deferred due to pending timeout at {}us", next_cycle_start, self.next_tick_us.unwrap_or(0));
+                    debug!(
+                        "[MN] Next cycle start {}us deferred due to pending timeout at {}us",
+                        next_cycle_start,
+                        self.next_tick_us.unwrap_or(0)
+                    );
                     // Keep the existing (earlier) deadline for the timeout
                     // self.next_tick_us is already set correctly
                 }
-
             } else {
                 // Stop scheduling if cycle time is 0 or not in a cyclic state
                 // (Except for the initial NotActive timeout)
                 if nmt_state != NmtState::NmtNotActive {
                     self.next_tick_us = None;
                     self.pending_timeout_event = None;
-                } else if self.next_tick_us.is_none() { // If initial NotActive timeout hasn't been set
-                     let timeout_us = self.nmt_state_machine.wait_not_active_timeout as u64;
-                     if timeout_us > 0 {
-                         self.next_tick_us = Some(current_time_us + timeout_us);
-                         debug!("[MN] Scheduling NotActive timeout check at {}us", self.next_tick_us.unwrap());
-                     }
+                } else if self.next_tick_us.is_none() {
+                    // If initial NotActive timeout hasn't been set
+                    let timeout_us = self.nmt_state_machine.wait_not_active_timeout as u64;
+                    if timeout_us > 0 {
+                        self.next_tick_us = Some(current_time_us + timeout_us);
+                        debug!(
+                            "[MN] Scheduling NotActive timeout check at {}us",
+                            self.next_tick_us.unwrap()
+                        );
+                    }
                 }
             }
         } else {
@@ -962,7 +1105,6 @@ impl<'s> Node for ManagingNode<'s> {
 
         action
     }
-
 
     fn nmt_state(&self) -> NmtState {
         self.nmt_state_machine.current_state()
