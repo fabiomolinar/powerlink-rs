@@ -1,5 +1,3 @@
-// crates/powerlink-rs/src/nmt/mn_state_machine.rs
-
 use super::flags::FeatureFlags;
 use super::state_machine::NmtStateMachine;
 use super::states::NmtState;
@@ -137,14 +135,16 @@ impl NmtStateMachine for MnNmtStateMachine {
                 NmtState::NmtPreOperational2
             }
 
-            // (NmtPreOperational2, CnsReady)
+            // (NMT_MT4) MN configuration complete and all mandatory CNs ready to operate
             (NmtState::NmtPreOperational2, NmtEvent::ConfigurationCompleteCnsReady) => {
                 NmtState::NmtReadyToOperate
             }
 
-            // (NmtReadyToOperate, CnsOperational / NMTStartNode)
-            // We use StartNode as the trigger event, as MN decides when this happens
-            (NmtState::NmtReadyToOperate, NmtEvent::StartNode) => NmtState::NmtOperational,
+            // (NMT_MT5) All mandatory CNs are confirmed to be in the Operational state.
+            (NmtState::NmtReadyToOperate, NmtEvent::AllMandatoryCnsOperational) => {
+                NmtState::NmtOperational
+            }
+
 
             // --- Operational State Transitions ---
 
@@ -217,8 +217,8 @@ mod tests {
             0x1F89,
             ObjectEntry {
                 object: Object::Record(vec![
-                    ObjectValue::Unsigned32(1_000_000), // MNWaitNotAct_U32
-                    ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp1_U32
+                    ObjectValue::Unsigned32(1_000_000), // MNWaitNotAct_U32 (1 sec)
+                    ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp1_U32 (500 ms)
                 ]),
                 name: "NMT_BootTime_REC",
                 access: Some(AccessType::ReadWrite),
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(nmt.current_state(), NmtState::NmtReadyToOperate);
 
         // NMT_MT5
-        nmt.process_event(NmtEvent::StartNode, &mut od);
+        nmt.process_event(NmtEvent::AllMandatoryCnsOperational, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtOperational);
         assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtOperational as u8));
     }

@@ -1,7 +1,3 @@
-// crates/powerlink-rs/src/node/mn/payload.rs
-// Refined PDO payload building: Added check against payload limit, improved error logging.
-//! Contains functions for building frames sent by the Managing Node.
-
 use crate::node::Node; // Import Node trait for nmt_state()
 use super::main::ManagingNode;
 use crate::common::{NetTime, RelativeTime};
@@ -9,7 +5,7 @@ use crate::frame::basic::MacAddress; // Import needed for build_nmt_command_fram
 use crate::frame::control::{SoAFlags, SocFlags};
 use crate::frame::poll::PReqFlags; // Import directly
 // Added ASndFrame and ServiceId for NMT commands
-use crate::frame::{Codec, PReqFrame, RequestedServiceId, SoAFrame, SocFrame, ASndFrame, ServiceId};
+use crate::frame::{Codec, PReqFrame, RequestedServiceId, SoAFrame, SocFrame, ASndFrame, ServiceId, DllMsEvent};
 // Added NmtCommand
 use crate::nmt::events::NmtCommand;
 use crate::node::NodeAction;
@@ -20,7 +16,7 @@ use crate::types::{EPLVersion, NodeId, C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NOD
 use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
-use log::{debug, error, trace, warn, info};
+use log::{debug, error, info, trace, warn};
 // Need CodecHelpers for serialize_eth_header
 use crate::frame::codec::CodecHelpers;
 
@@ -32,6 +28,8 @@ const OD_SUBIDX_PDO_COMM_NODEID: u8 = 1;
 const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
 const OD_IDX_MN_PREQ_PAYLOAD_LIMIT_LIST: u16 = 0x1F8B;
 const OD_IDX_EPL_VERSION: u16 = 0x1F83; // Added for reading EPL version
+const OD_IDX_MN_CYCLE_TIMING_REC: u16 = 0x1F8A;
+const OD_SUBIDX_ASYNC_SLOT_TIMEOUT: u8 = 2;
 
 /// Builds and serializes a SoC frame.
 pub(super) fn build_soc_frame(node: &ManagingNode, current_multiplex_cycle: u8, multiplex_cycle_len: u8) -> NodeAction {
@@ -273,54 +271,56 @@ pub(super) fn build_tpdo_payload(
 }
 
 /// Builds and serializes an SoA frame, potentially granting an async slot based on priority.
-pub(super) fn build_soa_frame(node: &mut ManagingNode) -> NodeAction {
+pub(super) fn build_soa_frame(node: &mut ManagingNode, current_time_us: u64) -> NodeAction {
     trace!("[MN] Building SoA frame.");
     // Read actual EPLVersion from OD (0x1F83)
     let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15)); // Default to 1.5 if not found
 
     // --- Basic Async Scheduling ---
-    // Peek at the highest priority request using BinaryHeap's pop (which removes max element)
     let (req_service, target_node) =
-        if let Some(request) = node.async_request_queue.pop() { // Pop highest priority request
+        if let Some(request) = node.async_request_queue.pop() {
             info!(
                 "[MN] Granting async slot to Node {} (PR={})",
                 request.node_id.0, request.priority
             );
             node.current_phase = super::main::CyclePhase::AsynchronousSoA;
-            // TODO: Schedule ASnd timeout based on AsyncMTU (OD 0x1F98/8) and AsyncLatency (OD 0x1F98/6)
-            // self.schedule_timeout(current_time_us + timeout, DllMsEvent::AsndTimeout);
+            // Schedule ASnd timeout based on 0x1F8A/2 (AsyncSlotTimeout_U32)
+            let timeout_ns = node
+                .od
+                .read_u32(OD_IDX_MN_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_SLOT_TIMEOUT)
+                .unwrap_or(100_000) as u64; // Default 100us in ns
+            node.schedule_timeout(
+                current_time_us + (timeout_ns / 1000),
+                DllMsEvent::AsndTimeout,
+            );
 
-            // Determine RequestedServiceId based on priority (simplified)
-            let service_id = if request.priority == 7 { // C_DLL_ASND_PRIO_NMTRQST
-                 RequestedServiceId::NmtRequestInvite
+            let service_id = if request.priority == 7 {
+                RequestedServiceId::NmtRequestInvite
             } else {
-                 RequestedServiceId::UnspecifiedInvite
+                RequestedServiceId::UnspecifiedInvite
             };
             (service_id, request.node_id)
         } else {
             node.current_phase = super::main::CyclePhase::Idle;
             (RequestedServiceId::NoService, NodeId(0)) // No requests pending
         };
-    // TODO: Handle IdentRequest and StatusRequest scheduling (especially in PreOp1)
+    // TODO: Handle IdentRequest and StatusRequest scheduling
 
     let soa_frame = SoAFrame::new(
-        node.mac_address, // Access pub(super) field
-        node.nmt_state(), // Use trait method
-        SoAFlags::default(), // TODO: Set EA/ER flags based on error state
+        node.mac_address,
+        node.nmt_state(),
+        SoAFlags::default(),
         req_service,
         target_node,
         epl_version,
     );
-    let mut buf = vec![0u8; 64]; // Buffer for POWERLINK section + Eth Header
-    // Serialize Eth header first
+    let mut buf = vec![0u8; 64];
     CodecHelpers::serialize_eth_header(&soa_frame.eth_header, &mut buf);
-    // Serialize PL part
     match soa_frame.serialize(&mut buf[14..]) {
         Ok(pl_size) => {
-             // Serialize returns padded size
-             let total_size = 14 + pl_size;
-             buf.truncate(total_size);
-             NodeAction::SendFrame(buf)
+            let total_size = 14 + pl_size;
+            buf.truncate(total_size);
+            NodeAction::SendFrame(buf)
         }
         Err(e) => {
             error!("[MN] Failed to serialize SoA frame: {:?}", e);
@@ -426,4 +426,3 @@ pub(super) fn build_nmt_command_frame(node: &ManagingNode, command: NmtCommand, 
         }
     }
 }
-

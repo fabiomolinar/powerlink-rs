@@ -1,5 +1,4 @@
-// crates/powerlink-rs/src/node/mn/main.rs
-use super::payload; // Use the new payload module
+use super::payload;
 use super::scheduler;
 use crate::common::{NetTime, RelativeTime};
 use crate::PowerlinkError;
@@ -12,13 +11,13 @@ use crate::frame::{
         MnErrorCounters, NmtAction,
     },
 };
-use crate::nmt::events::NmtEvent;
+use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::{Object, ObjectDictionary, ObjectValue};
-use crate::types::NodeId;
+use crate::types::{C_ADR_BROADCAST_NODE_ID, NodeId};
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
 use core::cmp::Ordering; // For BinaryHeap ordering
@@ -119,6 +118,8 @@ pub struct ManagingNode<'s> {
     pending_timeout_event: Option<DllMsEvent>,
     /// Timestamp of the start of the current or last cycle (microseconds).
     current_cycle_start_time_us: u64,
+    /// Flag to ensure one-time actions upon entering Operational are performed.
+    initial_operational_actions_done: bool,
 }
 
 impl<'s> ManagingNode<'s> {
@@ -230,6 +231,7 @@ impl<'s> ManagingNode<'s> {
             next_tick_us: None, // Initialize to None
             pending_timeout_event: None,
             current_cycle_start_time_us: 0,
+            initial_operational_actions_done: false,
         };
 
         // Run the initial state transitions to get to NmtNotActive.
@@ -542,11 +544,11 @@ impl<'s> ManagingNode<'s> {
         // Pass PRes/PResTimeout event for the last PReq before proceeding to SoA
         // (Handled in process_frame or tick timeout logic)
         // Proceed to build and send SoA
-        payload::build_soa_frame(self) // Use payload module
+        payload::build_soa_frame(self, current_time_us) // Use payload module
     }
 
     /// Helper to potentially schedule a DLL timeout event.
-    fn schedule_timeout(&mut self, deadline_us: u64, event: DllMsEvent) {
+    pub(super) fn schedule_timeout(&mut self, deadline_us: u64, event: DllMsEvent) {
         // Schedule the timeout. If it's earlier than the next cycle start,
         // it becomes the next tick time.
         let next_event_time = if let Some(next_cycle) = self.next_tick_us {
@@ -695,6 +697,30 @@ impl<'s> Node for ManagingNode<'s> {
 
     /// The MN's tick is its primary scheduler.
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
+        // --- One-time actions on entering Operational ---
+        if self.nmt_state() == NmtState::NmtOperational && !self.initial_operational_actions_done {
+            self.initial_operational_actions_done = true;
+            // NMT_StartUp_U32.Bit1 determines broadcast (1) or individual (0) start
+            if (self.nmt_state_machine.startup_flags & (1 << 1)) != 0 {
+                info!("[MN] Sending NMTStartNode (Broadcast) to all CNs.");
+                return payload::build_nmt_command_frame(
+                    self,
+                    NmtCommand::StartNode,
+                    NodeId(C_ADR_BROADCAST_NODE_ID),
+                );
+            } else {
+                info!("[MN] Sending NMTStartNode (Unicast) to individual CNs.");
+                // TODO: Implement queuing of multiple NMT commands to send them one by one.
+                // For now, we just send to the first mandatory node as an example.
+                if let Some(&node_id) = self.mandatory_nodes.first() {
+                    return payload::build_nmt_command_frame(self, NmtCommand::StartNode, node_id);
+                }
+            }
+        } else if self.nmt_state() < NmtState::NmtOperational {
+            // Reset the flag if we leave the operational state.
+            self.initial_operational_actions_done = false;
+        }
+
         let deadline = self.next_tick_us.unwrap_or(0);
         // Use `>=` for deadline check to handle exact matches
         let deadline_passed = current_time_us >= deadline;
