@@ -20,7 +20,7 @@ use crate::sdo::SdoServer;
 // SdoCommand and Headers are needed for SDO logic
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
-use crate::types::NodeId;
+use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -95,6 +95,11 @@ impl<'s> ControlledNode<'s> {
             .run_internal_initialisation(&mut node.od);
 
         Ok(node)
+    }
+
+    /// Allows the application to queue an SDO request payload to be sent.
+    pub fn queue_sdo_request(&mut self, payload: Vec<u8>) {
+        self.sdo_server.queue_request(payload);
     }
 
     /// Internal function to process a deserialized `PowerlinkFrame`.
@@ -284,9 +289,21 @@ impl<'s> ControlledNode<'s> {
                                     }
                                 }
                                 RequestedServiceId::UnspecifiedInvite => {
-                                    // TODO: For now, this is a placeholder for SDO client.
-                                    warn!("Received UnspecifiedInvite, but SDO client is not implemented.");
-                                    None
+                                    if let Some(sdo_payload) = self.sdo_server.pop_pending_request() {
+                                        info!("Received UnspecifiedInvite, sending queued SDO request.");
+                                        let asnd = ASndFrame::new(
+                                            self.mac_address,
+                                            soa_frame.eth_header.source_mac,
+                                            NodeId(C_ADR_MN_DEF_NODE_ID),
+                                            self.nmt_state_machine.node_id,
+                                            ServiceId::Sdo,
+                                            sdo_payload,
+                                        );
+                                        Some(PowerlinkFrame::ASnd(asnd))
+                                    } else {
+                                        warn!("Received UnspecifiedInvite but have no pending SDO requests.");
+                                        None
+                                    }
                                 }
                                 _ => None,
                             }

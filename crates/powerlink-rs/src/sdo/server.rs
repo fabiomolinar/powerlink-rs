@@ -22,9 +22,8 @@ pub struct SdoServer {
     pub(super) send_sequence_number: u8,
     // The last sequence number the server correctly received from the client.
     pub(super) last_received_sequence_number: u8,
-    // A placeholder for pending client requests initiated by this node's application.
-    // For now, we just store a count to drive the RS flag.
-    pub(super) pending_client_requests: Vec<()>,
+    // A queue for pending client requests (outgoing SDO frames) initiated by this node's application.
+    pub(super) pending_client_requests: Vec<Vec<u8>>,
 }
 
 const MAX_EXPEDITED_PAYLOAD: usize = 1452; // Max SDO payload within ASnd frame (excluding headers)
@@ -33,6 +32,23 @@ impl SdoServer {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Queues an SDO request payload to be sent to the MN.
+    /// This would be called by the application logic.
+    pub fn queue_request(&mut self, payload: Vec<u8>) {
+        self.pending_client_requests.push(payload);
+    }
+
+    /// Retrieves and removes the next pending client request from the queue.
+    pub fn pop_pending_request(&mut self) -> Option<Vec<u8>> {
+        if self.pending_client_requests.is_empty() {
+            None
+        } else {
+            // Treat the Vec as a FIFO queue for simplicity.
+            Some(self.pending_client_requests.remove(0))
+        }
+    }
+
 
     /// Checks for pending client (outgoing) requests and returns their count and priority.
     /// This is used to set the RS/PR flags in PRes frames.
