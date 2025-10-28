@@ -836,7 +836,8 @@ impl<'s> Node for ManagingNode<'s> {
 
     /// The MN's tick is its primary scheduler.
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
-        // --- One-time actions on entering Operational ---
+        // --- 1. Handle one-time actions on entering Operational ---
+        // This is a special, high-priority action that runs once.
         if self.nmt_state() == NmtState::NmtOperational && !self.initial_operational_actions_done {
             self.initial_operational_actions_done = true;
             // NMT_StartUp_U32.Bit1 determines broadcast (1) or individual (0) start
@@ -849,14 +850,10 @@ impl<'s> Node for ManagingNode<'s> {
                 ));
             } else {
                 info!("[MN] Sending NMTStartNode (Unicast) to individual CNs.");
-                // TODO: Implement queuing of multiple NMT commands to send them one by one.
-                // For now, we just send to the first mandatory node as an example.
+                // We just queue the first command; the scheduler will handle sending them.
                 if let Some(&node_id) = self.mandatory_nodes.first() {
-                    return self.serialize_and_prepare_action(payload::build_nmt_command_frame(
-                        self,
-                        NmtCommand::StartNode,
-                        node_id,
-                    ));
+                    self.pending_nmt_commands.push((NmtCommand::StartNode, node_id));
+                    // The async scheduler will pick this up at the next SoA.
                 }
             }
         } else if self.nmt_state() < NmtState::NmtOperational {
@@ -864,277 +861,197 @@ impl<'s> Node for ManagingNode<'s> {
             self.initial_operational_actions_done = false;
         }
 
-        let deadline = self.next_tick_us.unwrap_or(0);
-        // Use `>=` for deadline check to handle exact matches
-        let deadline_passed = current_time_us >= deadline;
-
-        // --- Handle immediate action for AwaitingMnAsyncSend ---
-        // NEW: This block handles sending the ASnd after the SoA has been sent.
-        if self.current_phase == CyclePhase::AwaitingMnAsyncSend {
-            // Priority: NMT commands first, then generic MN requests.
-            if let Some((command, target_node)) = self.pending_nmt_commands.pop() {
-                // remove(0) for FIFO, but pop() is fine for now as it's the only consumer.
-                info!(
-                    "[MN] Sending queued NMT command {:?} for Node {} in async phase.",
-                    command, target_node.0
-                );
-                self.current_phase = CyclePhase::Idle; // Consume this async phase
-                return self.serialize_and_prepare_action(payload::build_nmt_command_frame(
-                    self,
-                    command,
-                    target_node,
-                ));
-            } else if let Some(frame) = self.mn_async_send_queue.pop() {
-                info!("[MN] Sending queued generic async frame in async phase.");
-                self.current_phase = CyclePhase::Idle;
-                return self.serialize_and_prepare_action(frame);
-            } else {
-                // This case should ideally not happen if the state was set correctly.
-                warn!(
-                    "[MN] Was in AwaitingMnAsyncSend, but all send queues are empty. Resetting phase."
-                );
-                self.current_phase = CyclePhase::Idle;
+        // --- 2. Handle immediate, non-time-based follow-up actions ---
+        // These actions must happen immediately after a previous action,
+        // ignoring the main cycle deadline.
+        match self.current_phase {
+            CyclePhase::AwaitingMnAsyncSend => {
+                // We just sent an SoA to ourselves. Now send the queued frame.
+                // Priority: NMT commands first, then generic MN requests.
+                if let Some((command, target_node)) = self.pending_nmt_commands.pop() {
+                    info!(
+                        "[MN] Sending queued NMT command {:?} for Node {} in async phase.",
+                        command, target_node.0
+                    );
+                    self.current_phase = CyclePhase::Idle; // Consume this async phase
+                    return self.serialize_and_prepare_action(payload::build_nmt_command_frame(
+                        self,
+                        command,
+                        target_node,
+                    ));
+                } else if let Some(frame) = self.mn_async_send_queue.pop() {
+                    info!("[MN] Sending queued generic async frame in async phase.");
+                    self.current_phase = CyclePhase::Idle;
+                    return self.serialize_and_prepare_action(frame);
+                } else {
+                    warn!(
+                        "[MN] Was in AwaitingMnAsyncSend, but all send queues are empty. Resetting phase."
+                    );
+                    self.current_phase = CyclePhase::Idle;
+                    // Fall through to time-based checks
+                }
+            }
+            CyclePhase::SoCSent => {
+                // We just sent an SoC. Immediately send the first PReq (or SoA).
+                // This call will set its own timeouts and phase.
+                return self.advance_cycle_phase(current_time_us);
+            }
+            _ => {
+                // Not an immediate follow-up state.
+                // Proceed to time-based checks below.
             }
         }
 
-        // Skip if not in NotActive and deadline hasn't passed
-        if !deadline_passed && self.nmt_state() != NmtState::NmtNotActive {
+        // --- 3. Handle time-based actions (Timeouts and Cycle Start) ---
+
+        // Handle the very first tick in NotActive to set the initial timeout.
+        if self.nmt_state() == NmtState::NmtNotActive && self.next_tick_us.is_none() {
+            let timeout_us = self.nmt_state_machine.wait_not_active_timeout as u64;
+            if timeout_us > 0 {
+                self.next_tick_us = Some(current_time_us + timeout_us);
+                debug!(
+                    "[MN] Scheduling NotActive timeout check at {}us",
+                    self.next_tick_us.unwrap()
+                );
+            }
             return NodeAction::NoAction;
         }
 
+        // Check if a scheduled deadline has passed.
+        let deadline = self.next_tick_us.unwrap_or(0);
+        let deadline_passed = current_time_us >= deadline;
+
+        if !deadline_passed {
+            return NodeAction::NoAction; // Not time for any timed action yet.
+        }
+
+        // A deadline has been met.
         let mut action = NodeAction::NoAction;
         let mut schedule_next_cycle = true; // Assume we will schedule the next cycle start
 
-        // --- Handle Timeout Events ---
-        // Process timeout ONLY if the deadline has passed AND there's a pending timeout event
-        if deadline_passed && self.next_tick_us.is_some() {
-            if let Some(timeout_event) = self.pending_timeout_event.take() {
-                // Check if the current time actually met or exceeded the specific timeout deadline
-                if current_time_us >= deadline {
-                    let missed_node = self.current_polled_cn.unwrap_or(NodeId(0));
-                    warn!(
-                        "[MN] Timeout event {:?} occurred at {}us (expected Node: {})",
-                        timeout_event, current_time_us, missed_node.0
-                    );
-
-                    // Handle the timeout event using the DLL state machine
-                    // Create a dummy frame context for handle_dll_event
-                    let dummy_frame = PowerlinkFrame::Soc(SocFrame::new(
-                        self.mac_address,
-                        Default::default(),
-                        NetTime {
-                            seconds: 0,
-                            nanoseconds: 0,
-                        },
-                        RelativeTime {
-                            seconds: 0,
-                            nanoseconds: 0,
-                        },
-                    ));
-                    self.handle_dll_event(timeout_event, &dummy_frame);
-
-                    // Mark the node as missing if it was a PRes timeout
-                    if timeout_event == DllMsEvent::PresTimeout {
-                        if let Some(state) = self.node_states.get_mut(&missed_node) {
-                            // Only mark as missing if currently expected to be present
-                            if *state >= CnState::Identified && *state != CnState::Stopped {
-                                *state = CnState::Missing;
-                            }
-                        }
-                        // After timeout, immediately schedule the next isochronous action or SoA
-                        action = self.advance_cycle_phase(current_time_us);
-                        // Don't schedule the next main cycle yet, the scheduler handles timing now
-                        schedule_next_cycle = false;
-                    } else if timeout_event == DllMsEvent::AsndTimeout {
-                        warn!("[MN] ASnd timeout occurred for Node {}", missed_node.0);
-                        self.current_phase = CyclePhase::Idle; // Async phase ended by timeout
-                                                               // Don't schedule next cycle yet, let main logic do it below
-                        schedule_next_cycle = true; // Let cycle scheduling happen below
-                    }
-                } else {
-                    // Tick called before timeout deadline, put the event back
-                    self.pending_timeout_event = Some(timeout_event);
-                    debug!(
-                        "[MN] Tick called at {}us before timeout deadline {}us, deferring.",
-                        current_time_us, deadline
-                    );
-                    return NodeAction::NoAction; // No action now
-                }
-            }
-        }
-
-        // --- NotActive Timeout Check ---
-        // Only run this if we are in NotActive AND the timeout specifically scheduled for it has passed.
-        // Also check pending_timeout_event is None to ensure this isn't a different timeout event.
-        if self.nmt_state() == NmtState::NmtNotActive
-            && deadline_passed
-            && self.pending_timeout_event.is_none()
-        {
-            info!("[MN] NotActive timeout expired. No other MN detected. Proceeding to boot.");
-            self.nmt_state_machine
-                .process_event(NmtEvent::Timeout, &mut self.od);
-            // Fall through to execute the first action of PreOp1 immediately.
-            // Clear the consumed timeout deadline.
-            self.next_tick_us = None; // Reset deadline
-            schedule_next_cycle = true; // Ensure cycle scheduling happens below
-        }
-
-        // Re-evaluate state in case it changed
-        let nmt_state = self.nmt_state();
-
-        // Only proceed with cycle logic if a specific action wasn't determined by timeout handling above
-        // AND if the tick is for the start of the cycle (or first action in PreOp1)
-        // AND no timeout event is currently pending (meaning we are at the cycle start boundary)
-        if action == NodeAction::NoAction
-            && (self.current_phase == CyclePhase::Idle || nmt_state == NmtState::NmtPreOperational1)
-            && self.pending_timeout_event.is_none()
-            && deadline_passed
-        // Ensure we are at or past the scheduled time
-        {
-            // We are at the start of a cycle or taking the first action in PreOp1
-            self.current_cycle_start_time_us = current_time_us; // Record cycle start time
-            debug!(
-                "[MN] Tick: Cycle/Action start at {}us (State: {:?}, Phase: {:?})",
-                current_time_us, nmt_state, self.current_phase
+        if let Some(timeout_event) = self.pending_timeout_event.take() {
+            // --- A. Handle a specific DLL Timeout (PRes/ASnd) ---
+            let missed_node = self.current_polled_cn.unwrap_or(NodeId(0));
+            warn!(
+                "[MN] Timeout event {:?} occurred at {}us (expected Node: {})",
+                timeout_event, current_time_us, missed_node.0
             );
 
-            // Increment multiplex cycle counter at the start of each *isochronous* cycle
-            // Corrected comparison using derive(PartialOrd) on NmtState
+            // Handle the timeout event
+            let dummy_frame = PowerlinkFrame::Soc(SocFrame::new(
+                self.mac_address,
+                Default::default(),
+                NetTime { seconds: 0, nanoseconds: 0 },
+                RelativeTime { seconds: 0, nanoseconds: 0 },
+            ));
+            self.handle_dll_event(timeout_event, &dummy_frame);
+
+            if timeout_event == DllMsEvent::PresTimeout {
+                if let Some(state) = self.node_states.get_mut(&missed_node) {
+                    if *state >= CnState::Identified && *state != CnState::Stopped {
+                        *state = CnState::Missing;
+                    }
+                }
+                // After timeout, immediately schedule the next isochronous action or SoA
+                action = self.advance_cycle_phase(current_time_us);
+                schedule_next_cycle = false;
+            } else if timeout_event == DllMsEvent::AsndTimeout {
+                warn!("[MN] ASnd timeout occurred for Node {}", missed_node.0);
+                self.current_phase = CyclePhase::Idle;
+                schedule_next_cycle = true;
+            }
+        } else if self.nmt_state() == NmtState::NmtNotActive {
+            // --- B. Handle the NotActive Timeout ---
+            info!("[MN] NotActive timeout expired. Proceeding to boot.");
+            self.nmt_state_machine
+                .process_event(NmtEvent::Timeout, &mut self.od);
+            // The NMT state is now PreOp1. The logic will fall through to block 4.
+            schedule_next_cycle = true;
+        }
+
+        // --- 4. Handle Cycle Start (if no other action was taken) ---
+        // This block runs if:
+        // - No timeout occurred (or an AsndTimeout occurred, which just resets the phase to Idle).
+        // - The state is Idle (or we just transitioned to PreOp1).
+        // - The deadline has passed.
+        let nmt_state = self.nmt_state(); // Re-check state in case NotActive timed out
+        if action == NodeAction::NoAction && self.current_phase == CyclePhase::Idle {
+            self.current_cycle_start_time_us = current_time_us;
+            debug!(
+                "[MN] Tick: Cycle start at {}us (State: {:?})",
+                current_time_us, nmt_state
+            );
+
             if nmt_state >= NmtState::NmtPreOperational2 && self.multiplex_cycle_len > 0 {
                 self.current_multiplex_cycle =
                     (self.current_multiplex_cycle + 1) % self.multiplex_cycle_len;
-                debug!(
-                    "[MN] Advanced to multiplex cycle {}",
-                    self.current_multiplex_cycle
-                );
             }
-
-            if nmt_state != NmtState::NmtNotActive && nmt_state != NmtState::NmtBasicEthernet {
+            if nmt_state >= NmtState::NmtPreOperational1 {
                 self.dll_error_manager.on_cycle_complete();
             }
 
             action = match nmt_state {
                 NmtState::NmtPreOperational1 => {
-                    // Poll for identification (Reduced Cycle using SoA)
-                    if let Some(node_to_poll) = scheduler::find_next_node_to_identify(self) {
-                        self.serialize_and_prepare_action(payload::build_soa_ident_request(
-                            self,
-                            node_to_poll,
-                        )) // Use payload module
-                    } else {
-                        // If all known nodes are identified, check if ready for PreOp2
-                        scheduler::check_bootup_state(self);
-                        self.serialize_and_prepare_action(payload::build_soa_ident_request(
-                            self,
-                            NodeId(0),
-                        )) // Send SoA(NoService) if no more to identify
-                    }
+                    // Start of a "Reduced Cycle" (just async phase)
+                    // This will find an IdentRequest to send.
+                    self.advance_cycle_phase(current_time_us)
                 }
                 NmtState::NmtOperational
                 | NmtState::NmtReadyToOperate
                 | NmtState::NmtPreOperational2 => {
-                    // Start of a new isochronous cycle
+                    // Start of a new Isochronous Cycle
                     self.current_phase = CyclePhase::SoCSent;
-                    self.next_isoch_node_idx = 0; // Reset for polling
+                    self.next_isoch_node_idx = 0;
                     self.current_polled_cn = None;
-                    self.pending_timeout_event = None; // Clear any stale timeout event
-                                                       // Pass multiplex info to SoC builder
+                    self.pending_timeout_event = None;
                     self.serialize_and_prepare_action(payload::build_soc_frame(
                         self,
                         self.current_multiplex_cycle,
                         self.multiplex_cycle_len,
-                    )) // Use payload module
+                    ))
                 }
                 _ => NodeAction::NoAction, // No cyclic actions in other states
             };
 
-            // If we just sent SoC, immediately schedule the first PReq or SoA
-            if self.current_phase == CyclePhase::SoCSent {
-                action = self.advance_cycle_phase(current_time_us);
-                // Don't schedule next cycle start yet, let the PReq/PRes sequence or timeouts handle it
-                schedule_next_cycle = false;
-            } else if nmt_state == NmtState::NmtPreOperational1 {
-                // In PreOp1, scheduling is simpler (Reduced Cycle) - schedule next SoA/Ident poll
-                // Use cycle_time as a basic interval for now, real reduced cycle is faster
-                schedule_next_cycle = true; // Let the logic below handle scheduling
-                self.current_phase = CyclePhase::Idle; // Reset phase after action
-            }
-        } else if action == NodeAction::NoAction
-            && self.pending_timeout_event.is_none()
-            && deadline_passed
-        {
-            // Deadline passed, but it wasn't a timeout event and wasn't the start of a cycle/PreOp1 action.
-            // This likely means we were waiting for the cycle start, which has now arrived.
-            // We should schedule the *next* cycle start, but don't perform any immediate action.
-            schedule_next_cycle = true;
-            debug!(
-                "[MN] Reached scheduled cycle start at {}us, but no immediate action. Scheduling next cycle.",
-                current_time_us
-            );
+            // `advance_cycle_phase` or `SoCSent` will schedule their own follow-ups.
+            schedule_next_cycle = false;
         }
 
-        // Schedule the next main cycle tick only if not waiting for a specific timeout within the cycle
+        // --- 5. Schedule the next cycle tick ---
+        // This logic runs if:
+        // - A timeout (like AsndTimeout) occurred, and we need to schedule the next main cycle.
+        // - The NotActive timeout just expired, and we need to schedule the first PreOp1 action.
+        // - We were in Idle, but the NMT state was not one that starts a cycle (e.g., NotActive).
         if schedule_next_cycle {
             self.cycle_time_us = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
-            if self.cycle_time_us > 0
-                && nmt_state != NmtState::NmtNotActive
-                && nmt_state != NmtState::NmtBasicEthernet
-            {
-                // Calculate next cycle start based on current time and cycle time
-                // Use current_cycle_start_time_us for alignment if available and recent, otherwise use current_time_us
+            if self.cycle_time_us > 0 && nmt_state >= NmtState::NmtPreOperational1 {
                 let base_time = if self.current_cycle_start_time_us > 0
-                    && current_time_us < self.current_cycle_start_time_us + self.cycle_time_us
+                    && current_time_us
+                        < self.current_cycle_start_time_us + self.cycle_time_us
                 {
                     self.current_cycle_start_time_us
                 } else {
                     current_time_us
                 };
-                let cycles_passed = base_time / self.cycle_time_us;
-                let next_cycle_start = (cycles_passed + 1) * self.cycle_time_us;
+                let next_cycle_start = (base_time / self.cycle_time_us + 1) * self.cycle_time_us;
 
-                // Only update if this is sooner than any pending timeout, or if no timeout pending
-                // Or if the pending timeout deadline is the same as the cycle start (cycle start takes precedence)
-                // Or if the calculated next cycle start is different from the currently scheduled one (prevents redundant logging)
                 if self.pending_timeout_event.is_none()
-                    || next_cycle_start <= self.next_tick_us.unwrap_or(u64::MAX) // Check <= existing deadline
-                    || self.next_tick_us != Some(next_cycle_start)
-                // Avoid redundant logs if already scheduled
+                    || next_cycle_start <= self.next_tick_us.unwrap_or(u64::MAX)
                 {
                     self.next_tick_us = Some(next_cycle_start);
-                    // If cycle start takes precedence, clear the timeout event
                     if self.pending_timeout_event.is_some() && next_cycle_start <= deadline {
                         self.pending_timeout_event = None;
                     }
                     debug!("[MN] Scheduling next cycle start at {}us", next_cycle_start);
                 } else {
+                    // A timeout is already scheduled and it's sooner than the next cycle start.
                     debug!(
                         "[MN] Next cycle start {}us deferred due to pending timeout at {}us",
                         next_cycle_start,
                         self.next_tick_us.unwrap_or(0)
                     );
-                    // Keep the existing (earlier) deadline for the timeout
-                    // self.next_tick_us is already set correctly
-                }
-            } else {
-                // Stop scheduling if cycle time is 0 or not in a cyclic state
-                // (Except for the initial NotActive timeout)
-                if nmt_state != NmtState::NmtNotActive {
-                    self.next_tick_us = None;
-                    self.pending_timeout_event = None;
-                } else if self.next_tick_us.is_none() {
-                    // If initial NotActive timeout hasn't been set
-                    let timeout_us = self.nmt_state_machine.wait_not_active_timeout as u64;
-                    if timeout_us > 0 {
-                        self.next_tick_us = Some(current_time_us + timeout_us);
-                        debug!(
-                            "[MN] Scheduling NotActive timeout check at {}us",
-                            self.next_tick_us.unwrap()
-                        );
-                    }
                 }
             }
-        } else {
-            debug!("[MN] Deferring next cycle scheduling due to intra-cycle action/timeout.");
         }
 
         action
@@ -1145,11 +1062,17 @@ impl<'s> Node for ManagingNode<'s> {
     }
 
     fn next_action_time(&self) -> Option<u64> {
-        // If we are in NotActive for the first time, schedule the initial check.
+        // If an immediate follow-up action is required, signal to call tick() again straight away.
+        // We use the current cycle start time as the "deadline" which has just passed.
+        if matches!(
+            self.current_phase,
+            CyclePhase::SoCSent | CyclePhase::AwaitingMnAsyncSend
+        ) {
+            return Some(self.current_cycle_start_time_us);
+        }
+
         if self.nmt_state() == NmtState::NmtNotActive && self.next_tick_us.is_none() {
-            // Need current time to set an absolute deadline.
-            // Return 0 to signal the user loop to call tick immediately to get the first real deadline.
-            return Some(0);
+            return Some(0); // Signal to call tick immediately to set the first NotActive timeout.
         }
         self.next_tick_us
     }
