@@ -1,5 +1,5 @@
 use crate::frame::basic::MacAddress;
-use crate::frame::poll::PResFlags;
+use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
 use crate::nmt::states::NmtState;
 use crate::od::{ObjectDictionary, ObjectValue};
@@ -19,6 +19,7 @@ const OD_IDX_TPDO_MAPP_PARAM_BASE: u16 = 0x1A00;
 const OD_IDX_CYCLE_TIMING_REC: u16 = 0x1F98; // NMT_CycleTiming_REC
 const OD_SUBIDX_PRES_PAYLOAD_LIMIT: u8 = 5; // PresActPayloadLimit_U16 in 0x1F98
 const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
+const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
 
 /// Builds an `ASnd` frame for the `IdentResponse` service.
 pub(super) fn build_ident_response(
@@ -40,12 +41,35 @@ pub(super) fn build_ident_response(
     PowerlinkFrame::ASnd(asnd)
 }
 
+/// Builds an `ASnd` frame for the `StatusResponse` service.
+pub(super) fn build_status_response(
+    mac_address: MacAddress,
+    node_id: NodeId,
+    od: &ObjectDictionary,
+    en_flag: bool,
+    ec_flag: bool,
+    soa: &crate::frame::SoAFrame,
+) -> PowerlinkFrame {
+    debug!("Building StatusResponse for SoA from node {}", soa.source.0);
+    let payload = build_status_response_payload(od, en_flag, ec_flag);
+    let asnd = ASndFrame::new(
+        mac_address,
+        soa.eth_header.source_mac,    // Send back to MN's MAC
+        NodeId(C_ADR_MN_DEF_NODE_ID), // Destination is MN
+        node_id,
+        ServiceId::StatusResponse,
+        payload,
+    );
+    PowerlinkFrame::ASnd(asnd)
+}
+
 /// Builds a `PRes` frame in response to being polled by a `PReq`.
 pub(super) fn build_pres_response(
     mac_address: MacAddress,
     node_id: NodeId,
     nmt_state: NmtState,
-    od: &ObjectDictionary, // Changed to immutable reference for build_tpdo_payload
+    od: &ObjectDictionary,
+    sdo_server: &SdoServer,
 ) -> PowerlinkFrame {
     debug!("Building PRes in response to PReq for node {}", node_id.0);
 
@@ -60,9 +84,14 @@ pub(super) fn build_pres_response(
     // RD flag is only set if NMT is operational AND the payload was built successfully
     let rd_flag = (nmt_state == NmtState::NmtOperational) && payload_is_valid;
 
-    // TODO: Determine RS and PR flags from SDO/NMT queues
+    // Check for pending SDO/NMT requests to set RS and PR flags.
+    let (rs_count, pr_flag) = sdo_server.pending_request_count_and_priority();
+    // TODO: Query a future NMT client for pending NMT requests and select highest priority.
+
     let flags = PResFlags {
         rd: rd_flag,
+        rs: RSFlag::new(rs_count),
+        pr: pr_flag,
         ..Default::default()
     };
 
@@ -130,6 +159,35 @@ fn build_ident_response_payload(od: &ObjectDictionary) -> Vec<u8> {
         }
     }
     // VendorSpecificExtension2 (Octets 110-157) - Skipped (zeros)
+
+    payload
+}
+
+/// Builds the payload for a `StatusResponse` frame.
+/// The structure is defined in EPSG DS 301, Section 7.3.3.3.1.
+fn build_status_response_payload(od: &ObjectDictionary, en_flag: bool, ec_flag: bool) -> Vec<u8> {
+    // Minimal size is 14 bytes (up to StaticErrorBitField)
+    // We will build it dynamically.
+    let mut payload = vec![0u8; 14];
+
+    // --- Populate fields ---
+
+    // Octet 0: Flags (EN, EC)
+    if en_flag {
+        payload[0] |= 1 << 5;
+    }
+    if ec_flag {
+        payload[0] |= 1 << 4;
+    }
+    // Octet 1: Flags (PR, RS) - TODO
+    // Octet 2: NMTState
+    payload[2] = od.read_u8(0x1F8C, 0).unwrap_or(0);
+    // Octets 3-5: Reserved
+    // Octets 6-13: StaticErrorBitField
+    payload[6] = od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+    // Bytes 7-13 are reserved or device specific errors. Keep as zero for now.
+
+    // TODO: Append Error/Event History Entries from an emergency queue if present.
 
     payload
 }

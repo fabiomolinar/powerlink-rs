@@ -2,7 +2,7 @@ use super::payload;
 use crate::PowerlinkError;
 use crate::frame::{
     ASndFrame, Codec, DllCsEvent, DllCsStateMachine, DllError, NmtAction, PReqFrame, PResFrame,
-    PowerlinkFrame, RequestedServiceId, ServiceId,
+    PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame,
     basic::MacAddress,
     // deserialize_frame is now only used in process_raw_frame
     deserialize_frame,
@@ -43,6 +43,10 @@ pub struct ControlledNode<'s> {
     soc_timeout_check_active: bool,
     /// The absolute time in microseconds for the next scheduled tick.
     next_tick_us: Option<u64>,
+    /// Exception New flag, toggled when new error info is available.
+    en_flag: bool,
+    /// Exception Clear flag, mirrors the last received ER flag from the MN.
+    ec_flag: bool,
 }
 
 impl<'s> ControlledNode<'s> {
@@ -77,6 +81,9 @@ impl<'s> ControlledNode<'s> {
             last_soc_reception_time_us: 0,
             soc_timeout_check_active: false,
             next_tick_us: None,
+            en_flag: false,
+            // Per spec 6.5.5.1, EC starts as 1 to indicate "not initialized"
+            ec_flag: true,
         };
 
         // Run the initial state transitions to get to NmtNotActive.
@@ -159,7 +166,7 @@ impl<'s> ControlledNode<'s> {
         }
 
         // --- Handle SoC Frame specific logic ---
-        if matches!(frame, PowerlinkFrame::Soc(_)) {
+        if let PowerlinkFrame::Soc(soc_frame) = &frame {
             trace!("SoC received at time {}", current_time_us);
             self.last_soc_reception_time_us = current_time_us;
             self.soc_timeout_check_active = true;
@@ -180,6 +187,24 @@ impl<'s> ControlledNode<'s> {
                     self.next_tick_us = Some(deadline);
                 }
             }
+        }
+
+        // --- Handle EA/ER flags for error signaling handshake ---
+        match &frame {
+            PowerlinkFrame::PReq(preq) => {
+                if preq.flags.ea == self.en_flag {
+                    // TODO: Acknowledged, CN may change StatusResponse data again.
+                }
+            }
+            PowerlinkFrame::SoA(soa) => {
+                if soa.flags.er {
+                    // MN requests reset of error signaling.
+                    self.en_flag = false;
+                    // TODO: Clear emergency queue.
+                }
+                self.ec_flag = soa.flags.er; // EC mirrors ER
+            }
+            _ => {}
         }
 
         // --- Normal Frame Processing ---
@@ -213,24 +238,38 @@ impl<'s> ControlledNode<'s> {
 
         // 4. Generate response frames (logic moved from FrameHandler trait).
         let response_frame = match &frame {
-            PowerlinkFrame::SoA(frame) => {
-                match self.nmt_state() {
-                    // Per Table 108, IdentRequest can be handled in PreOp1 and PreOp2.
-                    NmtState::NmtPreOperational1 | NmtState::NmtPreOperational2 => {
-                        if frame.target_node_id == self.nmt_state_machine.node_id
-                            && frame.req_service_id == RequestedServiceId::IdentRequest
-                        {
-                            Some(payload::build_ident_response(
-                                self.mac_address,
-                                self.nmt_state_machine.node_id,
-                                &self.od,
-                                frame,
-                            ))
-                        } else {
-                            None
+            PowerlinkFrame::SoA(soa_frame) => {
+                if soa_frame.target_node_id != self.nmt_state_machine.node_id {
+                    None // Not for us
+                } else {
+                    match self.nmt_state() {
+                        // Per Table 108, these can be handled in PreOp1 and PreOp2.
+                        NmtState::NmtPreOperational1 | NmtState::NmtPreOperational2 => {
+                            match soa_frame.req_service_id {
+                                RequestedServiceId::IdentRequest => {
+                                    Some(payload::build_ident_response(
+                                        self.mac_address,
+                                        self.nmt_state_machine.node_id,
+                                        &self.od,
+                                        soa_frame,
+                                    ))
+                                }
+                                RequestedServiceId::StatusRequest => {
+                                    Some(payload::build_status_response(
+                                        self.mac_address,
+                                        self.nmt_state_machine.node_id,
+                                        &self.od,
+                                        self.en_flag,
+                                        self.ec_flag,
+                                        soa_frame,
+                                    ))
+                                }
+                                // TODO: Handle NMTRequestInvite and UnspecifiedInvite
+                                _ => None,
+                            }
                         }
+                        _ => None,
                     }
-                    _ => None,
                 }
             }
             PowerlinkFrame::PReq(_) => {
@@ -242,7 +281,8 @@ impl<'s> ControlledNode<'s> {
                         self.mac_address,
                         self.nmt_state_machine.node_id,
                         self.nmt_state(),
-                        &self.od, // Pass immutable OD for TPDO payload builder
+                        &self.od,
+                        &self.sdo_server,
                     )),
                     _ => None,
                 }

@@ -9,6 +9,7 @@ use crate::{PowerlinkError};
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
+use crate::frame::PRFlag;
 
 /// Manages a single SDO server connection.
 ///
@@ -21,6 +22,9 @@ pub struct SdoServer {
     pub(super) send_sequence_number: u8,
     // The last sequence number the server correctly received from the client.
     pub(super) last_received_sequence_number: u8,
+    // A placeholder for pending client requests initiated by this node's application.
+    // For now, we just store a count to drive the RS flag.
+    pub(super) pending_client_requests: Vec<()>,
 }
 
 const MAX_EXPEDITED_PAYLOAD: usize = 1452; // Max SDO payload within ASnd frame (excluding headers)
@@ -28,6 +32,19 @@ const MAX_EXPEDITED_PAYLOAD: usize = 1452; // Max SDO payload within ASnd frame 
 impl SdoServer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Checks for pending client (outgoing) requests and returns their count and priority.
+    /// This is used to set the RS/PR flags in PRes frames.
+    pub fn pending_request_count_and_priority(&self) -> (u8, PRFlag) {
+        let count = self.pending_client_requests.len();
+        if count > 0 {
+            // SDO via ASnd uses PRIO_GENERIC_REQUEST.
+            // A real implementation would check the priority of each pending request.
+            (count.min(7) as u8, PRFlag::PrioGenericRequest)
+        } else {
+            (0, PRFlag::default())
+        }
     }
 
     /// Processes an incoming SDO request contained within an ASnd payload.
@@ -610,6 +627,7 @@ impl Default for SdoServer {
             state: SdoServerState::Closed,
             send_sequence_number: 0,
             last_received_sequence_number: 63, // Set to 63 (equiv to -1) so first received seq (0) is valid
+            pending_client_requests: Vec::new(),
         }
     }
 }
