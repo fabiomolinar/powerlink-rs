@@ -1,3 +1,5 @@
+// crates/powerlink-rs/src/node/cn/main.rs
+
 use super::payload;
 use crate::PowerlinkError;
 use crate::frame::{
@@ -20,7 +22,7 @@ use crate::sdo::SdoServer;
 // SdoCommand and Headers are needed for SDO logic
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
-use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -105,8 +107,13 @@ impl<'s> ControlledNode<'s> {
         self.sdo_server.queue_request(payload);
     }
 
-    /// Allows the application to queue an NMT request to be sent to the MN.
+    /// Allows the application to queue an NMT command request to be sent to the MN.
+    /// (Reference: EPSG DS 301, Section 7.3.6)
     pub fn queue_nmt_request(&mut self, command: NmtCommand, target: NodeId) {
+        info!(
+            "Queueing NMT request: Command={:?}, Target={}",
+            command, target.0
+        );
         self.pending_nmt_requests.push((command, target));
     }
 
@@ -542,5 +549,162 @@ impl<'s> Node for ControlledNode<'s> {
 
     fn next_action_time(&self) -> Option<u64> {
         self.next_tick_us
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nmt::flags::FeatureFlags;
+    use crate::od::{AccessType, ObjectValue};
+    use crate::od::{Object, ObjectEntry};
+    use alloc::vec;
+
+    fn get_test_od() -> ObjectDictionary<'static> {
+        let mut od = ObjectDictionary::new(None);
+        od.insert(
+            0x1F93,
+            ObjectEntry {
+                object: Object::Record(vec![ObjectValue::Unsigned8(42), ObjectValue::Boolean(0)]),
+                name: "NMT_EPLNodeID_REC",
+                access: Some(AccessType::ReadWrite),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+                category: crate::od::Category::Optional,
+            },
+        );
+        let flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND | FeatureFlags::SDO_UDP;
+        od.insert(
+            0x1F82,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned32(flags.0)),
+                name: "NMT_FeatureFlags_U32",
+                access: Some(AccessType::Constant),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+                category: crate::od::Category::Optional,
+            },
+        );
+        od.insert(
+            0x1F99,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned32(5_000_000)),
+                name: "NMT_CNBasicEthernetTimeout_U32",
+                access: Some(AccessType::ReadWrite),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+                category: crate::od::Category::Optional,
+            },
+        );
+        od.insert(
+            0x1F8C,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned8(0)),
+                name: "NMT_CurrNMTState_U8",
+                access: Some(AccessType::ReadOnly),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+                category: crate::od::Category::Optional,
+            },
+        );
+        od
+    }
+
+    // Helper for creating a state machine for tests
+    fn get_test_nmt() -> CnNmtStateMachine {
+        let node_id = NodeId::try_from(42).unwrap();
+        let feature_flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND;
+        CnNmtStateMachine::new(node_id, feature_flags, 5_000_000)
+    }
+
+    #[test]
+    fn test_from_od_reads_parameters() {
+        let od = get_test_od();
+        let nmt = CnNmtStateMachine::from_od(&od).unwrap();
+        assert_eq!(nmt.node_id, NodeId(42));
+        assert!(nmt.feature_flags.contains(FeatureFlags::SDO_ASND));
+        assert_eq!(nmt.basic_ethernet_timeout, 5_000_000);
+    }
+
+    #[test]
+    fn test_from_od_fails_if_missing_objects() {
+        let od = ObjectDictionary::new(None);
+        let result = CnNmtStateMachine::from_od(&od);
+        assert_eq!(result.err(), Some(PowerlinkError::ObjectNotFound));
+    }
+
+    #[test]
+    fn test_internal_boot_sequence() {
+        let mut od = get_test_od();
+        let mut nmt = get_test_nmt();
+        assert_eq!(nmt.current_state(), NmtState::NmtGsInitialising);
+        nmt.run_internal_initialisation(&mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtNotActive);
+        assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtNotActive as u8));
+    }
+
+    #[test]
+    fn test_full_boot_up_happy_path() {
+        let mut od = get_test_od();
+        let mut nmt = get_test_nmt();
+        nmt.current_state = NmtState::NmtNotActive;
+
+        nmt.process_event(NmtEvent::SocSoAReceived, &mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtPreOperational1);
+
+        nmt.process_event(NmtEvent::SocReceived, &mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtPreOperational2);
+
+        nmt.process_event(NmtEvent::EnableReadyToOperate, &mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtPreOperational2);
+
+        nmt.process_event(NmtEvent::CnConfigurationComplete, &mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtReadyToOperate);
+
+        nmt.process_event(NmtEvent::StartNode, &mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtOperational);
+        assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtOperational as u8));
+    }
+
+    #[test]
+    fn test_error_handling_transition() {
+        let mut od = get_test_od();
+        let mut nmt = get_test_nmt();
+        nmt.current_state = NmtState::NmtOperational;
+
+        nmt.process_event(NmtEvent::Error, &mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtPreOperational1);
+    }
+
+    #[test]
+    fn test_stop_and_restart_node() {
+        let mut od = get_test_od();
+        let mut nmt = get_test_nmt();
+        nmt.current_state = NmtState::NmtOperational;
+
+        nmt.process_event(NmtEvent::StopNode, &mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtCsStopped);
+
+        nmt.process_event(NmtEvent::EnterPreOperational2, &mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtPreOperational2);
+    }
+
+    #[test]
+    fn test_queue_nmt_request() {
+        let mut od = get_test_od();
+        // The CN constructor will read the OD.
+        let mut node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
+        assert!(node.pending_nmt_requests.is_empty());
+
+        node.queue_nmt_request(NmtCommand::ResetNode, NodeId(10));
+        assert_eq!(node.pending_nmt_requests.len(), 1);
+        assert_eq!(
+            node.pending_nmt_requests[0],
+            (NmtCommand::ResetNode, NodeId(10))
+        );
     }
 }
