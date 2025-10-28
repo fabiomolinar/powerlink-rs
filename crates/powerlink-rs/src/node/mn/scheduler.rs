@@ -1,10 +1,45 @@
-// crates/powerlink-rs/src/node/mn/scheduler.rs
-// Modified scheduler logic: Added multiplex check, improved state checks for NMT transitions.
+use crate::frame::RequestedServiceId;
 use crate::node::Node; // Import Node trait for nmt_state()
 use super::main::{CnState, ManagingNode};
 use crate::nmt::{NmtEvent, NmtStateMachine, states::NmtState}; // Added NmtState import
 use crate::types::NodeId;
 use log::{debug, info, trace}; // Added trace import
+
+/// Determines the highest priority asynchronous action to be taken.
+/// The priority is:
+/// 1. Pending NMT Commands (handled in `schedule_next_isochronous_action`).
+/// 2. Find and identify unknown/missing nodes.
+/// 3. Poll async-only nodes.
+/// 4. Service pending ASnd requests from CNs.
+pub(super) fn determine_next_async_action(node: &mut ManagingNode) -> (RequestedServiceId, NodeId) {
+    // 1. Check for nodes to identify (highest priority after internal NMT commands)
+    if let Some(node_to_poll) = find_next_node_to_identify(node) {
+        return (RequestedServiceId::IdentRequest, node_to_poll);
+    }
+
+    // 2. Check for async-only nodes to poll
+    if let Some(node_to_poll) = find_next_async_only_to_poll(node) {
+        return (RequestedServiceId::StatusRequest, node_to_poll);
+    }
+
+    // 3. Service pending ASnd requests from CNs (already in priority order from BinaryHeap)
+    if let Some(request) = node.async_request_queue.pop() {
+        info!(
+            "[MN] Granting async slot to Node {} (PR={})",
+            request.node_id.0, request.priority
+        );
+        let service_id = if request.priority == 7 {
+            RequestedServiceId::NmtRequestInvite
+        } else {
+            RequestedServiceId::UnspecifiedInvite
+        };
+        return (service_id, request.node_id);
+    }
+
+    // 4. If nothing else to do, send a SoA with NoService
+    (RequestedServiceId::NoService, NodeId(0))
+}
+
 
 /// Checks if MN can transition NMT state based on mandatory CN states.
 pub(super) fn check_bootup_state(node: &mut ManagingNode) {
@@ -116,6 +151,39 @@ pub(super) fn find_next_node_to_identify(node: &mut ManagingNode) -> Option<Node
     debug!("[MN] No more unidentified nodes found.");
     None // No unidentified nodes left
 }
+
+
+/// Finds the next async-only CN that needs a status poll.
+pub(super) fn find_next_async_only_to_poll(node: &mut ManagingNode) -> Option<NodeId> {
+    if node.async_only_nodes.is_empty() {
+        return None;
+    }
+
+    // Find the index of the last polled node to continue from there
+    let start_idx = node
+        .async_only_nodes
+        .iter()
+        .position(|&id| id == node.last_status_poll_node_id)
+        .map_or(0, |i| (i + 1) % node.async_only_nodes.len());
+
+    // Iterate through the async-only list in a round-robin fashion
+    for i in 0..node.async_only_nodes.len() {
+        let current_idx = (start_idx + i) % node.async_only_nodes.len();
+        let node_id = node.async_only_nodes[current_idx];
+
+        // Poll any async-only node that is not considered completely gone
+        if let Some(state) = node.node_states.get(&node_id) {
+            if *state != CnState::Missing {
+                debug!("[MN] Found async-only Node {} to poll for status.", node_id.0);
+                node.last_status_poll_node_id = node_id;
+                return Some(node_id);
+            }
+        }
+    }
+
+    None
+}
+
 
 /// Gets the Node ID of the next isochronous node to poll for the given multiplex cycle.
 /// Returns None if all nodes for the current cycle have been polled.

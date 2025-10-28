@@ -104,6 +104,8 @@ pub struct ManagingNode<'s> {
     pub(super) mandatory_nodes: Vec<NodeId>, // List of mandatory Node IDs
     /// List of Node IDs for isochronous polling, read from OD 0x1F81/0x1F9C
     pub(super) isochronous_nodes: Vec<NodeId>, // Made pub(super)
+    /// List of Node IDs configured as async-only.
+    pub(super) async_only_nodes: Vec<NodeId>, // NEW
     /// Index into `isochronous_nodes` for the next node to poll in the *current* cycle.
     pub(super) next_isoch_node_idx: usize, // Made pub(super)
     /// Track the current phase within the cycle.
@@ -115,6 +117,7 @@ pub struct ManagingNode<'s> {
     /// Queue for NMT commands the MN needs to send (e.g., from error handling).
     pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
     pub(super) last_ident_poll_node_id: NodeId,
+    pub(super) last_status_poll_node_id: NodeId, // NEW
     /// The absolute time in microseconds for the next scheduled tick (cycle start or timeout).
     next_tick_us: Option<u64>,
     /// Stores the event associated with a scheduled timeout.
@@ -162,6 +165,7 @@ impl<'s> ManagingNode<'s> {
         let mut node_states = BTreeMap::new();
         let mut mandatory_nodes = Vec::new();
         let mut isochronous_nodes = Vec::new();
+        let mut async_only_nodes = Vec::new(); // NEW
         let mut multiplex_assign = BTreeMap::new();
 
         if let Some(Object::Array(entries)) = od.read_object(OD_IDX_NODE_ASSIGNMENT) {
@@ -195,6 +199,9 @@ impl<'s> ManagingNode<'s> {
                                      }
                                     multiplex_assign.insert(node_id, mux_cycle_no);
                                 }
+                            } else {
+                                // NEW: This is an async-only node
+                                async_only_nodes.push(node_id);
                             }
                         } else {
                             warn!("Invalid Node ID {} found in OD 0x1F81, skipping.", i);
@@ -206,10 +213,11 @@ impl<'s> ManagingNode<'s> {
         // TODO: Optionally sort `isochronous_nodes` based on OD 0x1F9C
 
         info!(
-            "MN configured to manage {} nodes ({} mandatory, {} isochronous). Multiplex Cycle Length: {}",
+            "MN configured to manage {} nodes ({} mandatory, {} isochronous, {} async-only). Multiplex Cycle Length: {}",
             node_states.len(),
             mandatory_nodes.len(),
             isochronous_nodes.len(),
+            async_only_nodes.len(),
             multiplex_cycle_len
         );
 
@@ -226,12 +234,14 @@ impl<'s> ManagingNode<'s> {
             node_states,
             mandatory_nodes,
             isochronous_nodes,
+            async_only_nodes, // NEW
             next_isoch_node_idx: 0,
             current_phase: CyclePhase::Idle,
             current_polled_cn: None,
             async_request_queue: BinaryHeap::new(), // Use BinaryHeap
             pending_nmt_commands: Vec::new(),
             last_ident_poll_node_id: NodeId(0), // Use NodeId(0) as initial invalid value
+            last_status_poll_node_id: NodeId(0), // NEW
             next_tick_us: None, // Initialize to None
             pending_timeout_event: None,
             current_cycle_start_time_us: 0,
@@ -546,17 +556,10 @@ impl<'s> ManagingNode<'s> {
         self.current_polled_cn = None;
         self.current_phase = CyclePhase::IsochronousDone;
         
-        // Before sending SoA, check if there are any NMT commands to send.
-        // NMT Commands have high priority in the async phase.
-        if !self.pending_nmt_commands.is_empty() {
-            info!("[MN] Prioritizing NMT command in async phase.");
-            // Set phase to trigger sending the NMT command immediately after SoA
-            self.current_phase = CyclePhase::AwaitingMnAsyncSend;
-            return payload::build_soa_frame_for_mn(self);
-        }
-
-        // Proceed to build and send SoA for regular async traffic
-        payload::build_soa_frame(self, current_time_us) // Use payload module
+        // Let the scheduler decide the next async action (Ident, Status, or CN request)
+        let (req_service, target_node) = scheduler::determine_next_async_action(self);
+        
+        payload::build_soa_frame(self, current_time_us, req_service, target_node)
     }
 
     /// Helper to potentially schedule a DLL timeout event.
@@ -738,9 +741,10 @@ impl<'s> Node for ManagingNode<'s> {
         let deadline_passed = current_time_us >= deadline;
 
         // --- Handle immediate action for AwaitingMnAsyncSend ---
+        // NEW: This block handles sending the ASnd after the SoA has been sent.
         if self.current_phase == CyclePhase::AwaitingMnAsyncSend {
             if let Some((command, target_node)) = self.pending_nmt_commands.pop() {
-                // remove(0) for FIFO
+                // remove(0) for FIFO, but pop() is fine for now as it's the only consumer.
                 info!(
                     "[MN] Sending queued NMT command {:?} for Node {} in async phase.",
                     command, target_node.0
@@ -829,6 +833,7 @@ impl<'s> Node for ManagingNode<'s> {
 
         // Re-evaluate state in case it changed
         let nmt_state = self.nmt_state();
+
 
         // Only proceed with cycle logic if a specific action wasn't determined by timeout handling above
         // AND if the tick is for the start of the cycle (or first action in PreOp1)

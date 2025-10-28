@@ -1,4 +1,5 @@
-use crate::node::mn::main::CyclePhase;
+// crates/powerlink-rs/src/node/mn/payload.rs
+// path: crates/powerlink-rs/src/node/mn/payload.rs
 use crate::node::Node; // Import Node trait for nmt_state()
 use super::main::ManagingNode;
 use crate::common::{NetTime, RelativeTime};
@@ -271,41 +272,34 @@ pub(super) fn build_tpdo_payload(
     Ok((payload, pdo_version))
 }
 
-/// Builds and serializes an SoA frame, potentially granting an async slot based on priority.
-pub(super) fn build_soa_frame(node: &mut ManagingNode, current_time_us: u64) -> NodeAction {
-    trace!("[MN] Building SoA frame.");
-    // Read actual EPLVersion from OD (0x1F83)
-    let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15)); // Default to 1.5 if not found
+/// Builds and serializes an SoA frame based on the scheduled action.
+pub(super) fn build_soa_frame(
+    node: &mut ManagingNode,
+    current_time_us: u64,
+    req_service: RequestedServiceId,
+    target_node: NodeId,
+) -> NodeAction {
+    trace!(
+        "[MN] Building SoA frame with service {:?} for Node {}",
+        req_service,
+        target_node.0
+    );
+    let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
 
-    // --- Basic Async Scheduling ---
-    let (req_service, target_node) =
-        if let Some(request) = node.async_request_queue.pop() {
-            info!(
-                "[MN] Granting async slot to Node {} (PR={})",
-                request.node_id.0, request.priority
-            );
-            node.current_phase = super::main::CyclePhase::AsynchronousSoA;
-            // Schedule ASnd timeout based on 0x1F8A/2 (AsyncSlotTimeout_U32)
-            let timeout_ns = node
-                .od
-                .read_u32(OD_IDX_MN_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_SLOT_TIMEOUT)
-                .unwrap_or(100_000) as u64; // Default 100us in ns
-            node.schedule_timeout(
-                current_time_us + (timeout_ns / 1000),
-                DllMsEvent::AsndTimeout,
-            );
-
-            let service_id = if request.priority == 7 {
-                RequestedServiceId::NmtRequestInvite
-            } else {
-                RequestedServiceId::UnspecifiedInvite
-            };
-            (service_id, request.node_id)
-        } else {
-            node.current_phase = CyclePhase::Idle;
-            (RequestedServiceId::NoService, NodeId(0)) // No requests pending
-        };
-    // TODO: Handle IdentRequest and StatusRequest scheduling
+    // If a slot is being granted, set the phase and schedule a timeout.
+    if req_service != RequestedServiceId::NoService {
+        node.current_phase = super::main::CyclePhase::AsynchronousSoA;
+        let timeout_ns = node
+            .od
+            .read_u32(OD_IDX_MN_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_SLOT_TIMEOUT)
+            .unwrap_or(100_000) as u64; // Default 100us in ns
+        node.schedule_timeout(
+            current_time_us + (timeout_ns / 1000),
+            DllMsEvent::AsndTimeout,
+        );
+    } else {
+        node.current_phase = super::main::CyclePhase::Idle;
+    }
 
     let soa_frame = SoAFrame::new(
         node.mac_address,
