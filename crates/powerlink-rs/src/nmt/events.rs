@@ -86,5 +86,6 @@ pub enum NmtEvent {
     AllCnsIdentified,
     /// MN configuration complete and all mandatory CNs ready to operate. (Used by MN NMT_MT4)
     ConfigurationCompleteCnsReady,
-    // Note: NMT_MT5 (ReadyToOp -> Operational) is triggered by NmtEvent::StartNode in this implementation.
+    /// All mandatory CNs are confirmed to be in the Operational state.
+    AllMandatoryCnsOperational,
 }

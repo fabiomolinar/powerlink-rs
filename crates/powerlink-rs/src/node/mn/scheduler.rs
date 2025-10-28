@@ -65,9 +65,9 @@ pub(super) fn check_bootup_state(node: &mut ManagingNode) {
             // NMT_StartUp_U32.Bit2 = 0 -> Auto transition
             if node.nmt_state_machine.startup_flags & (1 << 2) == 0 {
                 info!("[MN] All mandatory nodes Operational. Triggering NMT transition to Operational.");
-                 // NMT_MT5 - Use StartNode event as trigger for Operational state entry logic
+                 // NMT_MT5 - Use AllMandatoryCnsOperational event as the trigger
                 node.nmt_state_machine
-                    .process_event(NmtEvent::StartNode, &mut node.od);
+                    .process_event(NmtEvent::AllMandatoryCnsOperational, &mut node.od);
             } else {
                  debug!("[MN] All mandatory nodes Operational, but waiting for application trigger to enter Operational.");
             }
@@ -173,4 +173,3 @@ pub(super) fn has_more_isochronous_nodes(node: &ManagingNode, current_multiplex_
     }
     false // No more pollable nodes found for this cycle
 }
-

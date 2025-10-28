@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/mn/main.rs
 use super::payload; // Use the new payload module
 use super::scheduler;
 use crate::common::{NetTime, RelativeTime};
@@ -584,7 +585,7 @@ impl<'s> ManagingNode<'s> {
                 warn!("[MN] Could not schedule {:?} timeout at {}us, another event {:?} already pending for same time.", event, deadline_us, self.pending_timeout_event.unwrap());
             }
         } else {
-             debug!("[MN] Timeout {:?} at {}us is later than next scheduled event at {}us. Ignoring schedule.", event, deadline_us, self.next_tick_us.unwrap());
+             debug!("[MN] Timeout {:?} at {}us is later than next scheduled event at {}us. Ignoring schedule.", event, deadline_us, self.next_tick_us.unwrap_or(0));
         }
     }
 
