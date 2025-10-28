@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/mn/main.rs
 use super::payload;
 use super::scheduler;
 use crate::common::{NetTime, RelativeTime};
@@ -111,6 +112,8 @@ pub struct ManagingNode<'s> {
     current_polled_cn: Option<NodeId>,
     /// Priority queue for pending asynchronous requests from CNs. Max heap based on priority.
     pub(super) async_request_queue: BinaryHeap<AsyncRequest>, // Changed to BinaryHeap
+    /// Queue for NMT commands the MN needs to send (e.g., from error handling).
+    pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
     pub(super) last_ident_poll_node_id: NodeId,
     /// The absolute time in microseconds for the next scheduled tick (cycle start or timeout).
     next_tick_us: Option<u64>,
@@ -227,6 +230,7 @@ impl<'s> ManagingNode<'s> {
             current_phase: CyclePhase::Idle,
             current_polled_cn: None,
             async_request_queue: BinaryHeap::new(), // Use BinaryHeap
+            pending_nmt_commands: Vec::new(),
             last_ident_poll_node_id: NodeId(0), // Use NodeId(0) as initial invalid value
             next_tick_us: None, // Initialize to None
             pending_timeout_event: None,
@@ -379,9 +383,9 @@ impl<'s> ManagingNode<'s> {
                         if let Some(state) = self.node_states.get_mut(&node_id) {
                             *state = CnState::Missing; // Mark node as missing
                         }
-                        // TODO: Queue NMTResetNode command for this CN using payload::build_nmt_command_frame
-                        // let action = payload::build_nmt_command_frame(self, NmtCommand::ResetNode, node_id);
-                        // Handle the NodeAction returned here (e.g., add to a send queue)
+                        // Queue NMTResetNode command for this CN
+                        self.pending_nmt_commands
+                            .push((NmtCommand::ResetNode, node_id));
                     }
                     NmtAction::ResetCommunication => {
                         warn!("[MN] DLL Error threshold met. Requesting Communication Reset.");
@@ -541,9 +545,26 @@ impl<'s> ManagingNode<'s> {
         debug!("[MN] Isochronous phase complete for cycle {}.", self.current_multiplex_cycle);
         self.current_polled_cn = None;
         self.current_phase = CyclePhase::IsochronousDone;
-        // Pass PRes/PResTimeout event for the last PReq before proceeding to SoA
-        // (Handled in process_frame or tick timeout logic)
-        // Proceed to build and send SoA
+        
+        // Before sending SoA, check if there are any NMT commands to send.
+        // NMT Commands have high priority in the async phase.
+        if let Some((command, target_node)) = self.pending_nmt_commands.pop() {
+            info!(
+                "[MN] Prioritizing NMT command {:?} for Node {} in async phase.",
+                command, target_node.0
+            );
+            // Send a SoA(NoService) first to correctly mark the async phase,
+            // then immediately follow with the NMT Command frame.
+            // A more advanced implementation could queue both actions. For now,
+            // we send the SoA and the tick will immediately pick up the NMT command.
+            // This is slightly inefficient but functionally correct.
+            self.current_phase = CyclePhase::AsynchronousSoA; // Mark phase as active
+            // Re-queue the command to be sent in the next part of the tick
+            self.pending_nmt_commands.push((command, target_node));
+            return payload::build_soa_frame(self, current_time_us);
+        }
+
+        // Proceed to build and send SoA for regular async traffic
         payload::build_soa_frame(self, current_time_us) // Use payload module
     }
 
@@ -799,6 +820,18 @@ impl<'s> Node for ManagingNode<'s> {
 
         // Re-evaluate state in case it changed
         let nmt_state = self.nmt_state();
+
+        // Check if we need to send a queued NMT command. This has high priority in the async phase.
+        if !self.pending_nmt_commands.is_empty() && self.current_phase == CyclePhase::AsynchronousSoA {
+            let (command, target_node) = self.pending_nmt_commands.remove(0);
+            info!(
+                "[MN] Sending queued NMT command {:?} for Node {} in async phase.",
+                command, target_node.0
+            );
+            self.current_phase = CyclePhase::Idle; // Consume this async phase
+            return payload::build_nmt_command_frame(self, command, target_node);
+        }
+
 
         // Only proceed with cycle logic if a specific action wasn't determined by timeout handling above
         // AND if the tick is for the start of the cycle (or first action in PreOp1)
