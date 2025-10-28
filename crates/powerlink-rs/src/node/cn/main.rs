@@ -11,7 +11,7 @@ use crate::frame::{
 // Import the trait for SDO payload (de)serialization
 use crate::frame::codec::CodecHelpers;
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
-use crate::nmt::events::NmtEvent;
+use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{Node, NodeAction, PdoHandler};
@@ -22,6 +22,7 @@ use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
 use crate::types::NodeId;
 use alloc::vec;
+use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
 
 // Constants for OD access
@@ -37,6 +38,8 @@ pub struct ControlledNode<'s> {
     dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
     mac_address: MacAddress,
     sdo_server: SdoServer,
+    /// Queue for NMT commands this CN wants the MN to execute.
+    pending_nmt_requests: Vec<(NmtCommand, NodeId)>,
     /// Timestamp of the last successfully received SoC frame (microseconds).
     last_soc_reception_time_us: u64,
     /// Flag indicating if the SoC timeout check is currently active.
@@ -78,6 +81,7 @@ impl<'s> ControlledNode<'s> {
             dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
             mac_address,
             sdo_server: SdoServer::new(),
+            pending_nmt_requests: Vec::new(),
             last_soc_reception_time_us: 0,
             soc_timeout_check_active: false,
             next_tick_us: None,
@@ -166,7 +170,7 @@ impl<'s> ControlledNode<'s> {
         }
 
         // --- Handle SoC Frame specific logic ---
-        if let PowerlinkFrame::Soc(soc_frame) = &frame {
+        if let PowerlinkFrame::Soc(_) = &frame {
             trace!("SoC received at time {}", current_time_us);
             self.last_soc_reception_time_us = current_time_us;
             self.soc_timeout_check_active = true;
@@ -246,25 +250,44 @@ impl<'s> ControlledNode<'s> {
                         // Per Table 108, these can be handled in PreOp1 and PreOp2.
                         NmtState::NmtPreOperational1 | NmtState::NmtPreOperational2 => {
                             match soa_frame.req_service_id {
-                                RequestedServiceId::IdentRequest => {
-                                    Some(payload::build_ident_response(
+                                RequestedServiceId::IdentRequest => Some(
+                                    payload::build_ident_response(
                                         self.mac_address,
                                         self.nmt_state_machine.node_id,
                                         &self.od,
                                         soa_frame,
-                                    ))
-                                }
-                                RequestedServiceId::StatusRequest => {
-                                    Some(payload::build_status_response(
+                                    ),
+                                ),
+                                RequestedServiceId::StatusRequest => Some(
+                                    payload::build_status_response(
                                         self.mac_address,
                                         self.nmt_state_machine.node_id,
                                         &self.od,
                                         self.en_flag,
                                         self.ec_flag,
                                         soa_frame,
-                                    ))
+                                    ),
+                                ),
+                                RequestedServiceId::NmtRequestInvite => {
+                                    if let Some((command, target)) = self.pending_nmt_requests.pop()
+                                    {
+                                        Some(payload::build_nmt_request(
+                                            self.mac_address,
+                                            self.nmt_state_machine.node_id,
+                                            command,
+                                            target,
+                                            soa_frame,
+                                        ))
+                                    } else {
+                                        warn!("Received NmtRequestInvite but have no pending requests.");
+                                        None
+                                    }
                                 }
-                                // TODO: Handle NMTRequestInvite and UnspecifiedInvite
+                                RequestedServiceId::UnspecifiedInvite => {
+                                    // TODO: For now, this is a placeholder for SDO client.
+                                    warn!("Received UnspecifiedInvite, but SDO client is not implemented.");
+                                    None
+                                }
                                 _ => None,
                             }
                         }
@@ -283,6 +306,7 @@ impl<'s> ControlledNode<'s> {
                         self.nmt_state(),
                         &self.od,
                         &self.sdo_server,
+                        &self.pending_nmt_requests,
                     )),
                     _ => None,
                 }

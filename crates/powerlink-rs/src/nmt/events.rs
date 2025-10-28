@@ -1,5 +1,4 @@
-// crates/powerlink-rs/src/nmt/events.rs
-// Added NmtCommand enum
+use crate::PowerlinkError;
 
 /// Defines NMT Command IDs used in NMT Command frames.
 /// (Reference: EPSG DS 301, Appendix 3.7)
@@ -16,6 +15,25 @@ pub enum NmtCommand {
     SwReset = 0x2B,
     // Extended commands (require parsing Node List in payload) are not included here for simplicity
 }
+
+impl TryFrom<u8> for NmtCommand {
+    type Error = PowerlinkError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x21 => Ok(Self::StartNode),
+            0x22 => Ok(Self::StopNode),
+            0x23 => Ok(Self::EnterPreOperational2),
+            0x24 => Ok(Self::EnableReadyToOperate),
+            0x28 => Ok(Self::ResetNode),
+            0x29 => Ok(Self::ResetCommunication),
+            0x2A => Ok(Self::ResetConfiguration),
+            0x2B => Ok(Self::SwReset),
+            _ => Err(PowerlinkError::InvalidEnumValue),
+        }
+    }
+}
+
 
 /// Defines events that can trigger a state transition in the NMT state machine.
 ///

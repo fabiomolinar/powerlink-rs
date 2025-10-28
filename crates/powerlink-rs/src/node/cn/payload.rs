@@ -1,6 +1,7 @@
 use crate::frame::basic::MacAddress;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
+use crate::nmt::events::NmtCommand;
 use crate::nmt::states::NmtState;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
@@ -63,6 +64,36 @@ pub(super) fn build_status_response(
     PowerlinkFrame::ASnd(asnd)
 }
 
+/// Builds an `ASnd` frame for the `NMTRequest` service.
+pub(super) fn build_nmt_request(
+    mac_address: MacAddress,
+    node_id: NodeId,
+    command: NmtCommand,
+    target: NodeId,
+    soa: &crate::frame::SoAFrame,
+) -> PowerlinkFrame {
+    debug!(
+        "Building NMTRequest(Command={:?}, Target={}) for SoA from node {}",
+        command, target.0, soa.source.0
+    );
+    // Payload format from Spec Table 144
+    let payload = vec![
+        command as u8, // NMTRequestedCommandID
+        target.0,      // NMTRequestedCommandTarget
+                       // NMTRequestedCommandData is omitted for plain commands
+    ];
+
+    let asnd = ASndFrame::new(
+        mac_address,
+        soa.eth_header.source_mac,
+        NodeId(C_ADR_MN_DEF_NODE_ID),
+        node_id,
+        ServiceId::NmtRequest,
+        payload,
+    );
+    PowerlinkFrame::ASnd(asnd)
+}
+
 /// Builds a `PRes` frame in response to being polled by a `PReq`.
 pub(super) fn build_pres_response(
     mac_address: MacAddress,
@@ -70,6 +101,7 @@ pub(super) fn build_pres_response(
     nmt_state: NmtState,
     od: &ObjectDictionary,
     sdo_server: &SdoServer,
+    pending_nmt_requests: &[(NmtCommand, NodeId)], // Add NMT request queue
 ) -> PowerlinkFrame {
     debug!("Building PRes in response to PReq for node {}", node_id.0);
 
@@ -85,8 +117,15 @@ pub(super) fn build_pres_response(
     let rd_flag = (nmt_state == NmtState::NmtOperational) && payload_is_valid;
 
     // Check for pending SDO/NMT requests to set RS and PR flags.
-    let (rs_count, pr_flag) = sdo_server.pending_request_count_and_priority();
-    // TODO: Query a future NMT client for pending NMT requests and select highest priority.
+    // NMT requests (PR=7) have higher priority than generic SDO requests (PR=3).
+    let (rs_count, pr_flag) = if !pending_nmt_requests.is_empty() {
+        (
+            pending_nmt_requests.len().min(7) as u8,
+            crate::frame::PRFlag::PrioNmtRequest,
+        )
+    } else {
+        sdo_server.pending_request_count_and_priority()
+    };
 
     let flags = PResFlags {
         rd: rd_flag,
@@ -98,6 +137,7 @@ pub(super) fn build_pres_response(
     let pres = PResFrame::new(mac_address, node_id, nmt_state, flags, pdo_version, payload);
     PowerlinkFrame::PRes(pres)
 }
+
 
 /// Constructs the detailed payload for an `IdentResponse` frame by reading from the OD.
 /// The structure is defined in EPSG DS 301, Section 7.3.3.2.1.
@@ -191,6 +231,7 @@ fn build_status_response_payload(od: &ObjectDictionary, en_flag: bool, ec_flag: 
 
     payload
 }
+
 
 /// Builds an ASnd frame containing an SDO Abort message.
 pub(super) fn build_sdo_abort_response(
