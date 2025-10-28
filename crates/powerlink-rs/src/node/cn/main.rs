@@ -1,5 +1,3 @@
-// crates/powerlink-rs/src/node/cn/main.rs
-
 use super::payload;
 use crate::PowerlinkError;
 use crate::frame::{
@@ -95,27 +93,16 @@ impl<'s> ControlledNode<'s> {
             if asnd_frame.service_id == ServiceId::Sdo {
                 debug!("Received SDO/ASnd frame for processing.");
                 // Extract SDO Headers first to get Transaction ID for potential abort
-                let transaction_id = if asnd_frame.payload.len() >= 4 {
-                    // Seq header
-                    // SDO payloads implement PayloadCodec, not Codec.
-                    // We must provide a dummy Eth header for the call.
-                    SequenceLayerHeader::deserialize(&asnd_frame.payload[0..4])
-                        .ok() // Ignore deserialization errors here, let SDO server handle payload
-                        .and_then(|_seq_header| {
-                            if asnd_frame.payload.len() >= 8 {
-                                // Cmd header
-                                SdoCommand::deserialize(&asnd_frame.payload[4..])
-                                    .ok()
-                                    .map(|cmd| cmd.header.transaction_id)
-                            } else {
-                                None
-                            }
-                        })
+                let transaction_id = if asnd_frame.payload.len() >= 8 {
+                    // Seq header(4) + Command header(at least 4 more)
+                    SdoCommand::deserialize(&asnd_frame.payload[4..])
+                        .ok()
+                        .map(|cmd| cmd.header.transaction_id)
                 } else {
                     None
                 };
 
-                match self
+                let response_frame = match self
                     .sdo_server
                     .handle_request(&asnd_frame.payload, &mut self.od)
                 {
@@ -129,33 +116,24 @@ impl<'s> ControlledNode<'s> {
                             ServiceId::Sdo,
                             response_payload,
                         );
-                        let mut buf = vec![0u8; 1500];
-                        // Serialize Eth header first
-                        CodecHelpers::serialize_eth_header(&response_asnd.eth_header, &mut buf);
-                        // Then serialize PL part
-                        if let Ok(pl_size) = response_asnd.serialize(&mut buf[14..]) {
-                            let total_size = 14 + pl_size;
-                            buf.truncate(total_size);
-                            info!("Sending SDO response.");
-                            trace!("SDO response payload: {:?}", &buf);
-                            return NodeAction::SendFrame(buf);
-                        } else {
-                            error!("Failed to serialize SDO response frame.");
-                        }
+                        info!("Sending SDO response.");
+                        Some(PowerlinkFrame::ASnd(response_asnd))
                     }
                     Err(e) => {
                         error!("SDO server error: {:?}", e);
                         // --- Send SDO Abort Frame ---
                         if let Some(tid) = transaction_id {
-                            // Map PowerlinkError to SDO Abort Code (simplified mapping)
+                            // Map PowerlinkError to SDO Abort Code (spec App. 3.10)
                             let abort_code = match e {
                                 PowerlinkError::ObjectNotFound => 0x0602_0000,
                                 PowerlinkError::SubObjectNotFound => 0x0609_0011,
                                 PowerlinkError::TypeMismatch => 0x0607_0010,
+                                PowerlinkError::SdoInvalidCommandPayload => 0x0800_0000, // General error
+                                PowerlinkError::StorageError("Object is read-only") => 0x0601_0002,
                                 PowerlinkError::StorageError(_) => 0x0800_0020, // Cannot transfer data
                                 _ => 0x0800_0000,                               // General error
                             };
-                            return payload::build_sdo_abort_response(
+                            Some(payload::build_sdo_abort_response(
                                 self.mac_address,
                                 self.nmt_state_machine.node_id,
                                 &self.sdo_server,
@@ -163,15 +141,19 @@ impl<'s> ControlledNode<'s> {
                                 abort_code,
                                 asnd_frame.source, // Abort goes back to original sender NodeId
                                 asnd_frame.eth_header.source_mac, // Abort goes back to original sender MAC
-                            );
+                            ))
                         } else {
                             error!(
                                 "Cannot send SDO Abort: Could not determine Transaction ID from invalid request."
                             );
+                            None
                         }
                     }
+                };
+                // Use common serialization path at the end of the function
+                if let Some(response) = response_frame {
+                    return self.serialize_and_prepare_action(response);
                 }
-                // Even if there was an error, we don't proceed with normal frame handling for SDO.
                 return NodeAction::NoAction;
             }
         }
@@ -251,7 +233,7 @@ impl<'s> ControlledNode<'s> {
                     _ => None,
                 }
             }
-            PowerlinkFrame::PReq(_) => { // Added preq_frame binding
+            PowerlinkFrame::PReq(_) => {
                 match self.nmt_state() {
                     // A CN only responds to PReq when in isochronous states.
                     NmtState::NmtPreOperational2
@@ -260,7 +242,7 @@ impl<'s> ControlledNode<'s> {
                         self.mac_address,
                         self.nmt_state_machine.node_id,
                         self.nmt_state(),
-                        &mut self.od, // Pass mutable OD for TPDO payload builder
+                        &self.od, // Pass immutable OD for TPDO payload builder
                     )),
                     _ => None,
                 }
@@ -269,30 +251,40 @@ impl<'s> ControlledNode<'s> {
         };
 
         if let Some(response) = response_frame {
-            let mut buf = vec![0u8; 1500];
-            // Serialize Eth header first
-            let eth_header = match &response {
-                PowerlinkFrame::PRes(f) => f.eth_header,
-                PowerlinkFrame::ASnd(f) => f.eth_header,
-                _ => { // Should only be PRes or ASnd
-                    error!("Generated unexpected response frame type");
-                    return NodeAction::NoAction;
-                }
-            };
-            CodecHelpers::serialize_eth_header(&eth_header, &mut buf);
-            // Then serialize PL part
-            if let Ok(pl_size) = response.serialize(&mut buf[14..]) {
-                let total_size = 14 + pl_size;
-                buf.truncate(total_size);
-                info!("Sending response frame: {:?}", response);
-                trace!("Sending frame bytes ({}): {:?}", total_size, &buf);
-                return NodeAction::SendFrame(buf);
-            } else {
-                error!("Failed to serialize response frame: {:?}", response);
-            }
+            return self.serialize_and_prepare_action(response);
         }
 
         NodeAction::NoAction
+    }
+
+    /// Helper to serialize a PowerlinkFrame and prepare the NodeAction.
+    fn serialize_and_prepare_action(&self, frame: PowerlinkFrame) -> NodeAction {
+        let mut buf = vec![0u8; 1500];
+        // Serialize Eth header first
+        let eth_header = match &frame {
+            PowerlinkFrame::PRes(f) => f.eth_header,
+            PowerlinkFrame::ASnd(f) => f.eth_header,
+            _ => {
+                // Should only be PRes or ASnd for CN responses.
+                error!("Generated unexpected response frame type: {:?}", frame);
+                return NodeAction::NoAction;
+            }
+        };
+        CodecHelpers::serialize_eth_header(&eth_header, &mut buf);
+        // Then serialize PL part
+        match frame.serialize(&mut buf[14..]) {
+            Ok(pl_size) => {
+                let total_size = 14 + pl_size;
+                buf.truncate(total_size);
+                info!("Sending response frame: {:?}", frame);
+                trace!("Sending frame bytes ({}): {:?}", total_size, &buf);
+                NodeAction::SendFrame(buf)
+            }
+            Err(e) => {
+                error!("Failed to serialize response frame: {:?}", e);
+                NodeAction::NoAction
+            }
+        }
     }
 
     /// Consumes the payload of a PReq frame based on RPDO mapping.

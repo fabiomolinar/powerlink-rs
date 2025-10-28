@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/sdo/command/payload.rs
 use crate::PowerlinkError;
 
 /// Specific data for a "Read by Index" request.

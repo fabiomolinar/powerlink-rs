@@ -1,6 +1,3 @@
-// crates/powerlink-rs/src/hal.rs
-// Added SdoInvalidCommandPayload error.
-
 use crate::od::ObjectValue;
 use crate::pdo::PayloadSizeError;
 use crate::types::{InvalidMessageTypeError, NodeIdError};

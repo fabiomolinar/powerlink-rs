@@ -1,17 +1,14 @@
-// crates/powerlink-rs/src/node/cn/payload.rs
-// Refined PDO payload building: Added check against payload limit, improved error logging.
 use crate::frame::basic::MacAddress;
 use crate::frame::poll::PResFlags;
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
 use crate::nmt::states::NmtState;
-use crate::node::NodeAction;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::sdo::SdoServer;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
-use crate::{Codec, PowerlinkError};
+use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, trace, warn};
@@ -146,7 +143,7 @@ pub(super) fn build_sdo_abort_response(
     abort_code: u32,
     client_node_id: NodeId,
     client_mac: MacAddress,
-) -> NodeAction {
+) -> PowerlinkFrame {
     error!(
         "Building SDO Abort response (TID: {}, Code: {:#010X}) for Node {}",
         transaction_id, abort_code, client_node_id.0
@@ -198,23 +195,8 @@ pub(super) fn build_sdo_abort_response(
         ServiceId::Sdo,
         sdo_payload_buf,
     );
-
-    // Serialize the ASnd frame (including Ethernet header)
-    let mut frame_buf = vec![0u8; 1500];
-    // Serialize Eth header first
-    crate::frame::codec::CodecHelpers::serialize_eth_header(&abort_asnd.eth_header, &mut frame_buf);
-    match abort_asnd.serialize(&mut frame_buf[14..]) { // Serialize PL part after header
-        Ok(pl_size) => {
-            let total_size = 14 + pl_size;
-            frame_buf.truncate(total_size);
-            warn!("Sending SDO Abort frame ({} bytes).", total_size);
-            NodeAction::SendFrame(frame_buf)
-        }
-        Err(e) => {
-            error!("Failed to serialize SDO Abort ASnd frame: {:?}", e);
-            NodeAction::NoAction
-        }
-    }
+    warn!("Sending SDO Abort frame.");
+    PowerlinkFrame::ASnd(abort_asnd)
 }
 
 /// Builds the payload for a TPDO (PRes) frame.
