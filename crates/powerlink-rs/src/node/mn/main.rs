@@ -20,8 +20,8 @@ use crate::od::{Object, ObjectDictionary, ObjectValue};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
 use crate::PowerlinkError;
 use alloc::collections::{BTreeMap, BinaryHeap};
+use alloc::vec; // ERROR FIX: Added vec import
 use alloc::vec::Vec;
-use alloc::vec;
 use core::cmp::Ordering; // For BinaryHeap ordering
 use log::{debug, error, info, trace, warn};
 
@@ -32,6 +32,7 @@ const OD_IDX_MN_PRES_TIMEOUT_LIST: u16 = 0x1F92;
 const OD_IDX_CYCLE_TIMING_REC: u16 = 0x1F98; // NMT_CycleTiming_REC (for multiplex cycle len)
 const OD_SUBIDX_MULTIPLEX_CYCLE_LEN: u8 = 7; // MultiplCycleCnt_U8 in 0x1F98
 const OD_IDX_MULTIPLEX_ASSIGN: u16 = 0x1F9B; // NMT_MultiplCycleAssign_AU8
+const OD_SUBIDX_ASYNC_SLOT_TIMEOUT: u8 = 2; // For use in this module
 
 /// Internal state tracking for each configured CN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
@@ -595,7 +596,9 @@ impl<'s> ManagingNode<'s> {
 
             // Determine if the target node is multiplexed for the MS flag
             let is_multiplexed = self.multiplex_assign.get(&node_id).copied().unwrap_or(0) > 0;
-            return payload::build_preq_frame(self, node_id, is_multiplexed); // Use payload module
+            // ERROR FIX: build_preq_frame now takes &self. No mutable borrow conflict.
+            let frame = payload::build_preq_frame(self, node_id, is_multiplexed);
+            return self.serialize_and_prepare_action(frame);
         }
 
         // No more isochronous nodes to poll, end of isochronous phase
@@ -608,13 +611,26 @@ impl<'s> ManagingNode<'s> {
 
         // Let the scheduler decide the next async action (Ident, Status, or CN request)
         let (req_service, target_node) = scheduler::determine_next_async_action(self);
-
-        // NEW: If the target is the MN itself, update the cycle phase.
-        if target_node.0 == C_ADR_MN_DEF_NODE_ID {
+        
+        // If the target is a CN, set timeout.
+        if target_node.0 != C_ADR_MN_DEF_NODE_ID && req_service != crate::frame::RequestedServiceId::NoService {
+            self.current_phase = CyclePhase::AsynchronousSoA;
+            let timeout_ns = self.od.read_u32(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_SLOT_TIMEOUT).unwrap_or(100_000) as u64;
+            self.schedule_timeout(current_time_us + (timeout_ns / 1000), DllMsEvent::AsndTimeout);
+        } else if target_node.0 == C_ADR_MN_DEF_NODE_ID {
+             // If the target is the MN itself, update the cycle phase.
             self.current_phase = CyclePhase::AwaitingMnAsyncSend;
+        } else {
+            self.current_phase = CyclePhase::Idle;
         }
 
-        payload::build_soa_frame(self, current_time_us, req_service, target_node)
+        let frame = payload::build_soa_frame(
+            self,
+            req_service,
+            target_node,
+        );
+
+        self.serialize_and_prepare_action(frame)
     }
 
     /// Helper to potentially schedule a DLL timeout event.
@@ -721,20 +737,19 @@ impl<'s> ManagingNode<'s> {
         let mut buf = vec![0u8; 1500];
         // Serialize Eth header first
         let eth_header = match &frame {
-            PowerlinkFrame::Soc(f) => f.eth_header,
-            PowerlinkFrame::PReq(f) => f.eth_header,
-            PowerlinkFrame::PRes(f) => f.eth_header,
-            PowerlinkFrame::SoA(f) => f.eth_header,
-            PowerlinkFrame::ASnd(f) => f.eth_header,
+            PowerlinkFrame::Soc(f) => &f.eth_header,
+            PowerlinkFrame::PReq(f) => &f.eth_header,
+            PowerlinkFrame::PRes(f) => &f.eth_header,
+            PowerlinkFrame::SoA(f) => &f.eth_header,
+            PowerlinkFrame::ASnd(f) => &f.eth_header,
         };
-        CodecHelpers::serialize_eth_header(&eth_header, &mut buf);
+        CodecHelpers::serialize_eth_header(eth_header, &mut buf);
         // Then serialize PL part
         match frame.serialize(&mut buf[14..]) {
             Ok(pl_size) => {
                 let total_size = 14 + pl_size;
                 buf.truncate(total_size);
-                info!("Sending response frame: {:?}", frame);
-                trace!("Sending frame bytes ({}): {:?}", total_size, &buf);
+                trace!("[MN] Sending frame ({} bytes): {:02X?}", total_size, &buf);
                 NodeAction::SendFrame(buf)
             }
             Err(e) => {
@@ -827,17 +842,21 @@ impl<'s> Node for ManagingNode<'s> {
             // NMT_StartUp_U32.Bit1 determines broadcast (1) or individual (0) start
             if (self.nmt_state_machine.startup_flags & (1 << 1)) != 0 {
                 info!("[MN] Sending NMTStartNode (Broadcast) to all CNs.");
-                return payload::build_nmt_command_frame(
+                return self.serialize_and_prepare_action(payload::build_nmt_command_frame(
                     self,
                     NmtCommand::StartNode,
                     NodeId(C_ADR_BROADCAST_NODE_ID),
-                );
+                ));
             } else {
                 info!("[MN] Sending NMTStartNode (Unicast) to individual CNs.");
                 // TODO: Implement queuing of multiple NMT commands to send them one by one.
                 // For now, we just send to the first mandatory node as an example.
                 if let Some(&node_id) = self.mandatory_nodes.first() {
-                    return payload::build_nmt_command_frame(self, NmtCommand::StartNode, node_id);
+                    return self.serialize_and_prepare_action(payload::build_nmt_command_frame(
+                        self,
+                        NmtCommand::StartNode,
+                        node_id,
+                    ));
                 }
             }
         } else if self.nmt_state() < NmtState::NmtOperational {
@@ -860,11 +879,19 @@ impl<'s> Node for ManagingNode<'s> {
                     command, target_node.0
                 );
                 self.current_phase = CyclePhase::Idle; // Consume this async phase
-                return payload::build_nmt_command_frame(self, command, target_node);
+                return self.serialize_and_prepare_action(payload::build_nmt_command_frame(
+                    self,
+                    command,
+                    target_node,
+                ));
+            } else if let Some(frame) = self.mn_async_send_queue.pop() {
+                info!("[MN] Sending queued generic async frame in async phase.");
+                self.current_phase = CyclePhase::Idle;
+                return self.serialize_and_prepare_action(frame);
             } else {
                 // This case should ideally not happen if the state was set correctly.
                 warn!(
-                    "[MN] Was in AwaitingMnAsyncSend, but NMT command queue is empty. Resetting phase."
+                    "[MN] Was in AwaitingMnAsyncSend, but all send queues are empty. Resetting phase."
                 );
                 self.current_phase = CyclePhase::Idle;
             }
@@ -990,11 +1017,17 @@ impl<'s> Node for ManagingNode<'s> {
                 NmtState::NmtPreOperational1 => {
                     // Poll for identification (Reduced Cycle using SoA)
                     if let Some(node_to_poll) = scheduler::find_next_node_to_identify(self) {
-                        payload::build_soa_ident_request(self, node_to_poll) // Use payload module
+                        self.serialize_and_prepare_action(payload::build_soa_ident_request(
+                            self,
+                            node_to_poll,
+                        )) // Use payload module
                     } else {
                         // If all known nodes are identified, check if ready for PreOp2
                         scheduler::check_bootup_state(self);
-                        payload::build_soa_ident_request(self, NodeId(0)) // Send SoA(NoService) if no more to identify
+                        self.serialize_and_prepare_action(payload::build_soa_ident_request(
+                            self,
+                            NodeId(0),
+                        )) // Send SoA(NoService) if no more to identify
                     }
                 }
                 NmtState::NmtOperational
@@ -1006,11 +1039,11 @@ impl<'s> Node for ManagingNode<'s> {
                     self.current_polled_cn = None;
                     self.pending_timeout_event = None; // Clear any stale timeout event
                                                        // Pass multiplex info to SoC builder
-                    payload::build_soc_frame(
+                    self.serialize_and_prepare_action(payload::build_soc_frame(
                         self,
                         self.current_multiplex_cycle,
                         self.multiplex_cycle_len,
-                    ) // Use payload module
+                    )) // Use payload module
                 }
                 _ => NodeAction::NoAction, // No cyclic actions in other states
             };
