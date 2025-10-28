@@ -101,10 +101,11 @@ pub(super) fn find_next_node_to_identify(node: &mut ManagingNode) -> Option<Node
         let node_id = NodeId(current_node_id_val); // Directly create NodeId
 
         // Check if this node ID exists in our configured node state map
-        // AND if its current state is Unknown
-        if node.node_states.get(&node_id) == Some(&CnState::Unknown) { // Access pub(super) field
+        // AND if its current state is Unknown or Missing.
+        let state = node.node_states.get(&node_id).copied();
+        if matches!(state, Some(CnState::Unknown) | Some(CnState::Missing)) {
             // Found a node to poll
-            debug!("[MN] Found unidentified Node {} to poll.", node_id.0);
+            debug!("[MN] Found unidentified or missing Node {} to poll.", node_id.0);
             node.last_ident_poll_node_id = node_id; // Access pub(super) field
             return Some(node_id);
         }
