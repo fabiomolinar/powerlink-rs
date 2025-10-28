@@ -11,7 +11,7 @@ pub struct ReadByIndexRequest {
 impl ReadByIndexRequest {
     pub fn from_payload(payload: &[u8]) -> Result<Self, PowerlinkError> {
         if payload.len() < 4 {
-            return Err(PowerlinkError::BufferTooShort);
+            return Err(PowerlinkError::SdoInvalidCommandPayload);
         }
         Ok(Self {
             index: u16::from_le_bytes(payload[0..2].try_into()?),
@@ -31,7 +31,7 @@ pub struct WriteByIndexRequest<'a> {
 impl<'a> WriteByIndexRequest<'a> {
     pub fn from_payload(payload: &'a [u8]) -> Result<Self, PowerlinkError> {
         if payload.len() < 4 {
-            return Err(PowerlinkError::BufferTooShort);
+            return Err(PowerlinkError::SdoInvalidCommandPayload);
         }
         Ok(Self {
             index: u16::from_le_bytes(payload[0..2].try_into()?),
@@ -54,7 +54,10 @@ mod tests {
         assert_eq!(req.sub_index, 1);
 
         let short_payload = vec![0x06, 0x10, 0x01];
-        assert!(ReadByIndexRequest::from_payload(&short_payload).is_err());
+        assert!(matches!(
+            ReadByIndexRequest::from_payload(&short_payload),
+            Err(PowerlinkError::SdoInvalidCommandPayload)
+        ));
     }
 
     #[test]
