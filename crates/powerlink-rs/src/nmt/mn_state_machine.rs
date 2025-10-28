@@ -145,7 +145,6 @@ impl NmtStateMachine for MnNmtStateMachine {
                 NmtState::NmtOperational
             }
 
-
             // --- Operational State Transitions ---
 
             // (NMT_MT6) A critical error (e.g., mandatory CN lost) forces a reset to PreOp1.

@@ -3,7 +3,6 @@
 
 use log::{debug, error, info, trace, warn};
 use pnet::datalink::interfaces;
-use powerlink_rs_linux::LinuxPnetInterface;
 use powerlink_rs::{
     ControlledNode,
     NetworkInterface,
@@ -25,6 +24,7 @@ use powerlink_rs::{
     },
     types::{C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId},
 };
+use powerlink_rs_linux::LinuxPnetInterface;
 use std::{
     env,
     num::ParseIntError,

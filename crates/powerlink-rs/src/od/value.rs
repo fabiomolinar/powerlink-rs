@@ -1,12 +1,12 @@
 // crates/powerlink-rs/src/od/value.rs
 // Added support for serializing/deserializing more types relevant to PDO.
 
-use crate::frame::basic::MacAddress;
 use crate::PowerlinkError;
 use crate::common::{NetTime, TimeDifference, TimeOfDay};
+use crate::frame::basic::MacAddress;
 use crate::types::{
-    BOOLEAN, INTEGER8, INTEGER16, INTEGER32, INTEGER64, IpAddress, REAL32, REAL64,
-    UNSIGNED8, UNSIGNED16, UNSIGNED32, UNSIGNED64,
+    BOOLEAN, INTEGER8, INTEGER16, INTEGER32, INTEGER64, IpAddress, REAL32, REAL64, UNSIGNED8,
+    UNSIGNED16, UNSIGNED32, UNSIGNED64,
 };
 use alloc::{string::String, vec::Vec};
 use core::convert::TryInto; // Required for try_into()
@@ -25,10 +25,10 @@ pub enum ObjectValue {
     Unsigned64(UNSIGNED64),
     Real32(REAL32),
     Real64(REAL64),
-    VisibleString(String), // Typically limited length
-    OctetString(Vec<u8>),  // Typically limited length
+    VisibleString(String),   // Typically limited length
+    OctetString(Vec<u8>),    // Typically limited length
     UnicodeString(Vec<u16>), // Typically limited length
-    Domain(Vec<u8>),       // Large binary data
+    Domain(Vec<u8>),         // Large binary data
     TimeOfDay(TimeOfDay),
     TimeDifference(TimeDifference),
     NetTime(NetTime),
@@ -59,26 +59,27 @@ impl ObjectValue {
             ObjectValue::OctetString(v) => v.clone(),
             ObjectValue::Domain(v) => v.clone(), // Often large, clone needed
 
-             // Complex types - serialize components in LE order
-             ObjectValue::TimeOfDay(v) => [
-                 v.ms.to_le_bytes().as_slice(), // U28 + 4 reserved bits -> U32 LE
-                 v.days.to_le_bytes().as_slice(), // U16 LE
-             ].concat(), // Total 6 bytes
+            // Complex types - serialize components in LE order
+            ObjectValue::TimeOfDay(v) => [
+                v.ms.to_le_bytes().as_slice(),   // U28 + 4 reserved bits -> U32 LE
+                v.days.to_le_bytes().as_slice(), // U16 LE
+            ]
+            .concat(), // Total 6 bytes
             ObjectValue::TimeDifference(v) => [
-                 v.ms.to_le_bytes().as_slice(), // U28 + 4 reserved bits -> U32 LE
-                 v.days.to_le_bytes().as_slice(), // U16 LE
-             ].concat(), // Total 6 bytes
-             ObjectValue::NetTime(v) => [
-                 v.seconds.to_le_bytes().as_slice(), // U32 LE
-                 v.nanoseconds.to_le_bytes().as_slice(), // U32 LE
-             ].concat(), // Total 8 bytes
+                v.ms.to_le_bytes().as_slice(),   // U28 + 4 reserved bits -> U32 LE
+                v.days.to_le_bytes().as_slice(), // U16 LE
+            ]
+            .concat(), // Total 6 bytes
+            ObjectValue::NetTime(v) => [
+                v.seconds.to_le_bytes().as_slice(),     // U32 LE
+                v.nanoseconds.to_le_bytes().as_slice(), // U32 LE
+            ]
+            .concat(), // Total 8 bytes
             ObjectValue::MacAddress(v) => v.0.to_vec(), // 6 bytes
-            ObjectValue::IpAddress(v) => v.to_vec(),  // 4 bytes
+            ObjectValue::IpAddress(v) => v.to_vec(),    // 4 bytes
 
             // UnicodeString needs special handling (each u16 to LE bytes)
-            ObjectValue::UnicodeString(v) => {
-                v.iter().flat_map(|c| c.to_le_bytes()).collect()
-            }
+            ObjectValue::UnicodeString(v) => v.iter().flat_map(|c| c.to_le_bytes()).collect(),
         }
     }
 
@@ -124,50 +125,60 @@ impl ObjectValue {
             ObjectValue::OctetString(_) => Ok(ObjectValue::OctetString(data.to_vec())),
             ObjectValue::Domain(_) => Ok(ObjectValue::Domain(data.to_vec())),
 
-             // Complex types - deserialize components in LE order
-             ObjectValue::TimeOfDay(_) => {
-                 if data.len() < 6 { Err(PowerlinkError::BufferTooShort) }
-                 else {
-                     Ok(ObjectValue::TimeOfDay(TimeOfDay {
-                         ms: u32::from_le_bytes(data[0..4].try_into()?), // U28 + 4 reserved bits
-                         days: u16::from_le_bytes(data[4..6].try_into()?),
-                     }))
-                 }
-             },
-             ObjectValue::TimeDifference(_) => {
-                 if data.len() < 6 { Err(PowerlinkError::BufferTooShort) }
-                 else {
-                     Ok(ObjectValue::TimeDifference(TimeDifference {
-                         ms: u32::from_le_bytes(data[0..4].try_into()?), // U28 + 4 reserved bits
-                         days: u16::from_le_bytes(data[4..6].try_into()?),
-                     }))
-                 }
-            },
-             ObjectValue::NetTime(_) => {
-                 if data.len() < 8 { Err(PowerlinkError::BufferTooShort) }
-                 else {
+            // Complex types - deserialize components in LE order
+            ObjectValue::TimeOfDay(_) => {
+                if data.len() < 6 {
+                    Err(PowerlinkError::BufferTooShort)
+                } else {
+                    Ok(ObjectValue::TimeOfDay(TimeOfDay {
+                        ms: u32::from_le_bytes(data[0..4].try_into()?), // U28 + 4 reserved bits
+                        days: u16::from_le_bytes(data[4..6].try_into()?),
+                    }))
+                }
+            }
+            ObjectValue::TimeDifference(_) => {
+                if data.len() < 6 {
+                    Err(PowerlinkError::BufferTooShort)
+                } else {
+                    Ok(ObjectValue::TimeDifference(TimeDifference {
+                        ms: u32::from_le_bytes(data[0..4].try_into()?), // U28 + 4 reserved bits
+                        days: u16::from_le_bytes(data[4..6].try_into()?),
+                    }))
+                }
+            }
+            ObjectValue::NetTime(_) => {
+                if data.len() < 8 {
+                    Err(PowerlinkError::BufferTooShort)
+                } else {
                     Ok(ObjectValue::NetTime(NetTime {
                         seconds: u32::from_le_bytes(data[0..4].try_into()?),
                         nanoseconds: u32::from_le_bytes(data[4..8].try_into()?),
                     }))
-                 }
-             },
-             ObjectValue::MacAddress(_) => {
-                 if data.len() < 6 { Err(PowerlinkError::BufferTooShort) }
-                 else {
-                     Ok(ObjectValue::MacAddress(crate::frame::basic::MacAddress(data[0..6].try_into()?)))
-                 }
-            },
-             ObjectValue::IpAddress(_) => {
-                 if data.len() < 4 { Err(PowerlinkError::BufferTooShort) }
-                 else {
-                     Ok(ObjectValue::IpAddress(data[0..4].try_into()?))
-                 }
-             },
+                }
+            }
+            ObjectValue::MacAddress(_) => {
+                if data.len() < 6 {
+                    Err(PowerlinkError::BufferTooShort)
+                } else {
+                    Ok(ObjectValue::MacAddress(crate::frame::basic::MacAddress(
+                        data[0..6].try_into()?,
+                    )))
+                }
+            }
+            ObjectValue::IpAddress(_) => {
+                if data.len() < 4 {
+                    Err(PowerlinkError::BufferTooShort)
+                } else {
+                    Ok(ObjectValue::IpAddress(data[0..4].try_into()?))
+                }
+            }
 
             // UnicodeString needs special handling (LE bytes pairs to u16)
             ObjectValue::UnicodeString(_) => {
-                if data.len() % 2 != 0 { Err(PowerlinkError::TypeMismatch) } // Must be even length
+                if data.len() % 2 != 0 {
+                    Err(PowerlinkError::TypeMismatch)
+                }
+                // Must be even length
                 else {
                     let chars: Result<Vec<u16>, _> = data
                         .chunks_exact(2)
@@ -175,7 +186,7 @@ impl ObjectValue {
                         .collect();
                     Ok(ObjectValue::UnicodeString(chars?)) // Propagate potential slice conversion error
                 }
-            },
+            }
         }
     }
 }

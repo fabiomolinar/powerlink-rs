@@ -46,7 +46,8 @@ pub enum PRFlag {
 impl TryFrom<u8> for PRFlag {
     type Error = PowerlinkError;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value & 0b111 { // Mask to get only the lower 3 bits
+        match value & 0b111 {
+            // Mask to get only the lower 3 bits
             0b111 => Ok(PRFlag::PrioNmtRequest),
             0b110 => Ok(PRFlag::High3),
             0b101 => Ok(PRFlag::High2),
@@ -60,7 +61,6 @@ impl TryFrom<u8> for PRFlag {
         }
     }
 }
-
 
 /// Represents a Poll Response frame (CN multicast frame).
 /// (EPSG DS 301, Section 4.6.1.1.4)
@@ -132,9 +132,15 @@ impl Codec for PResFrame {
         CodecHelpers::serialize_pl_header(self.message_type, self.destination, self.source, buffer);
         buffer[3] = self.nmt_state as u8;
         let mut octet4_flags1 = 0u8;
-        if self.flags.ms { octet4_flags1 |= 1 << 5; }
-        if self.flags.en { octet4_flags1 |= 1 << 4; }
-        if self.flags.rd { octet4_flags1 |= 1 << 0; }
+        if self.flags.ms {
+            octet4_flags1 |= 1 << 5;
+        }
+        if self.flags.en {
+            octet4_flags1 |= 1 << 4;
+        }
+        if self.flags.rd {
+            octet4_flags1 |= 1 << 0;
+        }
         buffer[4] = octet4_flags1;
         let octet5_flags2 = (self.flags.pr as u8) << 3 | self.flags.rs.get();
         buffer[5] = octet5_flags2;
@@ -168,7 +174,8 @@ impl Codec for PResFrame {
     /// Assumes the buffer starts *after* the 14-byte Ethernet header.
     fn deserialize(eth_header: EthernetHeader, buffer: &[u8]) -> Result<Self, PowerlinkError> {
         let pl_header_size = 10;
-        if buffer.len() < pl_header_size { // Need at least the header
+        if buffer.len() < pl_header_size {
+            // Need at least the header
             return Err(PowerlinkError::BufferTooShort);
         }
 
@@ -181,9 +188,12 @@ impl Codec for PResFrame {
         }
         // Validate destination
         if destination.0 != C_ADR_BROADCAST_NODE_ID {
-             // PRes must be broadcast
-             warn!("Received PRes frame with non-broadcast destination ID: {}", destination.0);
-             return Err(PowerlinkError::InvalidPlFrame);
+            // PRes must be broadcast
+            warn!(
+                "Received PRes frame with non-broadcast destination ID: {}",
+                destination.0
+            );
+            return Err(PowerlinkError::InvalidPlFrame);
         }
 
         // Deserialize PRes Specific Header Fields
@@ -228,9 +238,9 @@ impl Codec for PResFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame::codec::CodecHelpers;
     use crate::types::{C_DLL_MULTICAST_PRES, MessageType};
-    use alloc::vec;
-    use crate::frame::codec::CodecHelpers; // Needed for tests
+    use alloc::vec; // Needed for tests
 
     #[test]
     fn test_presframe_new_constructor() {
@@ -290,7 +300,10 @@ mod tests {
         assert_eq!(pl_bytes_written, 46);
 
         // Deserialize full frame
-        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len]).unwrap().into_pres().unwrap();
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len])
+            .unwrap()
+            .into_pres()
+            .unwrap();
 
         assert_eq!(original_frame, deserialized_frame);
     }
@@ -313,7 +326,10 @@ mod tests {
 
         assert_eq!(pl_bytes_written, 46); // Padded to min ethernet payload size
 
-        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len]).unwrap().into_pres().unwrap();
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len])
+            .unwrap()
+            .into_pres()
+            .unwrap();
 
         assert_eq!(original_frame, deserialized_frame);
         assert!(deserialized_frame.payload.is_empty());
@@ -325,7 +341,7 @@ mod tests {
         // Test short buffer for header (less than 14 bytes for Eth header)
         let buffer_short_header = [0u8; 13];
         let result_header = crate::frame::deserialize_frame(&buffer_short_header);
-         // Correct the assertion: Expect BufferTooShort, not InvalidEthernetFrame
+        // Correct the assertion: Expect BufferTooShort, not InvalidEthernetFrame
         assert!(matches!(
             result_header,
             Err(PowerlinkError::BufferTooShort) // <-- FIX: Changed expected error
@@ -366,4 +382,3 @@ mod tests {
         ));
     }
 }
-

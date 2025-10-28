@@ -3,7 +3,7 @@
 use crate::frame::basic::MacAddress; // Import needed for build_nmt_command_frame
 use crate::frame::control::{SoAFlags, SocFlags};
 use crate::frame::poll::PReqFlags; // Import directly
-                                   // Added ASndFrame and ServiceId for NMT commands
+// Added ASndFrame and ServiceId for NMT commands
 use crate::frame::{
     ASndFrame, DllMsEvent, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame,
     SocFrame,
@@ -14,14 +14,14 @@ use crate::node::Node; // Import Node trait for nmt_state()
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 // Added needed constants
-use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId}; // Added C_ADR_BROADCAST_NODE_ID
-use crate::PowerlinkError;
 use super::main::ManagingNode;
+use super::state::CyclePhase;
+use crate::PowerlinkError;
+use crate::common::{NetTime, RelativeTime}; // ERROR FIX: Added imports
+use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId}; // Added C_ADR_BROADCAST_NODE_ID
 use alloc::vec;
 use alloc::vec::Vec;
-use log::{debug, error, trace, warn};
-use crate::common::{NetTime, RelativeTime}; // ERROR FIX: Added imports
-use super::main::CyclePhase; // ERROR FIX: Added import
+use log::{debug, error, trace, warn}; // ERROR FIX: Added import
 
 // Constants for OD access
 const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
@@ -31,7 +31,7 @@ const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
 const OD_IDX_MN_PREQ_PAYLOAD_LIMIT_LIST: u16 = 0x1F8B;
 const OD_IDX_EPL_VERSION: u16 = 0x1F83; // Added for reading EPL version
 // ERROR FIX: Added missing constants
-const OD_IDX_MN_CYCLE_TIMING_REC: u16 = 0x1F98; 
+const OD_IDX_MN_CYCLE_TIMING_REC: u16 = 0x1F98;
 const OD_SUBIDX_ASYNC_SLOT_TIMEOUT: u8 = 2;
 
 /// Builds a SoC frame.
@@ -100,11 +100,7 @@ pub(super) fn build_preq_frame(
     let mut pdo_channel = None;
     for i in 0..256 {
         let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE + i as u16;
-        if node
-            .od
-            .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
-            == Some(target_node_id.0)
-        {
+        if node.od.read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID) == Some(target_node_id.0) {
             pdo_channel = Some(i as u8);
             break;
         }
@@ -164,8 +160,10 @@ pub(super) fn build_tpdo_payload(
     let target_node_id = od
         .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
         .unwrap_or(0);
-    let pdo_version =
-        PDOVersion(od.read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_VERSION).unwrap_or(0));
+    let pdo_version = PDOVersion(
+        od.read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_VERSION)
+            .unwrap_or(0),
+    );
 
     let payload_limit = od
         .read_u16(OD_IDX_MN_PREQ_PAYLOAD_LIMIT_LIST, target_node_id)
@@ -179,11 +177,17 @@ pub(super) fn build_tpdo_payload(
         for i in 1..=*num_entries {
             // ERROR FIX (E0716): Bind the Cow to a variable to extend its lifetime.
             let Some(entry_cow) = od.read(mapping_index, i) else {
-                warn!("[MN] Could not read mapping entry {} for TPDO channel {}", i, channel_index);
+                warn!(
+                    "[MN] Could not read mapping entry {} for TPDO channel {}",
+                    i, channel_index
+                );
                 continue;
             };
             let ObjectValue::Unsigned64(raw_mapping) = *entry_cow else {
-                warn!("[MN] Mapping entry {} for TPDO channel {} is not U64", i, channel_index);
+                warn!(
+                    "[MN] Mapping entry {} for TPDO channel {} is not U64",
+                    i, channel_index
+                );
                 continue;
             };
             let entry = PdoMappingEntry::from_u64(raw_mapping);
@@ -214,11 +218,13 @@ pub(super) fn build_tpdo_payload(
             if serialized_data.len() != length {
                 warn!(
                     "[MN] TPDO mapping for PReq 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes. Truncating/Padding.",
-                    entry.index, entry.sub_index, length, serialized_data.len()
+                    entry.index,
+                    entry.sub_index,
+                    length,
+                    serialized_data.len()
                 );
                 let copy_len = serialized_data.len().min(length);
-                payload[offset..offset + copy_len]
-                    .copy_from_slice(&serialized_data[..copy_len]);
+                payload[offset..offset + copy_len].copy_from_slice(&serialized_data[..copy_len]);
                 if length > copy_len {
                     payload[offset + copy_len..end_pos].fill(0);
                 }
@@ -239,13 +245,12 @@ pub(super) fn build_soa_frame(
 ) -> PowerlinkFrame {
     trace!(
         "[MN] Building SoA frame with service {:?} for Node {}",
-        req_service,
-        target_node.0
+        req_service, target_node.0
     );
     let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
-    
+
     // State mutation is now handled by the caller in main.rs
-    
+
     PowerlinkFrame::SoA(SoAFrame::new(
         node.mac_address,
         node.nmt_state(),
@@ -257,7 +262,10 @@ pub(super) fn build_soa_frame(
 }
 
 /// Builds and serializes an SoA(IdentRequest) frame.
-pub(super) fn build_soa_ident_request(node: &ManagingNode, target_node_id: NodeId) -> PowerlinkFrame {
+pub(super) fn build_soa_ident_request(
+    node: &ManagingNode,
+    target_node_id: NodeId,
+) -> PowerlinkFrame {
     debug!(
         "[MN] Building SoA(IdentRequest) for Node {}",
         target_node_id.0

@@ -1,5 +1,6 @@
 // crates/powerlink-rs/src/node/cn/payload.rs
 // Refined PDO payload building: Added check against payload limit, improved error logging.
+use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
@@ -11,7 +12,6 @@ use crate::sdo::SdoServer;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
-use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, trace, warn};
@@ -111,7 +111,10 @@ pub(super) fn build_pres_response(
     let (payload, pdo_version, payload_is_valid) = match build_tpdo_payload(od) {
         Ok((payload, version)) => (payload, version, true),
         Err(e) => {
-            warn!("Failed to build TPDO payload for PRes: {:?}. Sending empty PRes.", e);
+            warn!(
+                "Failed to build TPDO payload for PRes: {:?}. Sending empty PRes.",
+                e
+            );
             (Vec::new(), PDOVersion(0), false)
         }
     };
@@ -141,7 +144,6 @@ pub(super) fn build_pres_response(
     let pres = PResFrame::new(mac_address, node_id, nmt_state, flags, pdo_version, payload);
     PowerlinkFrame::PRes(pres)
 }
-
 
 /// Constructs the detailed payload for an `IdentResponse` frame by reading from the OD.
 /// The structure is defined in EPSG DS 301, Section 7.3.3.2.1.
@@ -235,7 +237,6 @@ fn build_status_response_payload(od: &ObjectDictionary, en_flag: bool, ec_flag: 
 
     payload
 }
-
 
 /// Builds an ASnd frame containing an SDO Abort message.
 pub(super) fn build_sdo_abort_response(
@@ -342,7 +343,8 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
                 let entry = PdoMappingEntry::from_u64(raw_mapping);
 
                 // Assuming byte alignment for now
-                let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
+                let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length())
+                else {
                     warn!(
                         "[CN] Bit-level TPDO mapping not supported for 0x{:04X}/{}",
                         entry.index, entry.sub_index
@@ -360,7 +362,9 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
                     );
                     // Return error according to spec 6.4.8.2 (E_PDO_MAP_OVERRUN)
                     // We don't have direct access to SDO abort here, signal via error
-                    return Err(PowerlinkError::ValidationError("PDO mapping exceeds PRes payload limit"));
+                    return Err(PowerlinkError::ValidationError(
+                        "PDO mapping exceeds PRes payload limit",
+                    ));
                 }
                 max_offset_len = max_offset_len.max(end_pos);
 
@@ -380,13 +384,17 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
                 if serialized_data.len() != length {
                     warn!(
                         "[CN] TPDO mapping for 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes. Truncating/Padding.",
-                        entry.index, entry.sub_index, length, serialized_data.len()
+                        entry.index,
+                        entry.sub_index,
+                        length,
+                        serialized_data.len()
                     );
                     let copy_len = serialized_data.len().min(length);
-                    payload[offset..offset + copy_len].copy_from_slice(&serialized_data[..copy_len]);
+                    payload[offset..offset + copy_len]
+                        .copy_from_slice(&serialized_data[..copy_len]);
                     // Zero out remaining bytes if object was shorter than mapping
                     if length > copy_len {
-                        payload[offset + copy_len .. end_pos].fill(0);
+                        payload[offset + copy_len..end_pos].fill(0);
                     }
                 } else {
                     payload[offset..end_pos].copy_from_slice(&serialized_data);
@@ -397,15 +405,20 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
                 );
             }
         } else {
-             trace!("[CN] TPDO Mapping object {:#06X} not found or sub-index 0 invalid.", mapping_index);
+            trace!(
+                "[CN] TPDO Mapping object {:#06X} not found or sub-index 0 invalid.",
+                mapping_index
+            );
         }
     } else {
         trace!("[CN] TPDO Mapping object {:#06X} not found.", mapping_index);
     }
 
-
     // Truncate payload to the actual size needed based on mapping
     payload.truncate(max_offset_len);
-    trace!("[CN] Built PRes payload with actual size: {}", payload.len());
+    trace!(
+        "[CN] Built PRes payload with actual size: {}",
+        payload.len()
+    );
     Ok((payload, pdo_version))
 }

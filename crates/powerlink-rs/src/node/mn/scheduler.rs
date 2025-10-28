@@ -1,7 +1,8 @@
+use super::main::ManagingNode;
 use crate::frame::RequestedServiceId;
-use crate::node::Node; // Import Node trait for nmt_state()
-use super::main::{CnState, ManagingNode};
 use crate::nmt::{NmtEvent, NmtStateMachine, states::NmtState}; // Added NmtState import
+use crate::node::Node; // Import Node trait for nmt_state()
+use crate::node::mn::state::CnState;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use log::{debug, info, trace}; // Added trace import
 
@@ -59,21 +60,21 @@ pub(super) fn determine_next_async_action(node: &mut ManagingNode) -> (Requested
     (RequestedServiceId::NoService, NodeId(0))
 }
 
-
 /// Checks if MN can transition NMT state based on mandatory CN states.
 pub(super) fn check_bootup_state(node: &mut ManagingNode) {
     let current_mn_state = node.nmt_state();
 
     if current_mn_state == NmtState::NmtPreOperational1 {
         // Check if all mandatory nodes are Identified or further, but not Missing or Stopped
-        let all_mandatory_identified = node
-            .mandatory_nodes
-            .iter()
-            .all(|node_id| {
-                let state = node.node_states.get(node_id).copied().unwrap_or(CnState::Unknown);
-                 // Updated condition: >= Identified AND <= Operational
-                state >= CnState::Identified && state <= CnState::Operational
-            });
+        let all_mandatory_identified = node.mandatory_nodes.iter().all(|node_id| {
+            let state = node
+                .node_states
+                .get(node_id)
+                .copied()
+                .unwrap_or(CnState::Unknown);
+            // Updated condition: >= Identified AND <= Operational
+            state >= CnState::Identified && state <= CnState::Operational
+        });
 
         if all_mandatory_identified {
             info!("[MN] All mandatory nodes identified. Triggering NMT transition to PreOp2.");
@@ -83,49 +84,59 @@ pub(super) fn check_bootup_state(node: &mut ManagingNode) {
         }
     } else if current_mn_state == NmtState::NmtPreOperational2 {
         // Check if all mandatory nodes are PreOperational or further (ReadyToOp reported via PRes/Status)
-        let all_mandatory_preop = node
-            .mandatory_nodes
-            .iter()
-            .all(|node_id| {
-                let state = node.node_states.get(node_id).copied().unwrap_or(CnState::Unknown);
-                // CN reports PreOp2 or ReadyToOp, MN maps this to CnState::PreOperational
-                // Also check <= Operational to ensure node hasn't gone missing/stopped
-                state >= CnState::PreOperational && state <= CnState::Operational
-            });
+        let all_mandatory_preop = node.mandatory_nodes.iter().all(|node_id| {
+            let state = node
+                .node_states
+                .get(node_id)
+                .copied()
+                .unwrap_or(CnState::Unknown);
+            // CN reports PreOp2 or ReadyToOp, MN maps this to CnState::PreOperational
+            // Also check <= Operational to ensure node hasn't gone missing/stopped
+            state >= CnState::PreOperational && state <= CnState::Operational
+        });
 
         if all_mandatory_preop {
-             // Check MN startup flags if application trigger is needed
-             // NMT_StartUp_U32.Bit8 = 0 -> Auto transition
-             if node.nmt_state_machine.startup_flags & (1 << 8) == 0 {
-                info!("[MN] All mandatory nodes PreOperational/ReadyToOp. Triggering NMT transition to ReadyToOp.");
+            // Check MN startup flags if application trigger is needed
+            // NMT_StartUp_U32.Bit8 = 0 -> Auto transition
+            if node.nmt_state_machine.startup_flags & (1 << 8) == 0 {
+                info!(
+                    "[MN] All mandatory nodes PreOperational/ReadyToOp. Triggering NMT transition to ReadyToOp."
+                );
                 // NMT_MT4
                 node.nmt_state_machine
                     .process_event(NmtEvent::ConfigurationCompleteCnsReady, &mut node.od);
-             } else {
-                 debug!("[MN] All mandatory nodes PreOperational/ReadyToOp, but waiting for application trigger to enter ReadyToOp.");
-             }
+            } else {
+                debug!(
+                    "[MN] All mandatory nodes PreOperational/ReadyToOp, but waiting for application trigger to enter ReadyToOp."
+                );
+            }
         }
     } else if current_mn_state == NmtState::NmtReadyToOperate {
-         // Check if all mandatory nodes are Operational
-        let all_mandatory_operational = node
-            .mandatory_nodes
-            .iter()
-            .all(|node_id| {
-                let state = node.node_states.get(node_id).copied().unwrap_or(CnState::Unknown);
-                state >= CnState::Operational
-            });
-         if all_mandatory_operational {
+        // Check if all mandatory nodes are Operational
+        let all_mandatory_operational = node.mandatory_nodes.iter().all(|node_id| {
+            let state = node
+                .node_states
+                .get(node_id)
+                .copied()
+                .unwrap_or(CnState::Unknown);
+            state >= CnState::Operational
+        });
+        if all_mandatory_operational {
             // Check MN startup flags if application trigger is needed
             // NMT_StartUp_U32.Bit2 = 0 -> Auto transition
             if node.nmt_state_machine.startup_flags & (1 << 2) == 0 {
-                info!("[MN] All mandatory nodes Operational. Triggering NMT transition to Operational.");
-                 // NMT_MT5 - Use AllMandatoryCnsOperational event as the trigger
+                info!(
+                    "[MN] All mandatory nodes Operational. Triggering NMT transition to Operational."
+                );
+                // NMT_MT5 - Use AllMandatoryCnsOperational event as the trigger
                 node.nmt_state_machine
                     .process_event(NmtEvent::AllMandatoryCnsOperational, &mut node.od);
             } else {
-                 debug!("[MN] All mandatory nodes Operational, but waiting for application trigger to enter Operational.");
+                debug!(
+                    "[MN] All mandatory nodes Operational, but waiting for application trigger to enter Operational."
+                );
             }
-         }
+        }
     }
     // No automatic checks needed in Operational state based on CN states alone.
 }
@@ -174,7 +185,6 @@ pub(super) fn find_next_node_to_identify(node: &mut ManagingNode) -> Option<Node
     None // No unidentified nodes left
 }
 
-
 /// Finds the next async-only CN that needs a status poll.
 pub(super) fn find_next_async_only_to_poll(node: &mut ManagingNode) -> Option<NodeId> {
     if node.async_only_nodes.is_empty() {
@@ -209,7 +219,6 @@ pub(super) fn find_next_async_only_to_poll(node: &mut ManagingNode) -> Option<No
     None
 }
 
-
 /// Gets the Node ID of the next isochronous node to poll for the given multiplex cycle.
 /// Returns None if all nodes for the current cycle have been polled.
 /// This function modifies the internal `next_isoch_node_idx`.
@@ -231,18 +240,19 @@ pub(super) fn get_next_isochronous_node_to_poll(
 
         if should_poll_this_cycle {
             // Check if the node is in a state where it should be polled isochronously
-            let state = node.node_states.get(&node_id).copied().unwrap_or(CnState::Unknown); // Access pub(super) field
-                                                                                            // Poll nodes from Identified onwards, excluding Stopped/Missing
-                                                                                            // PReq allowed in PreOp2, ReadyToOp, Operational
-                                                                                            // Corrected state check: >= PreOperational
+            let state = node
+                .node_states
+                .get(&node_id)
+                .copied()
+                .unwrap_or(CnState::Unknown); // Access pub(super) field
+            // Poll nodes from Identified onwards, excluding Stopped/Missing
+            // PReq allowed in PreOp2, ReadyToOp, Operational
+            // Corrected state check: >= PreOperational
             if state >= CnState::PreOperational {
                 // Found a valid node to poll in this cycle
                 trace!(
                     "[MN] Polling Node {} (State: {:?}, MuxCycle: {}) in mux cycle {}",
-                    node_id.0,
-                    state,
-                    assigned_cycle,
-                    current_multiplex_cycle
+                    node_id.0, state, assigned_cycle, current_multiplex_cycle
                 );
                 return Some(node_id);
             } else {
@@ -254,9 +264,7 @@ pub(super) fn get_next_isochronous_node_to_poll(
         } else {
             trace!(
                 "[MN] Skipping Node {} (assigned mux cycle {}) in current mux cycle {}.",
-                node_id.0,
-                assigned_cycle,
-                current_multiplex_cycle
+                node_id.0, assigned_cycle, current_multiplex_cycle
             );
         }
         // If the node is not in a pollable state or not for this cycle, the loop continues
@@ -266,10 +274,7 @@ pub(super) fn get_next_isochronous_node_to_poll(
 
 /// Helper to check if there are more isochronous nodes to poll in the current cycle.
 /// Does not modify `next_isoch_node_idx`.
-pub(super) fn has_more_isochronous_nodes(
-    node: &ManagingNode,
-    current_multiplex_cycle: u8,
-) -> bool {
+pub(super) fn has_more_isochronous_nodes(node: &ManagingNode, current_multiplex_cycle: u8) -> bool {
     // Check remaining nodes in the list from the current index
     for idx in node.next_isoch_node_idx..node.isochronous_nodes.len() {
         let node_id = node.isochronous_nodes[idx];
@@ -279,7 +284,11 @@ pub(super) fn has_more_isochronous_nodes(
             || (node.multiplex_cycle_len > 0 && assigned_cycle == (current_multiplex_cycle + 1));
 
         if should_poll_this_cycle {
-            let state = node.node_states.get(&node_id).copied().unwrap_or(CnState::Unknown);
+            let state = node
+                .node_states
+                .get(&node_id)
+                .copied()
+                .unwrap_or(CnState::Unknown);
             // Corrected state check: >= PreOperational
             if state >= CnState::PreOperational {
                 return true; // Found at least one more node to poll

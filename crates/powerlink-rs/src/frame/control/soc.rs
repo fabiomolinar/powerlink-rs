@@ -88,7 +88,7 @@ impl Codec for SocFrame {
 
         // Apply padding
         if buffer.len() < pl_frame_len {
-             return Err(PowerlinkError::BufferTooShort);
+            return Err(PowerlinkError::BufferTooShort);
         }
         buffer[pl_data_len..pl_frame_len].fill(0); // Pad with zeros
 
@@ -119,15 +119,31 @@ impl Codec for SocFrame {
         // NetTime starts at offset 6
         // Map TryFromSliceError to BufferTooShort
         let net_time = NetTime {
-            seconds: u32::from_le_bytes(buffer[6..10].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
-            nanoseconds: u32::from_le_bytes(buffer[10..14].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
+            seconds: u32::from_le_bytes(
+                buffer[6..10]
+                    .try_into()
+                    .map_err(|_| PowerlinkError::BufferTooShort)?,
+            ),
+            nanoseconds: u32::from_le_bytes(
+                buffer[10..14]
+                    .try_into()
+                    .map_err(|_| PowerlinkError::BufferTooShort)?,
+            ),
         };
 
         // RelativeTime starts at offset 14
         // Map TryFromSliceError to BufferTooShort
         let relative_time = RelativeTime {
-            seconds: u32::from_le_bytes(buffer[14..18].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
-            nanoseconds: u32::from_le_bytes(buffer[18..22].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
+            seconds: u32::from_le_bytes(
+                buffer[14..18]
+                    .try_into()
+                    .map_err(|_| PowerlinkError::BufferTooShort)?,
+            ),
+            nanoseconds: u32::from_le_bytes(
+                buffer[18..22]
+                    .try_into()
+                    .map_err(|_| PowerlinkError::BufferTooShort)?,
+            ),
         };
 
         Ok(Self {
@@ -145,8 +161,8 @@ impl Codec for SocFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::C_DLL_MULTICAST_SOC;
-    use crate::frame::codec::CodecHelpers; // Import for test setup
+    use crate::frame::codec::CodecHelpers;
+    use crate::types::C_DLL_MULTICAST_SOC; // Import for test setup
 
     #[test]
     fn test_socframe_new_constructor() {

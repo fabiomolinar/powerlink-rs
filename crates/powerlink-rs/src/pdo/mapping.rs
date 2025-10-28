@@ -85,7 +85,7 @@ impl PdoMappingEntry {
     /// Helper to get the offset in bytes, assuming byte alignment.
     /// Returns None if not byte-aligned.
     pub fn byte_offset(&self) -> Option<usize> {
-        if self.offset_bits.is_multiple_of(8){
+        if self.offset_bits.is_multiple_of(8) {
             Some(self.offset_bits as usize / 8)
         } else {
             None // Bit-level mapping not supported yet

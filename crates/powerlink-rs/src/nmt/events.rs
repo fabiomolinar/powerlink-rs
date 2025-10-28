@@ -34,7 +34,6 @@ impl TryFrom<u8> for NmtCommand {
     }
 }
 
-
 /// Defines events that can trigger a state transition in the NMT state machine.
 ///
 /// These are derived from NMT commands or internal conditions.

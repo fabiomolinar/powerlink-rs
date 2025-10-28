@@ -12,7 +12,6 @@
 //! CN's inputs back to its outputs.
 
 use log::{error, info};
-use powerlink_rs_linux::LinuxPnetInterface;
 use powerlink_rs::{
     ControlledNode,
     NetworkInterface,
@@ -24,6 +23,7 @@ use powerlink_rs::{
     pdo::PdoMappingEntry,
     types::C_ADR_MN_DEF_NODE_ID,
 };
+use powerlink_rs_linux::LinuxPnetInterface;
 use std::{
     env, thread,
     time::{Duration, Instant},

@@ -1,3 +1,5 @@
+use crate::PowerlinkError;
+use crate::frame::PRFlag;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::command::{
     CommandId, CommandLayerHeader, ReadByIndexRequest, SdoCommand, Segmentation,
@@ -5,11 +7,9 @@ use crate::sdo::command::{
 };
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::state::{SdoServerState, SdoTransferState};
-use crate::{PowerlinkError};
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
-use crate::frame::PRFlag;
 
 /// Manages a single SDO server connection.
 ///
@@ -48,7 +48,6 @@ impl SdoServer {
             Some(self.pending_client_requests.remove(0))
         }
     }
-
 
     /// Checks for pending client (outgoing) requests and returns their count and priority.
     /// This is used to set the RS/PR flags in PRes frames.
@@ -555,7 +554,9 @@ impl SdoServer {
                         self.send_sequence_number
                     );
                     self.state = SdoServerState::Closed; // Reset state on error
-                    return Err(PowerlinkError::SdoSequenceError("Invalid sequence state during SDO opening."));
+                    return Err(PowerlinkError::SdoSequenceError(
+                        "Invalid sequence state during SDO opening.",
+                    ));
                 }
             }
             SdoServerState::Established
@@ -605,7 +606,9 @@ impl SdoServer {
                     response.receive_sequence_number = self.last_received_sequence_number;
                     response.send_con = SendConnState::ConnectionValid;
                     response.send_sequence_number = self.send_sequence_number; // Resend our last frame's number
-                    return Err(PowerlinkError::SdoSequenceError("SDO sequence number mismatch.")); // Signal error upstream
+                    return Err(PowerlinkError::SdoSequenceError(
+                        "SDO sequence number mismatch.",
+                    )); // Signal error upstream
                 }
                 // --- Sequence OK ---
                 else {

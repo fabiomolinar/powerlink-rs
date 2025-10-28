@@ -42,8 +42,8 @@ impl CodecHelpers {
     ) {
         if buffer.len() >= 3 {
             buffer[0] = message_type as u8; // Message type at index 0
-            buffer[1] = destination.0;    // Dest Node ID at index 1
-            buffer[2] = source.0;         // Src Node ID at index 2
+            buffer[1] = destination.0; // Dest Node ID at index 1
+            buffer[2] = source.0; // Src Node ID at index 2
         }
     }
 
@@ -55,19 +55,31 @@ impl CodecHelpers {
         }
         // Map TryFromSliceError to BufferTooShort for robustness
         Ok(EthernetHeader {
-            destination_mac: MacAddress(buffer[0..6].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
-            source_mac: MacAddress(buffer[6..12].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
-            ether_type: u16::from_be_bytes(buffer[12..14].try_into().map_err(|_| PowerlinkError::BufferTooShort)?),
+            destination_mac: MacAddress(
+                buffer[0..6]
+                    .try_into()
+                    .map_err(|_| PowerlinkError::BufferTooShort)?,
+            ),
+            source_mac: MacAddress(
+                buffer[6..12]
+                    .try_into()
+                    .map_err(|_| PowerlinkError::BufferTooShort)?,
+            ),
+            ether_type: u16::from_be_bytes(
+                buffer[12..14]
+                    .try_into()
+                    .map_err(|_| PowerlinkError::BufferTooShort)?,
+            ),
         })
     }
-
 
     /// Deserializes the common POWERLINK header fields (MessageType, Dest, Src).
     /// Assumes buffer starts *at* the POWERLINK frame section (after Eth header).
     pub fn deserialize_pl_header(
         buffer: &[u8],
     ) -> Result<(MessageType, NodeId, NodeId), PowerlinkError> {
-        if buffer.len() < 3 { // Need minimum 3 bytes for MType, Dest, Src
+        if buffer.len() < 3 {
+            // Need minimum 3 bytes for MType, Dest, Src
             return Err(PowerlinkError::BufferTooShort);
         }
         // Message type is in the lower 7 bits of the 1st byte (index 0)
@@ -102,11 +114,21 @@ pub fn deserialize_frame(buffer: &[u8]) -> Result<PowerlinkFrame, PowerlinkError
 
     // 6. Call the appropriate frame-specific deserialize method
     let result = match MessageType::try_from(message_type_byte) {
-        Ok(MessageType::SoC) => SocFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::Soc),
-        Ok(MessageType::PReq) => PReqFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::PReq),
-        Ok(MessageType::PRes) => PResFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::PRes),
-        Ok(MessageType::SoA) => SoAFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::SoA),
-        Ok(MessageType::ASnd) => ASndFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::ASnd),
+        Ok(MessageType::SoC) => {
+            SocFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::Soc)
+        }
+        Ok(MessageType::PReq) => {
+            PReqFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::PReq)
+        }
+        Ok(MessageType::PRes) => {
+            PResFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::PRes)
+        }
+        Ok(MessageType::SoA) => {
+            SoAFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::SoA)
+        }
+        Ok(MessageType::ASnd) => {
+            ASndFrame::deserialize(eth_header, pl_buffer).map(PowerlinkFrame::ASnd)
+        }
         Err(_) => Err(PowerlinkError::InvalidMessageType(message_type_byte)),
     };
 

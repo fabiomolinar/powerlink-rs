@@ -5,7 +5,7 @@ use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::NodeId;
-use log::{trace, warn, error}; // Added error
+use log::{error, trace, warn}; // Added error
 
 const OD_IDX_RPDO_COMM_PARAM_BASE: u16 = 0x1400;
 const OD_IDX_RPDO_MAPP_PARAM_BASE: u16 = 0x1600;
@@ -38,13 +38,18 @@ pub trait PdoHandler<'s> {
             );
             return; // Data is not valid
         }
-        trace!("Attempting to consume PDO payload ({} bytes) from Node {}", payload.len(), source_node_id.0);
+        trace!(
+            "Attempting to consume PDO payload ({} bytes) from Node {}",
+            payload.len(),
+            source_node_id.0
+        );
 
         // Find the correct mapping for this source node by searching RPDO Comm Params (0x14xx)
         let mut mapping_index_opt = None;
         let mut expected_version = 0u8; // Store expected version if found
 
-        for i in 0..256 { // Check all possible RPDO channels
+        for i in 0..256 {
+            // Check all possible RPDO channels
             let comm_param_index = OD_IDX_RPDO_COMM_PARAM_BASE + i as u16;
 
             // Check if this RPDO channel is configured for the source node
@@ -53,7 +58,7 @@ pub trait PdoHandler<'s> {
                 .od()
                 .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
             {
-                 // Handle PReq case where NodeID in OD is 0
+                // Handle PReq case where NodeID in OD is 0
                 let matches_source = (source_node_id.0 == 0 && node_id_val == 0) // PReq mapping
                                   || (source_node_id.0 != 0 && node_id_val == source_node_id.0); // PRes mapping
 
@@ -72,8 +77,10 @@ pub trait PdoHandler<'s> {
                     let received_main = received_version.0 >> 4;
                     let received_sub = received_version.0 & 0x0F;
 
-                    let version_ok = (expected_version == 0 && received_version.0 == 0) ||
-                                     (expected_version > 0 && expected_main == received_main && received_sub >= expected_sub);
+                    let version_ok = (expected_version == 0 && received_version.0 == 0)
+                        || (expected_version > 0
+                            && expected_main == received_main
+                            && received_sub >= expected_sub);
 
                     if !version_ok {
                         warn!(
@@ -110,11 +117,17 @@ pub trait PdoHandler<'s> {
         // Use self.od() to read number of entries in the mapping object (0x16xx/0)
         if let Some(mapping_cow) = self.od().read(mapping_index, 0) {
             if let ObjectValue::Unsigned8(num_entries) = *mapping_cow {
-                 if num_entries == 0 {
-                      trace!("RPDO mapping {:#06X} is disabled (0 entries).", mapping_index);
-                      return;
-                 }
-                 trace!("Applying RPDO mapping {:#06X} with {} entries for Node {}", mapping_index, num_entries, source_node_id.0);
+                if num_entries == 0 {
+                    trace!(
+                        "RPDO mapping {:#06X} is disabled (0 entries).",
+                        mapping_index
+                    );
+                    return;
+                }
+                trace!(
+                    "Applying RPDO mapping {:#06X} with {} entries for Node {}",
+                    mapping_index, num_entries, source_node_id.0
+                );
                 for i in 1..=num_entries {
                     // Use self.od() to read the specific mapping entry (0x16xx / i)
                     if let Some(entry_cow) = self.od().read(mapping_index, i) {
@@ -122,17 +135,29 @@ pub trait PdoHandler<'s> {
                             let entry = PdoMappingEntry::from_u64(raw_mapping);
                             self.apply_rpdo_mapping_entry(&entry, payload, source_node_id);
                         } else {
-                             warn!("RPDO mapping entry {:#06X}/{} is not U64.", mapping_index, i);
+                            warn!(
+                                "RPDO mapping entry {:#06X}/{} is not U64.",
+                                mapping_index, i
+                            );
                         }
                     } else {
-                         warn!("Could not read RPDO mapping entry {:#06X}/{}.", mapping_index, i);
+                        warn!(
+                            "Could not read RPDO mapping entry {:#06X}/{}.",
+                            mapping_index, i
+                        );
                     }
                 }
             } else {
-                 warn!("RPDO mapping object {:#06X} sub-index 0 is not U8.", mapping_index);
+                warn!(
+                    "RPDO mapping object {:#06X} sub-index 0 is not U8.",
+                    mapping_index
+                );
             }
         } else {
-             warn!("RPDO mapping object {:#06X} sub-index 0 not found.", mapping_index);
+            warn!(
+                "RPDO mapping object {:#06X} sub-index 0 not found.",
+                mapping_index
+            );
         }
     }
 
@@ -196,7 +221,7 @@ pub trait PdoHandler<'s> {
                 // (deserialize might succeed with type coercion, e.g., u8 into u16, which we might not want for PDO)
                 // Using core::mem::discriminant for type comparison without PartialEq on ObjectValue itself.
                 if core::mem::discriminant(&value) != core::mem::discriminant(&type_template) {
-                     warn!(
+                    warn!(
                         "RPDO type mismatch after deserialize for 0x{:04X}/{}. Expected {:?}, got {:?}. Value ignored.",
                         entry.index, entry.sub_index, type_template, value
                     );
@@ -213,7 +238,7 @@ pub trait PdoHandler<'s> {
                     .od()
                     .write_internal(entry.index, entry.sub_index, value, false)
                 {
-                     // This write should ideally not fail if the OD entry exists and types matched.
+                    // This write should ideally not fail if the OD entry exists and types matched.
                     error!(
                         "Critical Error: Failed to write RPDO data to existing OD entry 0x{:04X}/{}: {:?}",
                         entry.index, entry.sub_index, e
@@ -221,7 +246,7 @@ pub trait PdoHandler<'s> {
                 }
             }
             Err(e) => {
-                 // Deserialization failed (e.g., wrong length for fixed type)
+                // Deserialization failed (e.g., wrong length for fixed type)
                 warn!(
                     "Failed to deserialize RPDO data for 0x{:04X}/{}: {:?}. Data slice: {:02X?}",
                     entry.index, entry.sub_index, e, data_slice

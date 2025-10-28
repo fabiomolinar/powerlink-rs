@@ -123,7 +123,7 @@ impl Codec for SoAFrame {
 
         // Apply padding
         if buffer.len() < pl_frame_len {
-             return Err(PowerlinkError::BufferTooShort);
+            return Err(PowerlinkError::BufferTooShort);
         }
         buffer[pl_data_len..pl_frame_len].fill(0); // Pad with zeros
 
@@ -172,8 +172,8 @@ impl Codec for SoAFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::C_DLL_MULTICAST_SOA;
-    use crate::frame::codec::CodecHelpers; // Import for test setup
+    use crate::frame::codec::CodecHelpers;
+    use crate::types::C_DLL_MULTICAST_SOA; // Import for test setup
 
     #[test]
     fn test_soaframe_new_constructor() {

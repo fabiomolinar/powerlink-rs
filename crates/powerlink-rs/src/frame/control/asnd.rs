@@ -134,15 +134,17 @@ impl Codec for ASndFrame {
         let potential_payload = &buffer[pl_header_size..];
         let min_eth_payload_after_header = 46; // 60 total - 14 eth header
         let payload = if buffer.len() == min_eth_payload_after_header {
-             // If the PL frame section is *exactly* the minimum size, padding *might* exist.
-             // Find the last non-zero byte. This assumes padding is always zero.
-             let actual_len = potential_payload.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
-             potential_payload[..actual_len].to_vec()
+            // If the PL frame section is *exactly* the minimum size, padding *might* exist.
+            // Find the last non-zero byte. This assumes padding is always zero.
+            let actual_len = potential_payload
+                .iter()
+                .rposition(|&x| x != 0)
+                .map_or(0, |i| i + 1);
+            potential_payload[..actual_len].to_vec()
         } else {
             // If the frame is longer than the minimum, assume no padding was added.
             potential_payload.to_vec()
         };
-
 
         Ok(Self {
             eth_header, // Use the passed-in header
@@ -158,8 +160,8 @@ impl Codec for ASndFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec;
-    use crate::frame::codec::CodecHelpers; // Import for test setup
+    use crate::frame::codec::CodecHelpers;
+    use alloc::vec; // Import for test setup
 
     #[test]
     fn test_asnd_codec_roundtrip() {
@@ -185,7 +187,10 @@ mod tests {
         let total_frame_len = 14 + pl_bytes_written;
 
         // 3. Deserialize full frame (passing the slice including potential padding)
-        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len]).unwrap().into_asnd().unwrap();
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len])
+            .unwrap()
+            .into_asnd()
+            .unwrap();
 
         // The assertion should now pass because deserialize removes the padding heuristically
         assert_eq!(original_frame, deserialized_frame);
@@ -215,7 +220,10 @@ mod tests {
         let total_frame_len = 14 + pl_bytes_written;
 
         // 3. Deserialize full frame
-        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len]).unwrap().into_asnd().unwrap();
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len])
+            .unwrap()
+            .into_asnd()
+            .unwrap();
 
         assert_eq!(original_frame, deserialized_frame);
         assert!(deserialized_frame.payload.is_empty());

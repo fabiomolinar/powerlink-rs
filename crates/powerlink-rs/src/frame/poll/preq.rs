@@ -74,9 +74,15 @@ impl Codec for PReqFrame {
 
         // PReq Specific Header Fields
         let mut octet4_flags = 0u8;
-        if self.flags.ms { octet4_flags |= 1 << 5; }
-        if self.flags.ea { octet4_flags |= 1 << 2; }
-        if self.flags.rd { octet4_flags |= 1 << 0; }
+        if self.flags.ms {
+            octet4_flags |= 1 << 5;
+        }
+        if self.flags.ea {
+            octet4_flags |= 1 << 2;
+        }
+        if self.flags.rd {
+            octet4_flags |= 1 << 0;
+        }
         buffer[4] = octet4_flags; // Flags byte
         buffer[5] = 0; // Reserved
         buffer[6] = self.pdo_version.0;
@@ -109,7 +115,8 @@ impl Codec for PReqFrame {
     /// Assumes the buffer starts *after* the 14-byte Ethernet header.
     fn deserialize(eth_header: EthernetHeader, buffer: &[u8]) -> Result<Self, PowerlinkError> {
         let pl_header_size = 10;
-        if buffer.len() < pl_header_size { // Need at least the header
+        if buffer.len() < pl_header_size {
+            // Need at least the header
             return Err(PowerlinkError::BufferTooShort);
         }
 
@@ -161,9 +168,9 @@ impl Codec for PReqFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame::codec::CodecHelpers;
     use crate::types::MessageType;
-    use alloc::vec;
-    use crate::frame::codec::CodecHelpers; // Need this for tests
+    use alloc::vec; // Need this for tests
 
     #[test]
     fn test_preqframe_new_constructor() {
@@ -219,7 +226,10 @@ mod tests {
         let total_frame_len = 14 + pl_bytes_written;
 
         // 3. Deserialize full frame
-        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len]).unwrap().into_preq().unwrap();
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len])
+            .unwrap()
+            .into_preq()
+            .unwrap();
 
         assert_eq!(original_frame, deserialized_frame);
     }
@@ -248,7 +258,10 @@ mod tests {
         // Min Eth Payload = 46 bytes. Needs padding.
         assert_eq!(pl_bytes_written, 46); // Padded POWERLINK frame section size
 
-        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len]).unwrap().into_preq().unwrap();
+        let deserialized_frame = crate::frame::deserialize_frame(&buffer[..total_frame_len])
+            .unwrap()
+            .into_preq()
+            .unwrap();
 
         assert_eq!(original_frame, deserialized_frame);
         assert!(deserialized_frame.payload.is_empty());
@@ -299,4 +312,3 @@ mod tests {
         ));
     }
 }
-

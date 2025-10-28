@@ -61,12 +61,16 @@ impl fmt::Display for PowerlinkError {
         match self {
             Self::BufferTooShort => write!(f, "Buffer is too short"),
             Self::IoError => write!(f, "Underlying I/O error"),
-            Self::InvalidEthernetFrame => write!(f, "Invalid Ethernet frame (e.g., wrong EtherType)"),
+            Self::InvalidEthernetFrame => {
+                write!(f, "Invalid Ethernet frame (e.g., wrong EtherType)")
+            }
             Self::InvalidPlFrame => write!(f, "Invalid POWERLINK frame (e.g., too short)"),
             Self::InvalidMessageType(v) => write!(f, "Invalid MessageType: {:#04x}", v),
             Self::InvalidNmtState(v) => write!(f, "Invalid NMT State: {:#04x}", v),
             Self::InvalidServiceId(v) => write!(f, "Invalid ServiceId: {:#04x}", v),
-            Self::InvalidRequestedServiceId(v) => write!(f, "Invalid RequestedServiceId: {:#04x}", v),
+            Self::InvalidRequestedServiceId(v) => {
+                write!(f, "Invalid RequestedServiceId: {:#04x}", v)
+            }
             Self::InvalidNodeId(v) => write!(f, "Invalid NodeId: {}", v),
             Self::InvalidPayloadSize(v) => write!(f, "Invalid PayloadSize: {}", v),
             Self::InvalidEnumValue => write!(f, "Invalid enum value in frame"),
@@ -127,7 +131,6 @@ impl From<&'static str> for PowerlinkError {
         PowerlinkError::InternalError(s)
     }
 }
-
 
 /// Hardware Abstraction Layer (HAL) for raw Ethernet packet transmission.
 ///

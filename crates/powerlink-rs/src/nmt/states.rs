@@ -137,10 +137,10 @@ mod tests {
         );
     }
 
-     #[test]
+    #[test]
     fn test_partial_ord() {
-         assert!(NmtState::NmtPreOperational2 >= NmtState::NmtPreOperational1);
-         assert!(NmtState::NmtOperational > NmtState::NmtReadyToOperate);
-         assert!(NmtState::NmtNotActive < NmtState::NmtPreOperational1);
+        assert!(NmtState::NmtPreOperational2 >= NmtState::NmtPreOperational1);
+        assert!(NmtState::NmtOperational > NmtState::NmtReadyToOperate);
+        assert!(NmtState::NmtNotActive < NmtState::NmtPreOperational1);
     }
 }

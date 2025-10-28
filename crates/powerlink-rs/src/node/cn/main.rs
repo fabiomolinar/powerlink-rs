@@ -3,8 +3,18 @@
 use super::payload;
 use crate::PowerlinkError;
 use crate::frame::{
-    ASndFrame, Codec, DllCsEvent, DllCsStateMachine, DllError, NmtAction, PReqFrame, PResFrame,
-    PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame,
+    ASndFrame,
+    Codec,
+    DllCsEvent,
+    DllCsStateMachine,
+    DllError,
+    NmtAction,
+    PReqFrame,
+    PResFrame,
+    PowerlinkFrame,
+    RequestedServiceId,
+    ServiceId,
+    SoAFrame,
     basic::MacAddress,
     // deserialize_frame is now only used in process_raw_frame
     deserialize_frame,
@@ -22,7 +32,7 @@ use crate::sdo::SdoServer;
 // SdoCommand and Headers are needed for SDO logic
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
-use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
+use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -116,7 +126,6 @@ impl<'s> ControlledNode<'s> {
         );
         self.pending_nmt_requests.push((command, target));
     }
-
 
     /// Internal function to process a deserialized `PowerlinkFrame`.
     fn process_frame(&mut self, frame: PowerlinkFrame, current_time_us: u64) -> NodeAction {
@@ -236,7 +245,6 @@ impl<'s> ControlledNode<'s> {
             _ => {}
         }
 
-
         // --- Normal Frame Processing ---
 
         // 1. Update NMT state machine based on the frame type.
@@ -277,7 +285,6 @@ impl<'s> ControlledNode<'s> {
             info!("New error detected, toggling EN flag to: {}", self.en_flag);
         }
 
-
         // 4. Generate response frames (logic moved from FrameHandler trait).
         let response_frame = match &frame {
             PowerlinkFrame::SoA(soa_frame) => {
@@ -288,24 +295,24 @@ impl<'s> ControlledNode<'s> {
                         // Per Table 108, these can be handled in PreOp1 and PreOp2.
                         NmtState::NmtPreOperational1 | NmtState::NmtPreOperational2 => {
                             match soa_frame.req_service_id {
-                                RequestedServiceId::IdentRequest => Some(
-                                    payload::build_ident_response(
+                                RequestedServiceId::IdentRequest => {
+                                    Some(payload::build_ident_response(
                                         self.mac_address,
                                         self.nmt_state_machine.node_id,
                                         &self.od,
                                         soa_frame,
-                                    ),
-                                ),
-                                RequestedServiceId::StatusRequest => Some(
-                                    payload::build_status_response(
+                                    ))
+                                }
+                                RequestedServiceId::StatusRequest => {
+                                    Some(payload::build_status_response(
                                         self.mac_address,
                                         self.nmt_state_machine.node_id,
                                         &self.od,
                                         self.en_flag,
                                         self.ec_flag,
                                         soa_frame,
-                                    ),
-                                ),
+                                    ))
+                                }
                                 RequestedServiceId::NmtRequestInvite => {
                                     if let Some((command, target)) = self.pending_nmt_requests.pop()
                                     {
@@ -317,13 +324,18 @@ impl<'s> ControlledNode<'s> {
                                             soa_frame,
                                         ))
                                     } else {
-                                        warn!("Received NmtRequestInvite but have no pending requests.");
+                                        warn!(
+                                            "Received NmtRequestInvite but have no pending requests."
+                                        );
                                         None
                                     }
                                 }
                                 RequestedServiceId::UnspecifiedInvite => {
-                                    if let Some(sdo_payload) = self.sdo_server.pop_pending_request() {
-                                        info!("Received UnspecifiedInvite, sending queued SDO request.");
+                                    if let Some(sdo_payload) = self.sdo_server.pop_pending_request()
+                                    {
+                                        info!(
+                                            "Received UnspecifiedInvite, sending queued SDO request."
+                                        );
                                         let asnd = ASndFrame::new(
                                             self.mac_address,
                                             soa_frame.eth_header.source_mac,
@@ -334,7 +346,9 @@ impl<'s> ControlledNode<'s> {
                                         );
                                         Some(PowerlinkFrame::ASnd(asnd))
                                     } else {
-                                        warn!("Received UnspecifiedInvite but have no pending SDO requests.");
+                                        warn!(
+                                            "Received UnspecifiedInvite but have no pending SDO requests."
+                                        );
                                         None
                                     }
                                 }
@@ -462,7 +476,10 @@ impl<'s> Node for ControlledNode<'s> {
             Err(e) => {
                 // This looked like a POWERLINK frame (correct EtherType) but was malformed.
                 // This is an error condition.
-                warn!("[CN] Could not deserialize frame: {:?} (Buffer: {:?})", e, buffer);
+                warn!(
+                    "[CN] Could not deserialize frame: {:?} (Buffer: {:?})",
+                    e, buffer
+                );
                 let (nmt_action, signaled) =
                     self.dll_error_manager.handle_error(DllError::InvalidFormat);
                 if signaled {

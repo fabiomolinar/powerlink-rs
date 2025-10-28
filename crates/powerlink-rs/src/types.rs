@@ -83,7 +83,6 @@ pub const C_DLL_MULTICAST_SOC: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x01];
 /// POWERLINK ASnd multicast MAC address: 01-11-1E-00-00-04.
 pub const C_DLL_MULTICAST_ASND: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x04];
 
-
 // --- Core Protocol Identifiers ---
 
 /// Defines the mandatory POWERLINK Message Type IDs.
