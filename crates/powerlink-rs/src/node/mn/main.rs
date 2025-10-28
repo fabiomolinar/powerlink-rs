@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/mn/main.rs
 use super::payload;
 use super::scheduler;
 use crate::common::{NetTime, RelativeTime};
@@ -57,6 +56,7 @@ pub(super) enum CyclePhase { // Made pub(super)
     IsochronousPReq, // PReq sent, waiting for PRes or timeout
     IsochronousDone, // All isochronous nodes polled
     AsynchronousSoA, // SoA sent, maybe waiting for ASnd or timeout
+    AwaitingMnAsyncSend, // SoA sent to self, waiting to send ASnd(NMT)
 }
 
 /// Represents a pending asynchronous transmission request from a CN.
@@ -548,20 +548,11 @@ impl<'s> ManagingNode<'s> {
         
         // Before sending SoA, check if there are any NMT commands to send.
         // NMT Commands have high priority in the async phase.
-        if let Some((command, target_node)) = self.pending_nmt_commands.pop() {
-            info!(
-                "[MN] Prioritizing NMT command {:?} for Node {} in async phase.",
-                command, target_node.0
-            );
-            // Send a SoA(NoService) first to correctly mark the async phase,
-            // then immediately follow with the NMT Command frame.
-            // A more advanced implementation could queue both actions. For now,
-            // we send the SoA and the tick will immediately pick up the NMT command.
-            // This is slightly inefficient but functionally correct.
-            self.current_phase = CyclePhase::AsynchronousSoA; // Mark phase as active
-            // Re-queue the command to be sent in the next part of the tick
-            self.pending_nmt_commands.push((command, target_node));
-            return payload::build_soa_frame(self, current_time_us);
+        if !self.pending_nmt_commands.is_empty() {
+            info!("[MN] Prioritizing NMT command in async phase.");
+            // Set phase to trigger sending the NMT command immediately after SoA
+            self.current_phase = CyclePhase::AwaitingMnAsyncSend;
+            return payload::build_soa_frame_for_mn(self);
         }
 
         // Proceed to build and send SoA for regular async traffic
@@ -746,6 +737,24 @@ impl<'s> Node for ManagingNode<'s> {
         // Use `>=` for deadline check to handle exact matches
         let deadline_passed = current_time_us >= deadline;
 
+        // --- Handle immediate action for AwaitingMnAsyncSend ---
+        if self.current_phase == CyclePhase::AwaitingMnAsyncSend {
+            if let Some((command, target_node)) = self.pending_nmt_commands.pop() {
+                // remove(0) for FIFO
+                info!(
+                    "[MN] Sending queued NMT command {:?} for Node {} in async phase.",
+                    command, target_node.0
+                );
+                self.current_phase = CyclePhase::Idle; // Consume this async phase
+                return payload::build_nmt_command_frame(self, command, target_node);
+            } else {
+                // This case should ideally not happen if the state was set correctly.
+                warn!("[MN] Was in AwaitingMnAsyncSend, but NMT command queue is empty. Resetting phase.");
+                self.current_phase = CyclePhase::Idle;
+            }
+        }
+
+
         // Skip if not in NotActive and deadline hasn't passed
         if !deadline_passed && self.nmt_state() != NmtState::NmtNotActive {
             return NodeAction::NoAction;
@@ -820,18 +829,6 @@ impl<'s> Node for ManagingNode<'s> {
 
         // Re-evaluate state in case it changed
         let nmt_state = self.nmt_state();
-
-        // Check if we need to send a queued NMT command. This has high priority in the async phase.
-        if !self.pending_nmt_commands.is_empty() && self.current_phase == CyclePhase::AsynchronousSoA {
-            let (command, target_node) = self.pending_nmt_commands.remove(0);
-            info!(
-                "[MN] Sending queued NMT command {:?} for Node {} in async phase.",
-                command, target_node.0
-            );
-            self.current_phase = CyclePhase::Idle; // Consume this async phase
-            return payload::build_nmt_command_frame(self, command, target_node);
-        }
-
 
         // Only proceed with cycle logic if a specific action wasn't determined by timeout handling above
         // AND if the tick is for the start of the cycle (or first action in PreOp1)

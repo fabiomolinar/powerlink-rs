@@ -1,3 +1,4 @@
+use crate::node::mn::main::CyclePhase;
 use crate::node::Node; // Import Node trait for nmt_state()
 use super::main::ManagingNode;
 use crate::common::{NetTime, RelativeTime};
@@ -301,7 +302,7 @@ pub(super) fn build_soa_frame(node: &mut ManagingNode, current_time_us: u64) -> 
             };
             (service_id, request.node_id)
         } else {
-            node.current_phase = super::main::CyclePhase::Idle;
+            node.current_phase = CyclePhase::Idle;
             (RequestedServiceId::NoService, NodeId(0)) // No requests pending
         };
     // TODO: Handle IdentRequest and StatusRequest scheduling
@@ -324,6 +325,37 @@ pub(super) fn build_soa_frame(node: &mut ManagingNode, current_time_us: u64) -> 
         }
         Err(e) => {
             error!("[MN] Failed to serialize SoA frame: {:?}", e);
+            NodeAction::NoAction
+        }
+    }
+}
+
+
+/// Builds an SoA frame that grants the async slot to the MN itself.
+pub(super) fn build_soa_frame_for_mn(node: &ManagingNode) -> NodeAction {
+    trace!("[MN] Building SoA frame for MN self-invite.");
+    let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
+
+    // When MN sends to itself, it typically uses UnspecifiedInvite.
+    let soa_frame = SoAFrame::new(
+        node.mac_address,
+        node.nmt_state(),
+        SoAFlags::default(),
+        RequestedServiceId::UnspecifiedInvite,
+        NodeId(C_ADR_MN_DEF_NODE_ID), // Target is self
+        epl_version,
+    );
+
+    let mut buf = vec![0u8; 64];
+    CodecHelpers::serialize_eth_header(&soa_frame.eth_header, &mut buf);
+    match soa_frame.serialize(&mut buf[14..]) {
+        Ok(pl_size) => {
+            let total_size = 14 + pl_size;
+            buf.truncate(total_size);
+            NodeAction::SendFrame(buf)
+        }
+        Err(e) => {
+            error!("[MN] Failed to serialize SoA frame for self: {:?}", e);
             NodeAction::NoAction
         }
     }
