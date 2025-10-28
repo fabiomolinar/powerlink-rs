@@ -1,5 +1,3 @@
-// In frame/error/manager.rs
-
 use super::traits::{ErrorCounters, ErrorHandler};
 use super::types::{DllError, NmtAction};
 
@@ -22,7 +20,7 @@ where
         Self { counters, handler }
     }
 
-    pub fn handle_error(&mut self, error: DllError) -> NmtAction {
+    pub fn handle_error(&mut self, error: DllError) -> (NmtAction, bool) {
         self.counters.handle_error(error, &mut self.handler)
     }
 

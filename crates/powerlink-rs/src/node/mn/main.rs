@@ -1,5 +1,3 @@
-// crates/powerlink-rs/src/node/mn/main.rs
-// Modified main MN logic: Removed unused imports.
 use super::payload; // Use the new payload module
 use super::scheduler;
 use crate::common::{NetTime, RelativeTime};
@@ -19,8 +17,8 @@ use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::{Object, ObjectDictionary, ObjectValue};
-use crate::types::NodeId; // Removed unused constants C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID
-use alloc::collections::{BTreeMap, BinaryHeap}; // Removed VecDeque
+use crate::types::NodeId;
+use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
 use core::cmp::Ordering; // For BinaryHeap ordering
 use log::{debug, info, trace, warn};
@@ -366,7 +364,8 @@ impl<'s> ManagingNode<'s> {
                     _ => error, // Keep original error if not per-node
                 };
 
-                let nmt_action = self.dll_error_manager.handle_error(error_with_node);
+                let (nmt_action, _status_changed) =
+                    self.dll_error_manager.handle_error(error_with_node);
 
                 match nmt_action {
                     NmtAction::ResetNode(node_id) => {
@@ -652,7 +651,7 @@ impl<'s> Node for ManagingNode<'s> {
                     &buffer[6..12]
                 );
                 // Log DLL error
-                let _ = self.dll_error_manager.handle_error(DllError::MultipleMn);
+                let (_, _) = self.dll_error_manager.handle_error(DllError::MultipleMn);
                 // NMT state machine will handle this error (e.g., stay in NotActive)
                 // We still try to deserialize to check frame type for DLL state machine context.
              } else {
@@ -675,18 +674,18 @@ impl<'s> Node for ManagingNode<'s> {
             // BufferTooShort can happen if eth header itself is truncated
             Err(PowerlinkError::BufferTooShort) => {
                  warn!("[MN] Received truncated Ethernet frame.");
-                 let _ = self.dll_error_manager.handle_error(DllError::InvalidFormat); // Treat as invalid format
+                 let (_, _) = self.dll_error_manager.handle_error(DllError::InvalidFormat); // Treat as invalid format
                  NodeAction::NoAction
             }
             Err(PowerlinkError::InvalidPlFrame) | Err(PowerlinkError::InvalidMessageType(_)) => {
                  // This error is now more reliable since deserialize_frame checks EtherType first
                  warn!("[MN] Could not deserialize POWERLINK frame (correct EtherType): {:?}. Buffer: {:02X?}", buffer, buffer);
-                 let _ = self.dll_error_manager.handle_error(DllError::InvalidFormat);
+                 let (_, _) = self.dll_error_manager.handle_error(DllError::InvalidFormat);
                  NodeAction::NoAction
             }
             Err(e) => { // Handle other potential errors from deserialize_frame
                 warn!("[MN] Error during frame deserialization: {:?}. Buffer: {:02X?}", e, buffer);
-                 let _ = self.dll_error_manager.handle_error(DllError::InvalidFormat); // Treat others as invalid format too
+                 let (_, _) = self.dll_error_manager.handle_error(DllError::InvalidFormat); // Treat others as invalid format too
                 NodeAction::NoAction
             }
         }
@@ -917,4 +916,3 @@ impl<'s> Node for ManagingNode<'s> {
         self.next_tick_us
     }
 }
-

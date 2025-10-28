@@ -22,18 +22,18 @@ impl ThresholdCounter {
         }
     }
 
-    /// Increments the counter by 8 when an error occurs[cite: 1, 4.7.4.1].
+    /// Increments the counter by 8 when an error occurs.
     pub fn increment(&mut self) {
         self.threshold_cnt = self.threshold_cnt.saturating_add(8);
     }
 
-    /// Decrements the counter by 1 for each error-free cycle[cite: 1, 4.7.4.1].
+    /// Decrements the counter by 1 for each error-free cycle.
     pub fn decrement(&mut self) {
         self.threshold_cnt = self.threshold_cnt.saturating_sub(1);
     }
 
     /// Checks if the threshold has been reached. If so, resets the counter
-    /// and returns true[cite: 1, 4.7.4.1].
+    /// and returns true.
     pub fn check_and_reset(&mut self) -> bool {
         if self.threshold > 0 && self.threshold_cnt >= self.threshold {
             self.threshold_cnt = 0;
@@ -92,7 +92,14 @@ impl ErrorCounters for CnErrorCounters {
         self.soc_jitter.decrement();
     }
 
-    fn handle_error<H: ErrorHandler>(&mut self, error: DllError, handler: &mut H) -> NmtAction {
+    fn handle_error<H: ErrorHandler>(
+        &mut self,
+        error: DllError,
+        handler: &mut H,
+    ) -> (NmtAction, bool) {
+        let mut nmt_action = NmtAction::None;
+        let mut status_changed = false;
+
         let threshold_reached = match error {
             DllError::LossOfSoc => {
                 self.loss_of_soc.increment();
@@ -121,11 +128,13 @@ impl ErrorCounters for CnErrorCounters {
             DllError::LossOfLink => {
                 self.loss_of_link_cumulative = self.loss_of_link_cumulative.saturating_add(1);
                 handler.log_error(&error);
+                status_changed = true; // Loss of link is a signallable event.
                 false // Does not trigger an immediate NMT action.
             }
             // PDO errors are logged but do not trigger threshold-based NMT actions
             DllError::PdoMapVersion { .. } | DllError::PdoPayloadShort { .. } => {
                 handler.log_error(&error);
+                status_changed = true; // PDO errors are signallable.
                 false
             }
             // Errors handled by MN are ignored here.
@@ -134,10 +143,11 @@ impl ErrorCounters for CnErrorCounters {
 
         if threshold_reached {
             handler.log_error(&error);
+            status_changed = true; // Any threshold violation is a signallable event.
             // Per Table 27, most threshold errors on a CN trigger a reset to PreOp1.
-            return NmtAction::ResetCommunication;
+            nmt_action = NmtAction::ResetCommunication;
         }
-        NmtAction::None
+        (nmt_action, status_changed)
     }
 }
 
@@ -195,7 +205,14 @@ impl ErrorCounters for MnErrorCounters {
             .for_each(|c| c.decrement());
     }
 
-    fn handle_error<H: ErrorHandler>(&mut self, error: DllError, handler: &mut H) -> NmtAction {
+    fn handle_error<H: ErrorHandler>(
+        &mut self,
+        error: DllError,
+        handler: &mut H,
+    ) -> (NmtAction, bool) {
+        let mut nmt_action = NmtAction::None;
+        let mut status_changed = false;
+
         let (threshold_reached, node_id) = match error {
             DllError::Crc => {
                 self.crc_errors.increment();
@@ -227,6 +244,7 @@ impl ErrorCounters for MnErrorCounters {
             // PDO errors are logged but do not trigger threshold-based NMT actions
             DllError::PdoMapVersion { .. } | DllError::PdoPayloadShort { .. } => {
                 handler.log_error(&error);
+                status_changed = true;
                 (false, None)
             }
             // Errors handled by CN are ignored here.
@@ -235,16 +253,17 @@ impl ErrorCounters for MnErrorCounters {
 
         if threshold_reached {
             handler.log_error(&error);
+            status_changed = true;
             // Per Table 28, the MN's action depends on the error type.
             if let Some(id) = node_id {
                 // For per-CN errors, reset the specific node.
-                return NmtAction::ResetNode(id);
+                nmt_action = NmtAction::ResetNode(id);
             } else {
                 // For general MN errors, reset communication.
-                return NmtAction::ResetCommunication;
+                nmt_action = NmtAction::ResetCommunication;
             }
         }
-        NmtAction::None
+        (nmt_action, status_changed)
     }
 }
 
@@ -293,13 +312,15 @@ mod tests {
         };
 
         // First error, no action yet.
-        let action1 = counters.handle_error(DllError::LossOfSoc, &mut handler);
+        let (action1, changed1) = counters.handle_error(DllError::LossOfSoc, &mut handler);
         assert_eq!(action1, NmtAction::None);
+        assert!(!changed1);
         assert_eq!(handler.logged_errors.len(), 0);
 
         // Second error, threshold is now 16 (>= 15), so an action is triggered.
-        let action2 = counters.handle_error(DllError::LossOfSoc, &mut handler);
+        let (action2, changed2) = counters.handle_error(DllError::LossOfSoc, &mut handler);
         assert_eq!(action2, NmtAction::ResetCommunication);
+        assert!(changed2);
         assert_eq!(handler.logged_errors.len(), 1);
         assert_eq!(handler.logged_errors[0], DllError::LossOfSoc);
     }
@@ -314,11 +335,13 @@ mod tests {
         let error = DllError::LossOfPres { node_id };
 
         // Trigger the error twice to exceed the threshold.
-        let action1 = counters.handle_error(error, &mut handler);
-        let action2 = counters.handle_error(error, &mut handler);
+        let (action1, changed1) = counters.handle_error(error, &mut handler);
+        let (action2, changed2) = counters.handle_error(error, &mut handler);
 
         assert_eq!(action1, NmtAction::None);
+        assert!(!changed1);
         assert_eq!(action2, NmtAction::ResetNode(node_id));
+        assert!(changed2);
         assert_eq!(handler.logged_errors.len(), 1);
         assert_eq!(handler.logged_errors[0], error);
     }

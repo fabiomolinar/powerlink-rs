@@ -1,3 +1,5 @@
+// crates/powerlink-rs/src/node/cn/payload.rs
+// Refined PDO payload building: Added check against payload limit, improved error logging.
 use crate::frame::basic::MacAddress;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
@@ -102,6 +104,7 @@ pub(super) fn build_pres_response(
     od: &ObjectDictionary,
     sdo_server: &SdoServer,
     pending_nmt_requests: &[(NmtCommand, NodeId)], // Add NMT request queue
+    en_flag: bool,
 ) -> PowerlinkFrame {
     debug!("Building PRes in response to PReq for node {}", node_id.0);
 
@@ -129,6 +132,7 @@ pub(super) fn build_pres_response(
 
     let flags = PResFlags {
         rd: rd_flag,
+        en: en_flag,
         rs: RSFlag::new(rs_count),
         pr: pr_flag,
         ..Default::default()

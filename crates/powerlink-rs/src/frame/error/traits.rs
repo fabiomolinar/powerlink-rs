@@ -36,6 +36,11 @@ pub trait ErrorCounters: Sized {
     /// Called once per POWERLINK cycle to decrement all threshold counters.
     fn on_cycle_complete(&mut self);
 
-    /// Processes a given error, updates the appropriate counter, and returns an NMT action if a threshold is met.
-    fn handle_error<H: ErrorHandler>(&mut self, error: DllError, handler: &mut H) -> NmtAction;
+    /// Processes a given error, updates the appropriate counter, and returns an NMT action
+    /// and a boolean indicating if the error status has changed and should be signaled.
+    fn handle_error<H: ErrorHandler>(
+        &mut self,
+        error: DllError,
+        handler: &mut H,
+    ) -> (NmtAction, bool);
 }

@@ -50,6 +50,8 @@ pub struct ControlledNode<'s> {
     en_flag: bool,
     /// Exception Clear flag, mirrors the last received ER flag from the MN.
     ec_flag: bool,
+    /// A flag that is set when a new error occurs, to trigger toggling the EN flag.
+    error_status_changed: bool,
 }
 
 impl<'s> ControlledNode<'s> {
@@ -88,6 +90,7 @@ impl<'s> ControlledNode<'s> {
             en_flag: false,
             // Per spec 6.5.5.1, EC starts as 1 to indicate "not initialized"
             ec_flag: true,
+            error_status_changed: false,
         };
 
         // Run the initial state transitions to get to NmtNotActive.
@@ -101,6 +104,12 @@ impl<'s> ControlledNode<'s> {
     pub fn queue_sdo_request(&mut self, payload: Vec<u8>) {
         self.sdo_server.queue_request(payload);
     }
+
+    /// Allows the application to queue an NMT request to be sent to the MN.
+    pub fn queue_nmt_request(&mut self, command: NmtCommand, target: NodeId) {
+        self.pending_nmt_requests.push((command, target));
+    }
+
 
     /// Internal function to process a deserialized `PowerlinkFrame`.
     fn process_frame(&mut self, frame: PowerlinkFrame, current_time_us: u64) -> NodeAction {
@@ -201,13 +210,17 @@ impl<'s> ControlledNode<'s> {
         // --- Handle EA/ER flags for error signaling handshake ---
         match &frame {
             PowerlinkFrame::PReq(preq) => {
+                // If MN acknowledges our error, we can stop flagging it until a new one occurs.
+                // Spec 6.5.6: If EN == EA, CN may change StatusResponse data again.
                 if preq.flags.ea == self.en_flag {
-                    // TODO: Acknowledged, CN may change StatusResponse data again.
+                    // This is the ACK. The application can now prepare new error info if needed.
+                    // For now, we don't need to do anything here, the toggling logic handles it.
                 }
             }
             PowerlinkFrame::SoA(soa) => {
                 if soa.flags.er {
                     // MN requests reset of error signaling.
+                    info!("Received ER flag from MN, resetting error signaling.");
                     self.en_flag = false;
                     // TODO: Clear emergency queue.
                 }
@@ -215,6 +228,7 @@ impl<'s> ControlledNode<'s> {
             }
             _ => {}
         }
+
 
         // --- Normal Frame Processing ---
 
@@ -231,7 +245,11 @@ impl<'s> ControlledNode<'s> {
             // If the DLL detects an error (like a lost frame), pass it to the error manager.
             for error in errors {
                 warn!("DLL state machine reported error: {:?}", error);
-                if self.dll_error_manager.handle_error(error) != NmtAction::None {
+                let (nmt_action, signaled) = self.dll_error_manager.handle_error(error);
+                if signaled {
+                    self.error_status_changed = true;
+                }
+                if nmt_action != NmtAction::None {
                     self.nmt_state_machine
                         .process_event(NmtEvent::Error, &mut self.od);
                 }
@@ -244,6 +262,14 @@ impl<'s> ControlledNode<'s> {
             PowerlinkFrame::PRes(pres_frame) => self.consume_pres_payload(pres_frame),
             _ => {} // Other frames do not carry consumer PDOs
         }
+
+        // Check if we need to toggle the EN flag before building a response.
+        if self.error_status_changed {
+            self.en_flag = !self.en_flag;
+            self.error_status_changed = false; // Reset the trigger
+            info!("New error detected, toggling EN flag to: {}", self.en_flag);
+        }
+
 
         // 4. Generate response frames (logic moved from FrameHandler trait).
         let response_frame = match &frame {
@@ -324,6 +350,7 @@ impl<'s> ControlledNode<'s> {
                         &self.od,
                         &self.sdo_server,
                         &self.pending_nmt_requests,
+                        self.en_flag,
                     )),
                     _ => None,
                 }
@@ -429,7 +456,12 @@ impl<'s> Node for ControlledNode<'s> {
                 // This looked like a POWERLINK frame (correct EtherType) but was malformed.
                 // This is an error condition.
                 warn!("[CN] Could not deserialize frame: {:?} (Buffer: {:?})", e, buffer);
-                if self.dll_error_manager.handle_error(DllError::InvalidFormat) != NmtAction::None {
+                let (nmt_action, signaled) =
+                    self.dll_error_manager.handle_error(DllError::InvalidFormat);
+                if signaled {
+                    self.error_status_changed = true;
+                }
+                if nmt_action != NmtAction::None {
                     self.nmt_state_machine
                         .process_event(NmtEvent::Error, &mut self.od);
                 }
@@ -472,7 +504,11 @@ impl<'s> Node for ControlledNode<'s> {
                 .process_event(DllCsEvent::SocTimeout, current_nmt_state)
             {
                 for error in errors {
-                    if self.dll_error_manager.handle_error(error) != NmtAction::None {
+                    let (nmt_action, signaled) = self.dll_error_manager.handle_error(error);
+                    if signaled {
+                        self.error_status_changed = true;
+                    }
+                    if nmt_action != NmtAction::None {
                         self.nmt_state_machine
                             .process_event(NmtEvent::Error, &mut self.od);
                         self.soc_timeout_check_active = false;
