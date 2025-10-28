@@ -21,6 +21,7 @@ use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
 use crate::PowerlinkError;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
+use alloc::vec;
 use core::cmp::Ordering; // For BinaryHeap ordering
 use log::{debug, error, info, trace, warn};
 
