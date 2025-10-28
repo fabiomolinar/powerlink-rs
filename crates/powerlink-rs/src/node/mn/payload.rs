@@ -1,6 +1,9 @@
+// crates/powerlink-rs/src/node/mn/payload.rs
+// path: crates/powerlink-rs/src/node/mn/payload.rs
 use crate::frame::basic::MacAddress; // Import needed for build_nmt_command_frame
 use crate::frame::control::{SoAFlags, SocFlags};
 use crate::frame::poll::PReqFlags; // Import directly
+                                   // Added ASndFrame and ServiceId for NMT commands
 use crate::frame::{
     ASndFrame, DllMsEvent, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame,
     SocFrame,

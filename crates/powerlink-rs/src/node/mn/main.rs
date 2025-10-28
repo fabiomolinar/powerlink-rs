@@ -325,7 +325,7 @@ impl<'s> ManagingNode<'s> {
                     // Handle async requests flagged in PRes
                     self.handle_pres_flags(&pres_frame);
                     // PRes received, poll next CN or end isochronous phase
-                    return self.schedule_next_isochronous_action(current_time_us);
+                    return self.advance_cycle_phase(current_time_us);
                 } else {
                     warn!(
                         "[MN] Received unexpected PRes from Node {} (expected {:?}). Ignoring payload, checking flags.",
@@ -572,7 +572,7 @@ impl<'s> ManagingNode<'s> {
     }
 
     /// Determines the next action in the isochronous phase (send next PReq or SoA).
-    fn schedule_next_isochronous_action(&mut self, current_time_us: u64) -> NodeAction {
+    fn advance_cycle_phase(&mut self, current_time_us: u64) -> NodeAction {
         // Find the next active node to poll using the helper function, passing current multiplex cycle
         if let Some(node_id) =
             scheduler::get_next_isochronous_node_to_poll(self, self.current_multiplex_cycle)
@@ -942,7 +942,7 @@ impl<'s> Node for ManagingNode<'s> {
                             }
                         }
                         // After timeout, immediately schedule the next isochronous action or SoA
-                        action = self.schedule_next_isochronous_action(current_time_us);
+                        action = self.advance_cycle_phase(current_time_us);
                         // Don't schedule the next main cycle yet, the scheduler handles timing now
                         schedule_next_cycle = false;
                     } else if timeout_event == DllMsEvent::AsndTimeout {
@@ -1050,7 +1050,7 @@ impl<'s> Node for ManagingNode<'s> {
 
             // If we just sent SoC, immediately schedule the first PReq or SoA
             if self.current_phase == CyclePhase::SoCSent {
-                action = self.schedule_next_isochronous_action(current_time_us);
+                action = self.advance_cycle_phase(current_time_us);
                 // Don't schedule next cycle start yet, let the PReq/PRes sequence or timeouts handle it
                 schedule_next_cycle = false;
             } else if nmt_state == NmtState::NmtPreOperational1 {
