@@ -2,6 +2,7 @@
 // Refined PDO payload building: Added check against payload limit, improved error logging.
 use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
+use crate::frame::error::ErrorEntry;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
 use crate::nmt::events::NmtCommand;
@@ -12,6 +13,7 @@ use crate::sdo::SdoServer;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, trace, warn};
@@ -23,6 +25,7 @@ const OD_IDX_CYCLE_TIMING_REC: u16 = 0x1F98; // NMT_CycleTiming_REC
 const OD_SUBIDX_PRES_PAYLOAD_LIMIT: u8 = 5; // PresActPayloadLimit_U16 in 0x1F98
 const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
 const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
+const OD_SUBIDX_ASYNC_MTU: u8 = 8; // AsyncMTU_U16 in 0x1F98
 
 /// Builds an `ASnd` frame for the `IdentResponse` service.
 pub(super) fn build_ident_response(
@@ -48,13 +51,14 @@ pub(super) fn build_ident_response(
 pub(super) fn build_status_response(
     mac_address: MacAddress,
     node_id: NodeId,
-    od: &ObjectDictionary,
+    od: &mut ObjectDictionary,
     en_flag: bool,
     ec_flag: bool,
+    emergency_queue: &mut VecDeque<ErrorEntry>,
     soa: &crate::frame::SoAFrame,
 ) -> PowerlinkFrame {
     debug!("Building StatusResponse for SoA from node {}", soa.source.0);
-    let payload = build_status_response_payload(od, en_flag, ec_flag);
+    let payload = build_status_response_payload(od, en_flag, ec_flag, emergency_queue);
     let asnd = ASndFrame::new(
         mac_address,
         soa.eth_header.source_mac,    // Send back to MN's MAC
@@ -211,13 +215,19 @@ fn build_ident_response_payload(od: &ObjectDictionary) -> Vec<u8> {
 
 /// Builds the payload for a `StatusResponse` frame.
 /// The structure is defined in EPSG DS 301, Section 7.3.3.3.1.
-fn build_status_response_payload(od: &ObjectDictionary, en_flag: bool, ec_flag: bool) -> Vec<u8> {
-    // Minimal size is 14 bytes (up to StaticErrorBitField)
-    // We will build it dynamically.
+fn build_status_response_payload(
+    od: &mut ObjectDictionary,
+    en_flag: bool,
+    ec_flag: bool,
+    emergency_queue: &mut VecDeque<ErrorEntry>,
+) -> Vec<u8> {
+    // --- Determine max payload size ---
+    // The payload limit is defined by AsyncMTU (0x1F98/8), minus ASnd header (4 bytes)
+    let mtu = od.read_u16(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_MTU).unwrap_or(300) as usize;
+    let max_payload_size = mtu.saturating_sub(4);
+
+    // --- Base payload with fixed fields ---
     let mut payload = vec![0u8; 14];
-
-    // --- Populate fields ---
-
     // Octet 0: Flags (EN, EC)
     if en_flag {
         payload[0] |= 1 << 5;
@@ -233,10 +243,38 @@ fn build_status_response_payload(od: &ObjectDictionary, en_flag: bool, ec_flag: 
     payload[6] = od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
     // Bytes 7-13 are reserved or device specific errors. Keep as zero for now.
 
-    // TODO: Append Error/Event History Entries from an emergency queue if present.
+    // --- Append Error/Event History Entries from emergency queue ---
+    let mut entry_buffer = [0u8; 20]; // Buffer to serialize one entry
+    while let Some(entry) = emergency_queue.front() {
+        // Check if there is enough space for the next 20-byte entry.
+        if payload.len() + 20 > max_payload_size {
+            warn!("[CN] Not enough space in StatusResponse for all queued errors. Remaining: {}", emergency_queue.len());
+            break;
+        }
+
+        // Serialize the entry into the temporary buffer.
+        entry_buffer.fill(0);
+        entry_buffer[0..2].copy_from_slice(&((entry.entry_type.profile & 0x0FFF) | ((entry.entry_type.mode as u16) << 12) | if entry.entry_type.is_status_entry { 1 << 15 } else { 0 } | if entry.entry_type.send_to_queue { 1 << 14 } else { 0 }).to_le_bytes());
+        entry_buffer[2..4].copy_from_slice(&entry.error_code.to_le_bytes());
+        entry_buffer[4..8].copy_from_slice(&entry.timestamp.seconds.to_le_bytes());
+        entry_buffer[8..12].copy_from_slice(&entry.timestamp.nanoseconds.to_le_bytes());
+        entry_buffer[12..20].copy_from_slice(&entry.additional_information.to_le_bytes());
+
+        // Append to the main payload and remove from the queue.
+        payload.extend_from_slice(&entry_buffer);
+        emergency_queue.pop_front();
+        trace!("[CN] Added error entry to StatusResponse. Queue size: {}", emergency_queue.len());
+    }
+
+    // Per spec 6.5.8.2, if not all available space is used, a terminator entry (Mode=0) should be added.
+    if payload.len() + 20 <= max_payload_size {
+        payload.extend_from_slice(&[0u8; 20]); // Add an all-zero entry as a terminator
+    }
+
 
     payload
 }
+
 
 /// Builds an ASnd frame containing an SDO Abort message.
 pub(super) fn build_sdo_abort_response(

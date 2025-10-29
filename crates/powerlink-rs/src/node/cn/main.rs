@@ -1,5 +1,6 @@
 use super::payload;
 use crate::PowerlinkError;
+use crate::common::NetTime;
 use crate::frame::{
     DllCsEvent,
     DllCsStateMachine,
@@ -12,7 +13,10 @@ use crate::frame::{
     ServiceId,    
     basic::MacAddress,
     deserialize_frame,
-    error::{CnErrorCounters, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler},
+    error::{
+        CnErrorCounters, DllErrorManager, EntryType, ErrorCounters, ErrorEntry, ErrorEntryMode,
+        ErrorHandler, LoggingErrorHandler,
+    },
 };
 use crate::frame::codec::CodecHelpers;
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
@@ -24,6 +28,7 @@ use crate::od::ObjectDictionary;
 use crate::sdo::SdoServer;
 use crate::sdo::command::SdoCommand;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -43,6 +48,8 @@ pub struct ControlledNode<'s> {
     sdo_server: SdoServer,
     /// Queue for NMT commands this CN wants the MN to execute.
     pending_nmt_requests: Vec<(NmtCommand, NodeId)>,
+    /// Queue for detailed error/event entries to be reported in StatusResponse.
+    emergency_queue: VecDeque<ErrorEntry>,
     /// Timestamp of the last successfully received SoC frame (microseconds).
     last_soc_reception_time_us: u64,
     /// Flag indicating if the SoC timeout check is currently active.
@@ -87,6 +94,7 @@ impl<'s> ControlledNode<'s> {
             mac_address,
             sdo_server: SdoServer::new(),
             pending_nmt_requests: Vec::new(),
+            emergency_queue: VecDeque::with_capacity(10), // Default capacity for 10 errors
             last_soc_reception_time_us: 0,
             soc_timeout_check_active: false,
             next_tick_us: None,
@@ -269,7 +277,7 @@ impl<'s> ControlledNode<'s> {
                             // MN requests reset of error signaling via ER flag.
                             info!("Received ER flag from MN in SoA, resetting EN flag and Emergency Queue.");
                             self.en_flag = false;
-                            // TODO: Clear emergency queue if implemented.
+                            self.emergency_queue.clear();
                         }
                         self.ec_flag = soa.flags.er; // EC mirrors the received ER flag
                         trace!("Processed SoA flags: ER={}, EC set to {}", soa.flags.er, self.ec_flag);
@@ -334,6 +342,24 @@ impl<'s> ControlledNode<'s> {
                 if signaled {
                      // Set flag to toggle EN bit before next PRes/StatusResponse
                     self.error_status_changed = true;
+                    // Create and queue a detailed error entry.
+                    let error_entry = ErrorEntry {
+                        entry_type: EntryType {
+                            is_status_entry: false,
+                            send_to_queue: true,
+                            mode: ErrorEntryMode::EventOccurred,
+                            profile: 0x002, // POWERLINK communication profile
+                        },
+                        error_code: error.to_error_code(),
+                        timestamp: NetTime {
+                            seconds: (current_time_us / 1_000_000) as u32,
+                            nanoseconds: ((current_time_us % 1_000_000) * 1000) as u32,
+                        },
+                        // Additional information could be context-specific (e.g., NodeId for LossOfPres)
+                        additional_information: 0,
+                    };
+                    self.emergency_queue.push_back(error_entry);
+                    info!("[CN] New error queued: {:?}", error_entry);
                 }
                  // If the DLL error requires an NMT action (like ResetCommunication), trigger NMT error event.
                  if nmt_action != NmtAction::None {
@@ -400,9 +426,10 @@ impl<'s> ControlledNode<'s> {
                                         Some(payload::build_status_response(
                                             self.mac_address,
                                             self.nmt_state_machine.node_id,
-                                            &self.od,
+                                            &mut self.od,
                                             self.en_flag, // Pass current EN flag
                                             self.ec_flag, // Pass current EC flag
+                                            &mut self.emergency_queue,
                                             soa_frame,
                                         ))
                                     }

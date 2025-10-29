@@ -58,3 +58,31 @@ pub enum DllError {
     /// Corresponds to `E_PDO_SHORT_RX` (Section 6.4.8.1.2)
     PdoPayloadShort { node_id: NodeId },
 }
+
+impl DllError {
+    /// Maps a DllError to its corresponding error code from the specification.
+    /// (Reference: EPSG DS 301, Appendix 3.9)
+    pub fn to_error_code(&self) -> u16 {
+        match self {
+            DllError::LossOfLink => 0x8165,       // E_DLL_LOSS_OF_LINK
+            DllError::BadPhysicalMode => 0x8161,  // E_DLL_BAD_PHYS_MODE
+            DllError::MacBuffer => 0x8166,        // E_DLL_MAC_BUFFER
+            DllError::Crc => 0x8164,              // E_DLL_CRC_TH
+            DllError::Collision => 0x8163,        // E_DLL_COLLISION_TH
+            DllError::InvalidFormat => 0x8241,    // E_DLL_INVALID_FORMAT
+            DllError::LossOfSoc => 0x8245,        // E_DLL_LOSS_SOC_TH
+            DllError::LossOfSoa => 0x8244,        // E_DLL_LOSS_SOA_TH
+            DllError::LossOfPreq => 0x8242,       // E_DLL_LOSS_PREQ_TH
+            DllError::LossOfPres { .. } => 0x8243, // E_DLL_LOSS_PRES_TH
+            DllError::LossOfStatusRes { .. } => 0x8246, // E_DLL_LOSS_STATUSRES_TH
+            DllError::CycleTimeExceeded => 0x8233, // E_DLL_CYCLE_EXCEED_TH
+            DllError::LatePres { .. } => 0x8236,  // E_DLL_LATE_PRES_TH
+            DllError::SoCJitter => 0x8235,        // E_DLL_JITTER_TH
+            DllError::PdoMapVersion { .. } => 0x8211, // E_PDO_MAP_VERS
+            DllError::PdoPayloadShort { .. } => 0x8210, // E_PDO_SHORT_RX
+            // The following are internal or MN-specific and don't have direct CN error codes.
+            // A generic code could be used if necessary.
+            _ => 0x8000, // Generic internal error, for logging purposes
+        }
+    }
+}
