@@ -1,25 +1,37 @@
+// crates/powerlink-rs/src/node/cn/main.rs
+
 use super::payload;
+use crate::frame::ASndFrame;
 use crate::PowerlinkError;
 use crate::common::NetTime;
-use crate::frame::codec::CodecHelpers;
 use crate::frame::{
-    DllCsEvent, DllCsStateMachine, DllError, NmtAction, PReqFrame, PResFrame, PowerlinkFrame,
-    RequestedServiceId, ServiceId,
-    basic::MacAddress,
+    DllCsEvent,
+    DllCsStateMachine,
+    DllError,
+    NmtAction,
+    PReqFrame,
+    PResFrame,
+    PowerlinkFrame,
+    RequestedServiceId,
+    ServiceId,    
+    basic::{EthernetHeader, MacAddress},
     deserialize_frame,
     error::{
         CnErrorCounters, DllErrorManager, EntryType, ErrorCounters, ErrorEntry, ErrorEntryMode,
         ErrorHandler, LoggingErrorHandler,
     },
 };
+use crate::frame::codec::CodecHelpers;
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::ObjectDictionary;
+#[cfg(feature = "sdo-udp")]
+use crate::sdo::udp::{deserialize_sdo_udp_payload, serialize_sdo_udp_payload};
+use crate::sdo::server::{SdoClientInfo, SdoResponseData};
 use crate::sdo::SdoServer;
-use crate::sdo::command::SdoCommand;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::collections::VecDeque;
 use alloc::vec;
@@ -120,92 +132,129 @@ impl<'s> ControlledNode<'s> {
         self.pending_nmt_requests.push((command, target));
     }
 
+    /// Processes a POWERLINK Ethernet frame.
+    fn process_ethernet_frame(
+        &mut self,
+        buffer: &[u8],
+        current_time_us: u64,
+    ) -> NodeAction {
+        match deserialize_frame(buffer) {
+            Ok(frame) => self.process_frame(frame, current_time_us),
+            Err(e) if e != PowerlinkError::InvalidEthernetFrame => {
+                // Looked like POWERLINK (correct EtherType) but malformed. Log as warning.
+                warn!(
+                    "[CN] Could not deserialize potential POWERLINK frame: {:?} (Buffer len: {})",
+                    e, buffer.len()
+                );
+                 // Report as InvalidFormat DLL error
+                let (nmt_action, signaled) =
+                    self.dll_error_manager.handle_error(DllError::InvalidFormat);
+                if signaled {
+                    self.error_status_changed = true;
+                     // Update Error Register (0x1001), Set Bit 0: Generic Error
+                    let current_err_reg = self.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                    let new_err_reg = current_err_reg | 0b1;
+                    self.od.write_internal(OD_IDX_ERROR_REGISTER, 0, crate::od::ObjectValue::Unsigned8(new_err_reg), false)
+                       .unwrap_or_else(|e| error!("[CN] Failed to update Error Register: {:?}", e));
+                }
+                 // Trigger NMT error handling if required
+                if nmt_action != NmtAction::None {
+                    self.nmt_state_machine.process_event(NmtEvent::Error, &mut self.od);
+                }
+                NodeAction::NoAction
+            }
+            _ => NodeAction::NoAction, // Ignore other EtherTypes silently
+        }
+    }
+
+    /// Processes an SDO request received over UDP.
+    #[cfg(feature = "sdo-udp")]
+    fn process_udp_packet(
+        &mut self,
+        data: &[u8],
+        source_ip: crate::types::IpAddress,
+        source_port: u16,
+        current_time_us: u64,
+    ) -> NodeAction {
+        debug!(
+            "Received UDP SDO request from {}:{} ({} bytes)",
+            core::net::Ipv4Addr::from(source_ip), source_port, data.len()
+        );
+
+        match deserialize_sdo_udp_payload(data) {
+             Ok(sdo_payload) => { // Deserialized SDO payload (Seq + Cmd + Data) slice
+                let client_info = SdoClientInfo::Udp {
+                    source_ip,
+                    source_port,
+                };
+                 // Pass the raw SDO payload slice (starting with Seq Header)
+                match self
+                    .sdo_server
+                    .handle_request(sdo_payload, client_info, &mut self.od, current_time_us)
+                {
+                    Ok(response_data) => {
+                        match self.build_udp_from_sdo_response(response_data) {
+                             Ok(action) => action,
+                             Err(e) => {
+                                 error!("Failed to build SDO/UDP response: {:?}", e);
+                                 NodeAction::NoAction
+                             }
+                        }
+                    }
+                    Err(e) => {
+                        error!("SDO server error (UDP): {:?}", e);
+                        // Abort is handled internally by SdoServer::handle_request now
+                         NodeAction::NoAction
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to deserialize SDO/UDP payload: {:?}", e);
+                 // Cannot easily send SDO abort if payload is invalid
+                 NodeAction::NoAction
+            }
+        }
+    }
+
     /// Internal function to process a deserialized `PowerlinkFrame`.
     fn process_frame(&mut self, frame: PowerlinkFrame, current_time_us: u64) -> NodeAction {
-        // --- Special handling for SDO frames ---
-        // Check if it's an ASnd frame *targeted at us* and has the SDO Service ID
+        // --- Special handling for SDO ASnd frames ---
         if let PowerlinkFrame::ASnd(ref asnd_frame) = frame {
-            if asnd_frame.destination == self.nmt_state_machine.node_id
-                && asnd_frame.service_id == ServiceId::Sdo
-            {
+             if asnd_frame.destination == self.nmt_state_machine.node_id && asnd_frame.service_id == ServiceId::Sdo {
                 debug!("Received SDO/ASnd frame for processing.");
-                // Extract SDO Headers first to get Transaction ID for potential abort
-                let transaction_id = if asnd_frame.payload.len() >= 8 {
-                    // Seq header(4) + Command header(at least 4 more)
-                    SdoCommand::deserialize(&asnd_frame.payload[4..])
-                        .ok()
-                        .map(|cmd| cmd.header.transaction_id)
-                } else {
-                    None
+                // SDO payload starts right after ASnd header (MType, Dest, Src, SvcID = 4 bytes)
+                 let sdo_payload = &asnd_frame.payload; // ASnd payload *is* the SDO payload (Seq+Cmd+Data)
+                 let client_info = SdoClientInfo::Asnd {
+                    source_node_id: asnd_frame.source,
+                    source_mac: asnd_frame.eth_header.source_mac,
                 };
 
-                let response_frame = match self.sdo_server.handle_request(
-                    &asnd_frame.payload,
+                 match self.sdo_server.handle_request(
+                    sdo_payload,
+                    client_info,
                     &mut self.od,
                     current_time_us,
                 ) {
-                    Ok(response_payload) => {
-                        // Build and send the normal SDO response
-                        let response_asnd = crate::frame::ASndFrame::new(
-                            // Use crate path
-                            self.mac_address,
-                            asnd_frame.eth_header.source_mac,
-                            asnd_frame.source, // Respond to the original source node
-                            self.nmt_state_machine.node_id,
-                            ServiceId::Sdo,
-                            response_payload,
-                        );
-                        info!("Sending SDO response.");
-                        Some(PowerlinkFrame::ASnd(response_asnd))
+                    Ok(response_data) => {
+                         match self.build_asnd_from_sdo_response(response_data) {
+                             Ok(action) => return action,
+                             Err(e) => {
+                                 error!("Failed to build SDO/ASnd response: {:?}", e);
+                                 return NodeAction::NoAction;
+                             }
+                         }
                     }
                     Err(e) => {
-                        error!("SDO server error: {:?}", e);
-                        // --- Send SDO Abort Frame ---
-                        if let Some(tid) = transaction_id {
-                            // Map PowerlinkError to SDO Abort Code (spec App. 3.10)
-                            let abort_code = match e {
-                                PowerlinkError::ObjectNotFound => 0x0602_0000,
-                                PowerlinkError::SubObjectNotFound => 0x0609_0011,
-                                PowerlinkError::TypeMismatch => 0x0607_0010,
-                                // Added more specific abort codes based on context
-                                PowerlinkError::SdoInvalidCommandPayload => 0x0504_0001, // Command specifier invalid
-                                PowerlinkError::StorageError("Object is read-only") => 0x0601_0002,
-                                PowerlinkError::StorageError(_) => 0x0800_0020, // Cannot transfer data
-                                PowerlinkError::ValidationError(_) => 0x0800_0022, // Because of device state (likely config issue)
-                                PowerlinkError::SdoSequenceError(_) => 0x0504_0003, // Invalid sequence number
-                                _ => 0x0800_0000,                                   // General error
-                            };
-
-                            Some(payload::build_sdo_abort_response(
-                                self.mac_address,
-                                self.nmt_state_machine.node_id,
-                                &self.sdo_server,
-                                tid,
-                                abort_code,
-                                asnd_frame.source, // Abort goes back to original sender NodeId
-                                asnd_frame.eth_header.source_mac, // Abort goes back to original sender MAC
-                            ))
-                        } else {
-                            error!(
-                                "Cannot send SDO Abort: Could not determine Transaction ID from invalid request."
-                            );
-                            None
-                        }
+                        error!("SDO server error (ASnd): {:?}", e);
+                        // Abort handled internally
+                         return NodeAction::NoAction;
                     }
                 };
-                // Use common serialization path at the end of the function
-                if let Some(response) = response_frame {
-                    return self.serialize_and_prepare_action(response);
-                } else {
-                    return NodeAction::NoAction; // Explicitly return NoAction if SDO handling results in None
-                }
             } else if asnd_frame.destination == self.nmt_state_machine.node_id {
-                // It's an ASnd for us, but not SDO. Log it.
-                trace!("Received non-SDO ASnd frame: {:?}", asnd_frame);
-            } else {
-                // ASnd not for us, ignore silently.
-                return NodeAction::NoAction;
-            }
+                 trace!("Received non-SDO ASnd frame: {:?}", asnd_frame);
+             } else {
+                 return NodeAction::NoAction; // ASnd not for us
+             }
         }
 
         // --- Handle SoC Frame specific logic ---
@@ -213,419 +262,306 @@ impl<'s> ControlledNode<'s> {
             trace!("SoC received at time {}", current_time_us);
             self.last_soc_reception_time_us = current_time_us;
             self.soc_timeout_check_active = true;
-            // A CN's cycle is defined by the reception of an SoC.
-            // This is the correct place to decrement threshold counters.
             if self.dll_error_manager.on_cycle_complete() {
-                // If the last error was just cleared, update the error register
                 info!("[CN] All DLL errors cleared, resetting Generic Error bit.");
                 let current_err_reg = self.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
-                // Clear Bit 0: Generic Error
                 let new_err_reg = current_err_reg & !0b1;
-                self.od
-                    .write_internal(
-                        OD_IDX_ERROR_REGISTER,
-                        0,
-                        crate::od::ObjectValue::Unsigned8(new_err_reg),
-                        false,
-                    )
-                    .unwrap_or_else(|e| error!("[CN] Failed to clear Error Register: {:?}", e));
-
-                // Also signal this change to the MN
+                self.od.write_internal(
+                    OD_IDX_ERROR_REGISTER, 0, crate::od::ObjectValue::Unsigned8(new_err_reg), false
+                ).unwrap_or_else(|e| error!("[CN] Failed to clear Error Register: {:?}", e));
                 self.error_status_changed = true;
             }
 
-            // Schedule the next SoC timeout check.
-            // Read cycle time and tolerance only once
             let cycle_time_opt = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64);
-            let tolerance_opt = self
-                .od
-                .read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)
-                .map(|v| v as u64);
+            let tolerance_opt = self.od.read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0).map(|v| v as u64);
 
             if let (Some(cycle_time_us), Some(tolerance_ns)) = (cycle_time_opt, tolerance_opt) {
                 if cycle_time_us > 0 {
                     let tolerance_us = tolerance_ns / 1000;
                     let deadline = current_time_us + cycle_time_us + tolerance_us;
-                    // Update next_tick_us only if this deadline is earlier or no deadline exists
-                    match self.next_tick_us {
+                     match self.next_tick_us {
                         Some(current_deadline) if deadline < current_deadline => {
                             self.next_tick_us = Some(deadline);
                             trace!("Scheduled SoC timeout check at {}us (earlier)", deadline);
                         }
                         None => {
                             self.next_tick_us = Some(deadline);
-                            trace!("Scheduled SoC timeout check at {}us (first)", deadline);
+                             trace!("Scheduled SoC timeout check at {}us (first)", deadline);
                         }
-                        _ => { /* Existing deadline is earlier or equal, keep it */ }
+                         _ => {}
                     }
                 } else {
-                    warn!("Cycle Time (0x1006) is 0, cannot schedule SoC timeout.");
-                    self.soc_timeout_check_active = false; // Disable check if cycle time is zero
+                     warn!("Cycle Time (0x1006) is 0, cannot schedule SoC timeout.");
+                     self.soc_timeout_check_active = false;
                 }
             } else {
-                warn!(
-                    "Could not read Cycle Time (0x1006) or SoC Tolerance (0x1C14) from OD. SoC timeout check disabled."
-                );
-                self.soc_timeout_check_active = false; // Disable check if OD read fails
+                warn!("Could not read Cycle Time (0x1006) or SoC Tolerance (0x1C14) from OD. SoC timeout check disabled.");
+                self.soc_timeout_check_active = false;
             }
         }
 
-        // --- Handle EA/ER flags for error signaling handshake ---
-        // Ensure frame is targeted at this node before processing PReq/SoA flags
-        let target_node_id = match &frame {
+        // --- Handle EA/ER flags ---
+        let target_node_id_opt = match &frame {
             PowerlinkFrame::PReq(preq) => Some(preq.destination),
             PowerlinkFrame::SoA(soa) => Some(soa.target_node_id),
             _ => None,
         };
+         let is_relevant_target = target_node_id_opt == Some(self.nmt_state_machine.node_id)
+            || (matches!(frame, PowerlinkFrame::SoA(_)) && target_node_id_opt == Some(NodeId(crate::types::C_ADR_BROADCAST_NODE_ID)));
 
-        if target_node_id == Some(self.nmt_state_machine.node_id)
-            || target_node_id == Some(NodeId(crate::types::C_ADR_BROADCAST_NODE_ID))
-        {
-            match &frame {
+         if is_relevant_target {
+             match &frame {
                 PowerlinkFrame::PReq(preq) => {
-                    // If MN acknowledges our error (EA matches EN), we can potentially change status data again.
-                    // Spec 6.5.6: If EN == EA, CN may change StatusResponse data again.
-                    if preq.flags.ea == self.en_flag {
-                        trace!(
-                            "Received matching EA flag ({}) from MN in PReq.",
-                            preq.flags.ea
-                        );
-                        // The application logic might use this information, but the core state machine doesn't need to react here.
-                        // The logic in `process_frame` handles toggling EN based on `error_status_changed`.
-                    } else {
-                        trace!(
-                            "Received mismatched EA flag ({}, EN is {}) from MN in PReq.",
-                            preq.flags.ea, self.en_flag
-                        );
+                     if preq.destination == self.nmt_state_machine.node_id {
+                        if preq.flags.ea == self.en_flag {
+                             trace!("Received matching EA flag ({}) from MN in PReq.", preq.flags.ea);
+                        } else {
+                            trace!("Received mismatched EA flag ({}, EN is {}) from MN in PReq.", preq.flags.ea, self.en_flag);
+                        }
                     }
                 }
                 PowerlinkFrame::SoA(soa) => {
-                    if soa.target_node_id == self.nmt_state_machine.node_id {
-                        // Only process SoA addressed to us
+                     if soa.target_node_id == self.nmt_state_machine.node_id {
                         if soa.flags.er {
-                            // MN requests reset of error signaling via ER flag.
-                            info!(
-                                "Received ER flag from MN in SoA, resetting EN flag and Emergency Queue."
-                            );
+                            info!("Received ER flag from MN in SoA, resetting EN flag and Emergency Queue.");
                             self.en_flag = false;
                             self.emergency_queue.clear();
                         }
-                        self.ec_flag = soa.flags.er; // EC mirrors the received ER flag
-                        trace!(
-                            "Processed SoA flags: ER={}, EC set to {}",
-                            soa.flags.er, self.ec_flag
-                        );
+                        self.ec_flag = soa.flags.er;
+                        trace!("Processed SoA flags: ER={}, EC set to {}", soa.flags.er, self.ec_flag);
+                         if soa.flags.ea == self.en_flag {
+                             trace!("Received matching EA flag ({}) from MN in SoA.", soa.flags.ea);
+                         } else {
+                             trace!("Received mismatched EA flag ({}, EN is {}) from MN in SoA.", soa.flags.ea, self.en_flag);
+                         }
                     }
                 }
-                _ => {} // Other frame types don't carry EA/ER flags for CNs
+                _ => {}
             }
         }
 
         // --- Normal Frame Processing ---
-
-        // 1. Update NMT state machine based on the frame type or internal events.
-        // Pass relevant NMT events triggered by frames.
         let nmt_event = match &frame {
             PowerlinkFrame::Soc(_) => Some(NmtEvent::SocReceived),
-            PowerlinkFrame::SoA(_) => Some(NmtEvent::SocSoAReceived), // SoA also implies EPL mode entered
-            // Explicit NMT commands via ASnd (handle separately if needed)
-            PowerlinkFrame::ASnd(asnd)
-                if asnd.destination == self.nmt_state_machine.node_id
-                    && asnd.service_id == ServiceId::NmtCommand =>
-            {
-                if let Some(cmd_byte) = asnd.payload.get(0) {
-                    match NmtCommand::try_from(*cmd_byte) {
-                        Ok(NmtCommand::StartNode) => Some(NmtEvent::StartNode),
-                        Ok(NmtCommand::StopNode) => Some(NmtEvent::StopNode),
-                        Ok(NmtCommand::EnterPreOperational2) => {
-                            Some(NmtEvent::EnterPreOperational2)
-                        }
-                        Ok(NmtCommand::EnableReadyToOperate) => {
-                            Some(NmtEvent::EnableReadyToOperate)
-                        }
-                        Ok(NmtCommand::ResetNode) => Some(NmtEvent::ResetNode),
-                        Ok(NmtCommand::ResetCommunication) => Some(NmtEvent::ResetCommunication),
-                        Ok(NmtCommand::ResetConfiguration) => Some(NmtEvent::ResetConfiguration),
-                        Ok(NmtCommand::SwReset) => Some(NmtEvent::SwReset),
-                        Err(_) => {
-                            warn!(
-                                "Received ASnd with unknown NMT Command ID: {:#04x}",
-                                cmd_byte
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    warn!("Received ASnd NMT Command with empty payload.");
-                    None
-                }
+            PowerlinkFrame::SoA(_) => Some(NmtEvent::SocSoAReceived),
+             PowerlinkFrame::ASnd(asnd) if asnd.destination == self.nmt_state_machine.node_id && asnd.service_id == ServiceId::NmtCommand => {
+                asnd.payload.get(0).and_then(|&b| NmtCommand::try_from(b).ok()).map(|cmd| match cmd {
+                    NmtCommand::StartNode => NmtEvent::StartNode,
+                    NmtCommand::StopNode => NmtEvent::StopNode,
+                    NmtCommand::EnterPreOperational2 => NmtEvent::EnterPreOperational2,
+                    NmtCommand::EnableReadyToOperate => NmtEvent::EnableReadyToOperate,
+                    NmtCommand::ResetNode => NmtEvent::ResetNode,
+                    NmtCommand::ResetCommunication => NmtEvent::ResetCommunication,
+                    NmtCommand::ResetConfiguration => NmtEvent::ResetConfiguration,
+                    NmtCommand::SwReset => NmtEvent::SwReset,
+                })
             }
             _ => None,
         };
-
         if let Some(event) = nmt_event {
-            // Pass the event to the NMT state machine
             self.nmt_state_machine.process_event(event, &mut self.od);
-            // Note: NMT resets handled within process_event might trigger run_internal_initialisation
         }
 
-        // 2. Update DLL state machine based on the frame type.
-        // Get the DLL event corresponding to the received frame.
-        let dll_event = frame.dll_cn_event();
-        if let Some(errors) = self
+         let dll_event = frame.dll_cn_event();
+         if let Some(errors) = self
             .dll_state_machine
             .process_event(dll_event, self.nmt_state_machine.current_state())
-        // Pass current NMT state
         {
-            // If the DLL state machine detects an error (e.g., sequence error), handle it.
             for error in errors {
                 warn!("DLL state machine reported error: {:?}", error);
-                // Pass the error to the DLL error manager.
-                // Capture NMT action triggered by DLL error
                 let (nmt_action, signaled) = self.dll_error_manager.handle_error(error);
                 if signaled {
-                    // Set flag to toggle EN bit before next PRes/StatusResponse
                     self.error_status_changed = true;
-                    // --- Update Error Register (0x1001) ---
                     let current_err_reg = self.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
-                    // Set Bit 0: Generic Error
                     let new_err_reg = current_err_reg | 0b1;
-                    self.od
-                        .write_internal(
-                            OD_IDX_ERROR_REGISTER,
-                            0,
-                            crate::od::ObjectValue::Unsigned8(new_err_reg),
-                            false,
-                        )
-                        .unwrap_or_else(|e| {
-                            error!("[CN] Failed to update Error Register: {:?}", e)
-                        });
+                    self.od.write_internal(
+                        OD_IDX_ERROR_REGISTER, 0, crate::od::ObjectValue::Unsigned8(new_err_reg), false
+                    ).unwrap_or_else(|e| error!("[CN] Failed to update Error Register: {:?}", e));
 
-                    // Create and queue a detailed error entry.
                     let error_entry = ErrorEntry {
-                        entry_type: EntryType {
-                            is_status_entry: false,
-                            send_to_queue: true,
-                            mode: ErrorEntryMode::EventOccurred,
-                            profile: 0x002, // POWERLINK communication profile
-                        },
+                        entry_type: EntryType { is_status_entry: false, send_to_queue: true, mode: ErrorEntryMode::EventOccurred, profile: 0x002 },
                         error_code: error.to_error_code(),
-                        timestamp: NetTime {
-                            seconds: (current_time_us / 1_000_000) as u32,
-                            nanoseconds: ((current_time_us % 1_000_000) * 1000) as u32,
-                        },
-                        // Additional information could be context-specific (e.g., NodeId for LossOfPres)
-                        additional_information: 0,
+                        timestamp: NetTime { seconds: (current_time_us / 1_000_000) as u32, nanoseconds: ((current_time_us % 1_000_000) * 1000) as u32 },
+                        additional_information: match error { DllError::LossOfPres { node_id } | DllError::LatePres { node_id } | DllError::LossOfStatusRes { node_id } => node_id.0 as u64, _ => 0 },
                     };
-                    self.emergency_queue.push_back(error_entry);
-                    info!("[CN] New error queued: {:?}", error_entry);
-                }
-                // If the DLL error requires an NMT action (like ResetCommunication), trigger NMT error event.
-                if nmt_action != NmtAction::None {
-                    // Spec Table 27 maps most threshold errors to NMT_CT11 (Error Condition -> PreOp1)
-                    info!("DLL error triggered NMT action: {:?}", nmt_action);
-                    self.nmt_state_machine
-                        .process_event(NmtEvent::Error, &mut self.od);
-                    // If NMT state changed significantly (e.g., reset), we might skip response generation below.
-                }
-            }
-        }
-
-        // 3. Handle PDO consumption *before* generating a response
-        // Only consume if targeted at this node or broadcast (PRes)
-        let is_target_or_broadcast = match &frame {
-            PowerlinkFrame::PReq(f) => f.destination == self.nmt_state_machine.node_id,
-            PowerlinkFrame::PRes(_) => true, // PRes is multicast
-            _ => false,
-        };
-
-        if is_target_or_broadcast {
-            match &frame {
-                PowerlinkFrame::PReq(preq_frame) => {
-                    // Only consume PReq if it's for us
-                    if preq_frame.destination == self.nmt_state_machine.node_id {
-                        self.consume_preq_payload(preq_frame);
+                    if self.emergency_queue.len() < self.emergency_queue.capacity() {
+                        self.emergency_queue.push_back(error_entry);
+                        info!("[CN] New error queued: {:?}", error_entry);
+                    } else {
+                        warn!("[CN] Emergency queue full, dropping error: {:?}", error_entry);
                     }
                 }
-                PowerlinkFrame::PRes(pres_frame) => self.consume_pres_payload(pres_frame),
-                _ => {} // Other frames do not carry consumer PDOs
+                 if nmt_action != NmtAction::None {
+                     info!("DLL error triggered NMT action: {:?}", nmt_action);
+                    self.nmt_state_machine.process_event(NmtEvent::Error, &mut self.od);
+                     self.soc_timeout_check_active = false;
+                      return NodeAction::NoAction; // Skip response if reset
+                 }
             }
         }
 
-        // Check if we need to toggle the EN flag before building a response.
-        // This should happen *after* processing errors but *before* building PRes/StatusResponse.
+        // --- PDO Consumption ---
+         let is_target_or_broadcast_pdo = match &frame {
+             PowerlinkFrame::PReq(f) => f.destination == self.nmt_state_machine.node_id,
+             PowerlinkFrame::PRes(_) => true,
+             _ => false,
+        };
+         if is_target_or_broadcast_pdo {
+            match &frame {
+                PowerlinkFrame::PReq(preq_frame) => {
+                     if preq_frame.destination == self.nmt_state_machine.node_id {
+                         self.consume_preq_payload(preq_frame);
+                     }
+                 }
+                PowerlinkFrame::PRes(pres_frame) => self.consume_pres_payload(pres_frame),
+                _ => {}
+            }
+        }
+
+        // --- Error Signaling Flag Toggle ---
         if self.error_status_changed {
             self.en_flag = !self.en_flag;
-            self.error_status_changed = false; // Reset the trigger immediately after toggling
-            info!(
-                "New error detected or acknowledged, toggling EN flag to: {}",
-                self.en_flag
-            );
+            self.error_status_changed = false;
+            info!("New error detected or acknowledged, toggling EN flag to: {}", self.en_flag);
         }
 
-        // 4. Generate response frames (only if the NMT state didn't just reset).
-        // Check current NMT state *after* potential updates from errors.
-        let current_nmt_state = self.nmt_state();
-        let response_frame = if current_nmt_state >= NmtState::NmtNotActive {
-            // Avoid response if Off/Initialising
-            match &frame {
+        // --- Generate Response ---
+         let current_nmt_state = self.nmt_state();
+         let response_frame_opt = if current_nmt_state >= NmtState::NmtNotActive {
+             match &frame {
                 PowerlinkFrame::SoA(soa_frame) => {
-                    // Only respond to SoA specifically addressed to this node
                     if soa_frame.target_node_id == self.nmt_state_machine.node_id {
                         match current_nmt_state {
-                            // Per Table 108, ASnd responses allowed in PreOp1 and PreOp2.
-                            NmtState::NmtPreOperational1 | NmtState::NmtPreOperational2 => {
+                             NmtState::NmtPreOperational1 | NmtState::NmtPreOperational2
+                             | NmtState::NmtReadyToOperate | NmtState::NmtOperational
+                             | NmtState::NmtCsStopped => {
                                 match soa_frame.req_service_id {
-                                    RequestedServiceId::IdentRequest => {
-                                        Some(payload::build_ident_response(
-                                            self.mac_address,
-                                            self.nmt_state_machine.node_id,
-                                            &self.od,
-                                            soa_frame,
-                                        ))
-                                    }
-                                    RequestedServiceId::StatusRequest => {
-                                        Some(payload::build_status_response(
-                                            self.mac_address,
-                                            self.nmt_state_machine.node_id,
-                                            &mut self.od,
-                                            self.en_flag, // Pass current EN flag
-                                            self.ec_flag, // Pass current EC flag
-                                            &mut self.emergency_queue,
-                                            soa_frame,
-                                        ))
-                                    }
-                                    RequestedServiceId::NmtRequestInvite => {
-                                        // Dequeue and build NMTRequest if available
-                                        if let Some((command, target)) =
-                                            self.pending_nmt_requests.pop()
-                                        {
-                                            info!(
-                                                "Responding to NmtRequestInvite with queued request: {:?}, target {}",
-                                                command, target.0
-                                            );
-                                            Some(payload::build_nmt_request(
-                                                self.mac_address,
-                                                self.nmt_state_machine.node_id,
-                                                command,
-                                                target,
-                                                soa_frame,
-                                            ))
-                                        } else {
-                                            warn!(
-                                                "Received NmtRequestInvite but have no pending NMT requests."
-                                            );
-                                            None // No pending request, send nothing
-                                        }
-                                    }
-                                    RequestedServiceId::UnspecifiedInvite => {
-                                        // Dequeue and build SDO Request if available
-                                        if let Some(sdo_payload) =
-                                            self.sdo_server.pop_pending_request()
-                                        {
-                                            info!(
-                                                "Responding to UnspecifiedInvite with queued SDO request ({} bytes).",
-                                                sdo_payload.len()
-                                            );
-                                            let asnd = crate::frame::ASndFrame::new(
-                                                // Use crate path
-                                                self.mac_address,
-                                                soa_frame.eth_header.source_mac, // Target MN MAC
-                                                NodeId(C_ADR_MN_DEF_NODE_ID), // Target MN Node ID
-                                                self.nmt_state_machine.node_id, // Source Node ID
-                                                ServiceId::Sdo,
-                                                sdo_payload,
-                                            );
-                                            Some(PowerlinkFrame::ASnd(asnd))
-                                        } else {
-                                            trace!(
-                                                // Use trace as this is normal if queue is empty
-                                                "Received UnspecifiedInvite but have no pending SDO requests."
-                                            );
-                                            None // No pending SDO, send nothing
-                                        }
-                                    }
-                                    RequestedServiceId::NoService => None, // No response needed for NoService invite
+                                    RequestedServiceId::IdentRequest => Some(payload::build_ident_response(self.mac_address, self.nmt_state_machine.node_id, &self.od, soa_frame)),
+                                    RequestedServiceId::StatusRequest => Some(payload::build_status_response(self.mac_address, self.nmt_state_machine.node_id, &mut self.od, self.en_flag, self.ec_flag, &mut self.emergency_queue, soa_frame)),
+                                    RequestedServiceId::NmtRequestInvite => self.pending_nmt_requests.pop().map(|(cmd, tgt)| payload::build_nmt_request(self.mac_address, self.nmt_state_machine.node_id, cmd, tgt, soa_frame)),
+                                    RequestedServiceId::UnspecifiedInvite => self.sdo_server.pop_pending_request().map(|sdo_payload| PowerlinkFrame::ASnd(ASndFrame::new(self.mac_address, soa_frame.eth_header.source_mac, NodeId(C_ADR_MN_DEF_NODE_ID), self.nmt_state_machine.node_id, ServiceId::Sdo, sdo_payload))),
+                                    RequestedServiceId::NoService => None,
                                 }
                             }
-                            _ => None, // No ASnd responses expected in other states
+                            _ => None,
                         }
-                    } else {
-                        None // SoA not targeted at us
-                    }
+                    } else { None }
                 }
                 PowerlinkFrame::PReq(preq_frame) => {
-                    // Only respond to PReq specifically addressed to this node
-                    if preq_frame.destination == self.nmt_state_machine.node_id {
+                     if preq_frame.destination == self.nmt_state_machine.node_id {
                         match current_nmt_state {
-                            // Per Table 108, PRes response allowed in PreOp2, ReadyToOp, Op.
-                            NmtState::NmtPreOperational2
-                            | NmtState::NmtReadyToOperate
-                            | NmtState::NmtOperational => Some(payload::build_pres_response(
-                                self.mac_address,
-                                self.nmt_state_machine.node_id,
-                                current_nmt_state, // Pass the current NMT state
-                                &self.od,
-                                &self.sdo_server,
-                                &self.pending_nmt_requests, // Pass pending NMT requests for RS/PR flags
-                                self.en_flag,               // Pass current EN flag
-                            )),
-                            _ => None, // No PRes response in other states
+                            NmtState::NmtPreOperational2 | NmtState::NmtReadyToOperate | NmtState::NmtOperational => Some(payload::build_pres_response(self.mac_address, self.nmt_state_machine.node_id, current_nmt_state, &self.od, &self.sdo_server, &self.pending_nmt_requests, self.en_flag)),
+                            _ => None,
                         }
-                    } else {
-                        None // PReq not targeted at us
-                    }
+                    } else { None }
                 }
-                _ => None, // No response needed for received SoC, PRes, or non-SDO ASnd
+                _ => None,
             }
-        } else {
-            None // NMT state is Off or Initialising, don't generate responses
-        };
+        } else { None };
 
-        if let Some(response) = response_frame {
-            return self.serialize_and_prepare_action(response);
+        // --- Serialize and return action ---
+        if let Some(response_frame) = response_frame_opt {
+             match self.serialize_and_prepare_action(response_frame) {
+                Ok(action) => return action,
+                Err(e) => {
+                     error!("Failed to prepare response action: {:?}", e);
+                     return NodeAction::NoAction;
+                }
+            }
         }
 
         NodeAction::NoAction
     }
 
-    /// Helper to serialize a PowerlinkFrame and prepare the NodeAction.
-    fn serialize_and_prepare_action(&self, frame: PowerlinkFrame) -> NodeAction {
+    /// Helper to build ASnd frame from SdoResponseData.
+    fn build_asnd_from_sdo_response(
+        &self,
+        response_data: SdoResponseData,
+    ) -> Result<NodeAction, PowerlinkError> {
+        let (source_node_id, source_mac) = match response_data.client_info {
+            SdoClientInfo::Asnd { source_node_id, source_mac } => (source_node_id, source_mac),
+             #[cfg(feature = "sdo-udp")]
+             SdoClientInfo::Udp { .. } => return Err(PowerlinkError::InternalError("Attempted to build ASnd response for UDP client")),
+        };
+
+        let sdo_payload = payload::serialize_sdo_asnd_payload(response_data.seq_header, response_data.command)?;
+        let asnd_frame = ASndFrame::new(
+            self.mac_address,
+            source_mac,
+            source_node_id,
+            self.nmt_state_machine.node_id,
+            ServiceId::Sdo,
+            sdo_payload,
+        );
+        info!("Sending SDO response via ASnd to Node {}", source_node_id.0);
+        self.serialize_and_prepare_action(PowerlinkFrame::ASnd(asnd_frame))
+    }
+
+    /// Helper to build NodeAction::SendUdp from SdoResponseData.
+    #[cfg(feature = "sdo-udp")]
+    fn build_udp_from_sdo_response(
+        &self,
+        response_data: SdoResponseData,
+    ) -> Result<NodeAction, PowerlinkError> {
+         let (source_ip, source_port) = match response_data.client_info {
+            SdoClientInfo::Udp { source_ip, source_port } => (source_ip, source_port),
+             SdoClientInfo::Asnd { .. } => return Err(PowerlinkError::InternalError("Attempted to build UDP response for ASnd client")),
+        };
+
+         let mut udp_buffer = vec![0u8; 1500]; // MTU size
+         let udp_payload_len = serialize_sdo_udp_payload(
+            response_data.seq_header,
+            response_data.command,
+            &mut udp_buffer,
+        )?;
+        udp_buffer.truncate(udp_payload_len);
+        info!(
+            "Sending SDO response via UDP to {}:{}",
+            core::net::Ipv4Addr::from(source_ip), source_port
+        );
+        Ok(NodeAction::SendUdp {
+            dest_ip: source_ip,
+            dest_port: source_port,
+            data: udp_buffer,
+        })
+    }
+
+    /// Helper to serialize a PowerlinkFrame (Ethernet) and prepare the NodeAction.
+    /// Returns Result to propagate serialization errors.
+    fn serialize_and_prepare_action(&self, frame: PowerlinkFrame) -> Result<NodeAction, PowerlinkError> {
         // Estimate max size needed (14 Eth + Max PL size ~1500)
         let mut buf = vec![0u8; 1518];
         // Serialize Eth header first
         let eth_header = match &frame {
-            PowerlinkFrame::PRes(f) => f.eth_header,
-            PowerlinkFrame::ASnd(f) => f.eth_header,
+            PowerlinkFrame::PRes(f) => &f.eth_header,
+            PowerlinkFrame::ASnd(f) => &f.eth_header,
             // Add other frame types if CN might send them (unlikely for responses)
             _ => {
-                error!(
-                    "[CN] Attempted to serialize unexpected response frame type: {:?}",
-                    frame
-                );
-                return NodeAction::NoAction;
+                error!("[CN] Attempted to serialize unexpected response frame type: {:?}", frame);
+                return Ok(NodeAction::NoAction); // Return NoAction on unexpected type
             }
         };
-        CodecHelpers::serialize_eth_header(&eth_header, &mut buf);
+        CodecHelpers::serialize_eth_header(eth_header, &mut buf);
 
         // Then serialize PL part into the buffer starting after the Eth header
         match frame.serialize(&mut buf[14..]) {
             Ok(pl_size) => {
                 let total_size = 14 + pl_size;
-                if total_size < 60 {
-                    // Ethernet minimum frame size (excluding preamble, SFD, FCS)
-                    buf.resize(60, 0); // Pad with zeros if needed
-                    trace!("Padding frame from {} to 60 bytes.", total_size);
-                } else {
+                 if total_size < 60 { // Ethernet minimum frame size (excluding preamble, SFD, FCS)
+                    // Spec requires padding, but the raw socket likely handles this.
+                    // We truncate to the *actual* data size.
                     buf.truncate(total_size);
-                }
-                info!("Sending response frame type: {:?}", frame); // Log frame type for clarity
+                    trace!("Frame size {} bytes (padding likely handled by OS/hardware).", total_size);
+                 } else {
+                    buf.truncate(total_size);
+                 }
+                info!("Sending response frame type: {:?} ({} bytes)", frame, buf.len());
                 trace!("Sending frame bytes ({}): {:02X?}", buf.len(), &buf);
-                NodeAction::SendFrame(buf)
+                Ok(NodeAction::SendFrame(buf))
             }
             Err(e) => {
                 error!("[CN] Failed to serialize response frame: {:?}", e);
-                NodeAction::NoAction
+                 Err(e) // Propagate serialization error
             }
         }
     }
@@ -665,185 +601,154 @@ impl<'s> PdoHandler<'s> for ControlledNode<'s> {
 
 impl<'s> Node for ControlledNode<'s> {
     /// Processes a raw byte buffer received from the network at a specific time.
+    /// This now tries to interpret the buffer as either Ethernet or UDP (if enabled).
     fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
-        // First, check if we are in BasicEthernet and if this is a POWERLINK frame
-        if self.nmt_state() == NmtState::NmtBasicEthernet
-            && buffer.len() >= 14 // Check length before slicing
-            && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
+        // --- Try Ethernet Frame Processing ---
+        // Check length and EtherType
+        if buffer.len() >= 14 && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
         {
-            info!(
-                "[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1."
-            );
-            // Trigger the NMT transition
-            self.nmt_state_machine
-                .process_event(NmtEvent::PowerlinkFrameReceived, &mut self.od);
-            // After transitioning, immediately process the frame that triggered it
-            // Fall through to the deserialize_frame logic below.
+             // Check if we are in BasicEthernet
+            if self.nmt_state() == NmtState::NmtBasicEthernet {
+                info!(
+                    "[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1."
+                );
+                 // Trigger the NMT transition
+                self.nmt_state_machine
+                    .process_event(NmtEvent::PowerlinkFrameReceived, &mut self.od);
+                 // Fall through to process the frame that triggered the transition
+            }
+            return self.process_ethernet_frame(buffer, current_time_us);
         }
 
-        match deserialize_frame(buffer) {
-            Ok(frame) => self.process_frame(frame, current_time_us),
-            Err(PowerlinkError::InvalidEthernetFrame) => {
-                // Not a POWERLINK frame (wrong EtherType), ignore silently.
-                trace!("Ignoring non-POWERLINK frame (wrong EtherType).");
-                NodeAction::NoAction
-            }
-            Err(e) => {
-                // Looked like POWERLINK (correct EtherType) but malformed. Log as warning.
-                warn!(
-                    "[CN] Could not deserialize potential POWERLINK frame: {:?} (Buffer len: {})",
-                    e,
-                    buffer.len()
-                );
-                // Report as InvalidFormat DLL error
-                let (nmt_action, signaled) =
-                    self.dll_error_manager.handle_error(DllError::InvalidFormat);
-                if signaled {
-                    self.error_status_changed = true;
-                }
-                // Trigger NMT error handling if required
-                if nmt_action != NmtAction::None {
-                    self.nmt_state_machine
-                        .process_event(NmtEvent::Error, &mut self.od);
-                }
-                NodeAction::NoAction
-            }
+        // --- Try UDP Processing (if Feature Enabled) ---
+        // Note: Raw frame processing doesn't know the source IP/Port.
+        // The UDP receive logic needs to be integrated into the main loop
+        // via the HAL's receive_udp method. This function only handles Ethernet frames now.
+        #[cfg(feature = "sdo-udp")]
+        {
+             // If not a POWERLINK Ethernet frame, we might assume it *could* be UDP.
+             // However, without IP/Port info, we can't process it here.
+             // We'll rely on the main loop calling `interface.receive_udp()` separately.
+             trace!("Ignoring non-POWERLINK Ethernet frame (potential UDP?).");
         }
+
+        // If neither Ethernet nor handled elsewhere (UDP), ignore.
+        trace!("Ignoring unknown frame type or non-PL Ethernet frame.");
+        NodeAction::NoAction
     }
 
+
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
-        // --- SDO Server Tick ---
-        // First, check for SDO timeouts and retransmissions.
+        // --- SDO Server Tick (handles timeouts/retransmissions) ---
         match self.sdo_server.tick(current_time_us, &self.od) {
-            Ok(Some(sdo_abort_payload)) => {
-                // SDO server generated an abort frame, needs to be sent.
-                let abort_frame = payload::build_sdo_abort_from_payload(
-                    self.mac_address,
-                    self.nmt_state_machine.node_id,
-                    sdo_abort_payload,
-                );
-                return self.serialize_and_prepare_action(abort_frame);
+            Ok(Some(sdo_response_data)) => {
+                 // SDO server generated an abort frame, needs to be sent.
+                 // Build the appropriate frame based on client_info stored in response_data.
+                 #[cfg(feature = "sdo-udp")]
+                 let build_udp = || self.build_udp_from_sdo_response(sdo_response_data.clone()); // Clone needed due to borrow rules
+                 #[cfg(not(feature = "sdo-udp"))]
+                 // Fix the type annotation for the closure when UDP is disabled
+                 let build_udp = || Err::<NodeAction, PowerlinkError>(PowerlinkError::InternalError("UDP feature disabled"));
+
+                 match sdo_response_data.client_info {
+                    SdoClientInfo::Asnd { .. } => {
+                        match self.build_asnd_from_sdo_response(sdo_response_data) {
+                             Ok(action) => return action,
+                             Err(e) => error!("[CN] Failed to build SDO Abort ASnd frame: {:?}", e),
+                         }
+                    }
+                     #[cfg(feature = "sdo-udp")]
+                     SdoClientInfo::Udp { .. } => {
+                         match build_udp() {
+                             Ok(action) => return action,
+                             Err(e) => error!("[CN] Failed to build SDO Abort UDP frame: {:?}", e),
+                         }
+                     }
+                 }
+                 // If building the abort frame failed, fall through to other tick logic.
             }
             Err(e) => error!("[CN] SDO Server tick error: {:?}", e),
             _ => {} // No action or no error
         }
 
         let current_nmt_state = self.nmt_state();
-        // Check if a deadline is set and if it has passed
-        let deadline_passed = self
-            .next_tick_us
-            .map_or(false, |deadline| current_time_us >= deadline);
+         // Check if a deadline is set and if it has passed
+        let deadline_passed = self.next_tick_us.map_or(false, |deadline| current_time_us >= deadline);
 
-        // Special case for NmtNotActive: the first time tick is called, start the timer if needed.
+        // --- Handle NmtNotActive Timeout Setup ---
         if current_nmt_state == NmtState::NmtNotActive && self.next_tick_us.is_none() {
             let timeout_us = self.nmt_state_machine.basic_ethernet_timeout as u64;
             if timeout_us > 0 {
                 let deadline = current_time_us + timeout_us;
                 self.next_tick_us = Some(deadline);
-                debug!(
-                    "No SoC/SoA seen, starting BasicEthernet timeout check ({}us). Deadline: {}us",
-                    timeout_us, deadline
-                );
+                debug!("No SoC/SoA seen, starting BasicEthernet timeout check ({}us). Deadline: {}us", timeout_us, deadline);
             } else {
-                debug!("BasicEthernet timeout is 0, check disabled.");
-            }
+                 debug!("BasicEthernet timeout is 0, check disabled.");
+             }
             return NodeAction::NoAction; // Don't act on this first call, just set the timer.
         }
 
-        // If no deadline has passed, do nothing.
+        // If no deadline has passed, do nothing else this tick.
         if !deadline_passed {
             return NodeAction::NoAction;
         }
 
         // --- A deadline has passed ---
-        trace!(
-            "Tick deadline reached at {}us (Deadline was {:?})",
-            current_time_us, self.next_tick_us
-        );
-        self.next_tick_us = None; // Consume the deadline that just passed
+        trace!("Tick deadline reached at {}us (Deadline was {:?})", current_time_us, self.next_tick_us);
+        self.next_tick_us = None; // Consume the deadline
 
-        // Check for NmtNotActive timeout -> BasicEthernet
+        // --- Handle Specific Timeouts ---
+        // NmtNotActive -> BasicEthernet
         if current_nmt_state == NmtState::NmtNotActive {
-            // BasicEthernet timeout is handled here based on the deadline check above.
-            let timeout_us = self.nmt_state_machine.basic_ethernet_timeout as u64;
-            if timeout_us > 0 {
-                // Only trigger if timeout was actually enabled
+             let timeout_us = self.nmt_state_machine.basic_ethernet_timeout as u64;
+             if timeout_us > 0 {
                 warn!("BasicEthernet timeout expired. Transitioning state.");
-                self.nmt_state_machine
-                    .process_event(NmtEvent::Timeout, &mut self.od);
-                self.soc_timeout_check_active = false; // Ensure SoC check is off in BasicEthernet
-            }
-            // No further action needed this tick after state change
-            return NodeAction::NoAction;
+                self.nmt_state_machine.process_event(NmtEvent::Timeout, &mut self.od);
+                self.soc_timeout_check_active = false;
+             }
+             return NodeAction::NoAction; // No further action this tick
         }
-        // Check for SoC timeout
+        // SoC Timeout Check
         else if self.soc_timeout_check_active {
-            warn!(
-                "SoC timeout detected at {}us! Last SoC was at {}us.",
-                current_time_us, self.last_soc_reception_time_us
-            );
-            // Report SoC timeout event to DLL state machine
+            warn!("SoC timeout detected at {}us! Last SoC was at {}us.", current_time_us, self.last_soc_reception_time_us);
             if let Some(errors) = self
                 .dll_state_machine
                 .process_event(DllCsEvent::SocTimeout, current_nmt_state)
-            // Pass current NMT state
             {
-                // Process any DLL errors resulting from the timeout event
                 for error in errors {
                     let (nmt_action, signaled) = self.dll_error_manager.handle_error(error);
                     if signaled {
-                        self.error_status_changed = true;
+                         self.error_status_changed = true;
+                         // Update Error Register (0x1001)
+                         let current_err_reg = self.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                         let new_err_reg = current_err_reg | 0b1; // Set Generic Error
+                         self.od.write_internal(OD_IDX_ERROR_REGISTER, 0, crate::od::ObjectValue::Unsigned8(new_err_reg), false)
+                             .unwrap_or_else(|e| error!("[CN] Failed to update Error Register: {:?}", e));
                     }
-                    // If DLL error triggers NMT action (like reset), handle it
                     if nmt_action != NmtAction::None {
-                        self.nmt_state_machine
-                            .process_event(NmtEvent::Error, &mut self.od);
-                        self.soc_timeout_check_active = false; // Stop checking SoC after NMT error/reset
-                        // After NMT reset, no further action this tick
-                        return NodeAction::NoAction;
+                        self.nmt_state_machine.process_event(NmtEvent::Error, &mut self.od);
+                        self.soc_timeout_check_active = false;
+                         return NodeAction::NoAction; // Stop processing after NMT reset
                     }
                 }
             }
-
-            // If still active (no NMT reset occurred), schedule the next timeout check
-            // based on the last *expected* SoC time.
-            if self.soc_timeout_check_active {
-                let cycle_time_opt = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64);
-                let tolerance_opt = self
-                    .od
-                    .read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)
-                    .map(|v| v as u64);
+             // Reschedule next check if still active
+             if self.soc_timeout_check_active {
+                 let cycle_time_opt = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64);
+                 let tolerance_opt = self.od.read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0).map(|v| v as u64);
 
                 if let (Some(cycle_time_us), Some(tolerance_ns)) = (cycle_time_opt, tolerance_opt) {
-                    if cycle_time_us > 0 {
-                        // Assume SoC should have arrived around the deadline we just met.
-                        // Calculate next deadline based on when the *last* SoC *was* received + multiples of cycle time.
-                        // Find the next cycle boundary *after* the current time.
-                        let cycles_missed = ((current_time_us - self.last_soc_reception_time_us)
-                            / cycle_time_us)
-                            + 1;
-                        let next_expected_soc_time =
-                            self.last_soc_reception_time_us + cycles_missed * cycle_time_us;
-                        let next_deadline = next_expected_soc_time + (tolerance_ns / 1000);
+                     if cycle_time_us > 0 {
+                         let cycles_missed = ((current_time_us - self.last_soc_reception_time_us) / cycle_time_us) + 1;
+                         let next_expected_soc_time = self.last_soc_reception_time_us + cycles_missed * cycle_time_us;
+                         let next_deadline = next_expected_soc_time + (tolerance_ns / 1000);
                         self.next_tick_us = Some(next_deadline);
-                        trace!(
-                            "SoC timeout occurred, scheduling next check at {}us",
-                            next_deadline
-                        );
-                    } else {
-                        self.soc_timeout_check_active = false; // Disable check if cycle time became zero
-                    }
-                } else {
-                    self.soc_timeout_check_active = false; // Disable check if OD read fails
-                }
+                         trace!("SoC timeout occurred, scheduling next check at {}us", next_deadline);
+                     } else { self.soc_timeout_check_active = false; }
+                 } else { self.soc_timeout_check_active = false; }
             }
         } else {
-            trace!(
-                "Tick deadline reached, but no specific timeout active (State: {:?}).",
-                current_nmt_state
-            );
-            // Potentially check other application timers here if needed.
-            // If nothing else to do, we might not reschedule next_tick_us until the next SoC arrives.
+             trace!("Tick deadline reached, but no specific timeout active (State: {:?}).", current_nmt_state);
         }
 
         NodeAction::NoAction // Default return if no frame needs sending
@@ -1190,3 +1095,4 @@ mod tests {
         );
     }
 }
+

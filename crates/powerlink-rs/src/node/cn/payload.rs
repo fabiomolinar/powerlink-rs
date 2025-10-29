@@ -1,20 +1,24 @@
-use crate::PowerlinkError;
+// crates/powerlink-rs/src/node/cn/payload.rs
+
 use crate::frame::basic::MacAddress;
+#[cfg(feature = "sdo-udp")]
+use crate::types::IpAddress;
+use crate::{od::ObjectDictionary, types::NodeId, PowerlinkError};
 use crate::frame::error::ErrorEntry;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
 use crate::nmt::events::NmtCommand;
 use crate::nmt::states::NmtState;
-use crate::od::{ObjectDictionary, ObjectValue};
+use crate::od::ObjectValue;
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::sdo::SdoServer;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
-use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use crate::types::{C_ADR_MN_DEF_NODE_ID};
 use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
-use log::{debug, error, trace, warn};
+use log::{debug, error, info, trace, warn};
 
 // Constants for OD access
 const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
@@ -113,8 +117,7 @@ pub(super) fn build_pres_response(
     let (payload, pdo_version, payload_is_valid) = match build_tpdo_payload(od) {
         Ok((payload, version)) => (payload, version, true),
         Err(e) => {
-            error!(
-                // Changed to error as this indicates a configuration problem
+            error!( // Changed to error as this indicates a configuration problem
                 "Failed to build TPDO payload for PRes: {:?}. Sending empty PRes.",
                 e
             );
@@ -141,11 +144,39 @@ pub(super) fn build_pres_response(
         en: en_flag,
         rs: RSFlag::new(rs_count),
         pr: pr_flag,
-        ..Default::default()
+        ..Default::default() // Let ms be false by default
     };
 
     let pres = PResFrame::new(mac_address, node_id, nmt_state, flags, pdo_version, payload);
     PowerlinkFrame::PRes(pres)
+}
+
+
+/// Helper to serialize SDO Sequence + Command into a buffer suitable for ASnd payload.
+pub(super) fn serialize_sdo_asnd_payload(
+    seq_header: SequenceLayerHeader,
+    cmd: SdoCommand,
+) -> Result<Vec<u8>, PowerlinkError> {
+    // Allocate buffer based on command payload size + headers
+    let estimated_size = 4 // Sequence Header
+                       + 4 // Command Header Fixed Part
+                       + if cmd.data_size.is_some() { 4 } else { 0 } // Optional Data Size
+                       + cmd.payload.len();
+    // Use Vec directly instead of pre-allocating large buffer
+    let mut buffer = Vec::with_capacity(estimated_size);
+
+    // Serialize Sequence Layer Header (4 bytes)
+    let mut seq_buf = [0u8; 4];
+    seq_header.serialize(&mut seq_buf)?;
+    buffer.extend_from_slice(&seq_buf);
+
+    // Serialize Command Layer (Header + Payload)
+    // Need a temporary buffer for cmd.serialize as it writes into a slice
+    let mut cmd_buf = vec![0u8; estimated_size - 4]; // Max possible size for cmd part
+    let cmd_len = cmd.serialize(&mut cmd_buf)?;
+    buffer.extend_from_slice(&cmd_buf[..cmd_len]); // Append only the bytes written
+
+    Ok(buffer)
 }
 
 /// Constructs the detailed payload for an `IdentResponse` frame by reading from the OD.
@@ -156,7 +187,7 @@ fn build_ident_response_payload(od: &ObjectDictionary) -> Vec<u8> {
 
     // --- Populate fields based on OD values ---
 
-    // Flags (Octet 0-1): PR/RS - Assume none pending for now
+    // Flags (Octet 0-1): PR/RS - Assume none pending for now (needs SdoServer access if implemented)
     // NMTState (Octet 2)
     payload[2] = od.read_u8(0x1F8C, 0).unwrap_or(0); // Read NMT_CurrNMTState_U8
     // Reserved (Octet 3)
@@ -222,21 +253,15 @@ fn build_status_response_payload(
 ) -> Vec<u8> {
     // --- Determine max payload size ---
     // The payload limit is defined by AsyncMTU (0x1F98/8), minus ASnd header (4 bytes)
-    let mtu = od
-        .read_u16(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_MTU)
-        .unwrap_or(300) as usize;
+    let mtu = od.read_u16(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_MTU).unwrap_or(300) as usize;
     let max_payload_size = mtu.saturating_sub(4);
 
     // --- Base payload with fixed fields ---
     let mut payload = vec![0u8; 14];
     // Octet 0: Flags (EN, EC)
-    if en_flag {
-        payload[0] |= 1 << 5;
-    }
-    if ec_flag {
-        payload[0] |= 1 << 4;
-    }
-    // Octet 1: Flags (PR, RS) - TODO
+    if en_flag { payload[0] |= 1 << 5; }
+    if ec_flag { payload[0] |= 1 << 4; }
+    // Octet 1: Flags (PR, RS) - TODO: Needs access to SdoServer state
     // Octet 2: NMTState
     payload[2] = od.read_u8(0x1F8C, 0).unwrap_or(0);
     // Octets 3-5: Reserved
@@ -247,138 +272,28 @@ fn build_status_response_payload(
     // --- Append Error/Event History Entries from emergency queue ---
     let mut entry_buffer = [0u8; 20]; // Buffer to serialize one entry
     while let Some(entry) = emergency_queue.front() {
-        // Check if there is enough space for the next 20-byte entry.
         if payload.len() + 20 > max_payload_size {
-            warn!(
-                "[CN] Not enough space in StatusResponse for all queued errors. Remaining: {}",
-                emergency_queue.len()
-            );
+            warn!("[CN] Not enough space in StatusResponse for all queued errors. Remaining: {}", emergency_queue.len());
             break;
         }
 
-        // Serialize the entry into the temporary buffer.
         entry_buffer.fill(0);
-        entry_buffer[0..2].copy_from_slice(
-            &((entry.entry_type.profile & 0x0FFF)
-                | ((entry.entry_type.mode as u16) << 12)
-                | if entry.entry_type.is_status_entry {
-                    1 << 15
-                } else {
-                    0
-                }
-                | if entry.entry_type.send_to_queue {
-                    1 << 14
-                } else {
-                    0
-                })
-            .to_le_bytes(),
-        );
+        entry_buffer[0..2].copy_from_slice(&((entry.entry_type.profile & 0x0FFF) | ((entry.entry_type.mode as u16) << 12) | if entry.entry_type.is_status_entry { 1 << 15 } else { 0 } | if entry.entry_type.send_to_queue { 1 << 14 } else { 0 }).to_le_bytes());
         entry_buffer[2..4].copy_from_slice(&entry.error_code.to_le_bytes());
         entry_buffer[4..8].copy_from_slice(&entry.timestamp.seconds.to_le_bytes());
         entry_buffer[8..12].copy_from_slice(&entry.timestamp.nanoseconds.to_le_bytes());
         entry_buffer[12..20].copy_from_slice(&entry.additional_information.to_le_bytes());
 
-        // Append to the main payload and remove from the queue.
         payload.extend_from_slice(&entry_buffer);
         emergency_queue.pop_front();
-        trace!(
-            "[CN] Added error entry to StatusResponse. Queue size: {}",
-            emergency_queue.len()
-        );
+        trace!("[CN] Added error entry to StatusResponse. Queue size: {}", emergency_queue.len());
     }
 
-    // Per spec 6.5.8.2, if not all available space is used, a terminator entry (Mode=0) should be added.
     if payload.len() + 20 <= max_payload_size {
-        payload.extend_from_slice(&[0u8; 20]); // Add an all-zero entry as a terminator
+        payload.extend_from_slice(&[0u8; 20]); // Add terminator entry
     }
 
     payload
-}
-
-/// Builds an ASnd frame from a pre-built SDO abort payload generated by the SdoServer.
-pub(super) fn build_sdo_abort_from_payload(
-    mac_address: MacAddress,
-    node_id: NodeId,
-    sdo_abort_payload: Vec<u8>,
-) -> PowerlinkFrame {
-    // This is a simplified builder for internally generated aborts (like timeouts).
-    // It assumes the destination is the MN. A more robust implementation might
-    // need to store the client's MAC/NodeID in the SdoServer state.
-    warn!("Sending SDO Abort frame due to internal error (e.g., timeout).");
-    let abort_asnd = ASndFrame::new(
-        mac_address,
-        MacAddress([0xFF; 6]), // Assuming broadcast or that MN MAC is unknown here
-        NodeId(C_ADR_MN_DEF_NODE_ID),
-        node_id,
-        ServiceId::Sdo,
-        sdo_abort_payload,
-    );
-    PowerlinkFrame::ASnd(abort_asnd)
-}
-
-/// Builds an ASnd frame containing an SDO Abort message.
-pub(super) fn build_sdo_abort_response(
-    mac_address: MacAddress,
-    node_id: NodeId,
-    sdo_server: &SdoServer,
-    transaction_id: u8,
-    abort_code: u32,
-    client_node_id: NodeId,
-    client_mac: MacAddress,
-) -> PowerlinkFrame {
-    error!(
-        "Building SDO Abort response (TID: {}, Code: {:#010X}) for Node {}",
-        transaction_id, abort_code, client_node_id.0
-    );
-
-    // Construct the SDO Abort command
-    let abort_command = SdoCommand {
-        header: CommandLayerHeader {
-            transaction_id,
-            is_response: true,
-            is_aborted: true,
-            segmentation: Segmentation::Expedited,
-            command_id: CommandId::Nil, // Command ID irrelevant for abort
-            segment_size: 4,            // Size of the abort code payload
-        },
-        data_size: None,
-        payload: abort_code.to_le_bytes().to_vec(),
-    };
-
-    // Construct the Sequence Layer header (state remains Established during abort)
-    let seq_header = SequenceLayerHeader {
-        receive_sequence_number: sdo_server.current_receive_sequence(), // Ack last received
-        receive_con: ReceiveConnState::ConnectionValid,
-        send_sequence_number: sdo_server.next_send_sequence(), // Use next send number
-        send_con: SendConnState::ConnectionValid,
-    };
-
-    // Serialize SDO Seq + Cmd into SDO payload buffer
-    let mut sdo_payload_buf = vec![0u8; 12]; // 4 (Seq) + 8 (Cmd fixed) + 4 (Abort Code)
-    seq_header
-        .serialize(&mut sdo_payload_buf[0..4])
-        .unwrap_or_else(|e| {
-            error!("Failed to serialize SDO Seq header for abort: {:?}", e);
-            0 // Should not fail with correct buffer size
-        });
-    abort_command
-        .serialize(&mut sdo_payload_buf[4..])
-        .unwrap_or_else(|e| {
-            error!("Failed to serialize SDO Cmd header for abort: {:?}", e);
-            0 // Should not fail
-        });
-
-    // Construct the ASnd frame
-    let abort_asnd = ASndFrame::new(
-        mac_address,
-        client_mac,
-        client_node_id,
-        node_id,
-        ServiceId::Sdo,
-        sdo_payload_buf,
-    );
-    warn!("Sending SDO Abort frame.");
-    PowerlinkFrame::ASnd(abort_asnd)
 }
 
 /// Builds the payload for a TPDO (PRes) frame.
@@ -408,91 +323,73 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
     // 3. Iterate mapping entries from 0x1A00
     if let Some(mapping_cow) = od.read(mapping_index, 0) {
         if let ObjectValue::Unsigned8(num_entries) = *mapping_cow {
-            for i in 1..=num_entries {
-                let Some(entry_cow) = od.read(mapping_index, i) else {
-                    warn!("[CN] Could not read mapping entry {} for TPDO (PRes)", i);
-                    continue; // Skip this entry
-                };
-                let ObjectValue::Unsigned64(raw_mapping) = *entry_cow else {
-                    warn!("[CN] Mapping entry {} for TPDO (PRes) is not U64", i);
-                    continue; // Skip this entry
-                };
+             if num_entries > 0 { // Only proceed if mapping is enabled
+                trace!("Building TPDO payload using {:#06X} with {} entries.", mapping_index, num_entries);
+                for i in 1..=num_entries {
+                    if let Some(entry_cow) = od.read(mapping_index, i) {
+                        if let ObjectValue::Unsigned64(raw_mapping) = *entry_cow {
+                            let entry = PdoMappingEntry::from_u64(raw_mapping);
 
-                let entry = PdoMappingEntry::from_u64(raw_mapping);
+                            let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length())
+                            else {
+                                warn!(
+                                    "[CN] Bit-level TPDO mapping not supported for 0x{:04X}/{}",
+                                    entry.index, entry.sub_index
+                                );
+                                continue;
+                            };
 
-                // Assuming byte alignment for now
-                let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length())
-                else {
-                    warn!(
-                        "[CN] Bit-level TPDO mapping not supported for 0x{:04X}/{}",
-                        entry.index, entry.sub_index
-                    );
-                    continue; // Skip this entry
-                };
+                            let end_pos = offset + length;
 
-                let end_pos = offset + length;
+                            if end_pos > payload_limit {
+                                error!(
+                                    "[CN] TPDO mapping for 0x{:04X}/{} (offset {}, len {}) exceeds PRes payload limit {} bytes. Mapping invalid. [E_PDO_MAP_OVERRUN]",
+                                    entry.index, entry.sub_index, offset, length, payload_limit
+                                );
+                                return Err(PowerlinkError::ValidationError(
+                                    "PDO mapping exceeds PRes payload limit",
+                                ));
+                            }
+                            max_offset_len = max_offset_len.max(end_pos);
 
-                // Check if mapping exceeds the payload limit defined in 0x1F98/5
-                if end_pos > payload_limit {
-                    error!(
-                        "[CN] TPDO mapping for 0x{:04X}/{} (offset {}, len {}) exceeds PRes payload limit {} bytes. Mapping invalid. [E_PDO_MAP_OVERRUN]",
-                        entry.index, entry.sub_index, offset, length, payload_limit
-                    );
-                    // Return error according to spec 6.4.8.2 (E_PDO_MAP_OVERRUN)
-                    // This is a configuration error detected at runtime.
-                    return Err(PowerlinkError::ValidationError(
-                        "PDO mapping exceeds PRes payload limit",
-                    ));
+                            let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
+                                warn!(
+                                    "[CN] TPDO mapping for 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
+                                    entry.index, entry.sub_index
+                                );
+                                payload[offset..end_pos].fill(0);
+                                continue;
+                            };
+
+                            let serialized_data = value_cow.serialize();
+                            if serialized_data.len() != length {
+                                warn!(
+                                    "[CN] TPDO mapping for 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes. Truncating/Padding.",
+                                    entry.index,
+                                    entry.sub_index,
+                                    length,
+                                    serialized_data.len()
+                                );
+                                let copy_len = serialized_data.len().min(length);
+                                payload[offset..offset + copy_len]
+                                    .copy_from_slice(&serialized_data[..copy_len]);
+                                if length > copy_len {
+                                    payload[offset + copy_len..end_pos].fill(0);
+                                }
+                            } else {
+                                payload[offset..end_pos].copy_from_slice(&serialized_data);
+                            }
+                            trace!(
+                                "[CN] Applied TPDO to PRes: Read {:?} from 0x{:04X}/{}",
+                                value_cow, entry.index, entry.sub_index
+                            );
+                        } else { warn!( "[CN] Mapping entry {} for TPDO (PRes) is not U64", i ); }
+                    } else { warn!( "[CN] Could not read mapping entry {} for TPDO (PRes)", i ); }
                 }
-                max_offset_len = max_offset_len.max(end_pos);
+            } else { trace!("[CN] TPDO Mapping {:#06X} is disabled (0 entries).", mapping_index); }
+        } else { warn!( "[CN] TPDO Mapping object {:#06X} sub-index 0 not found or not U8.", mapping_index ); }
+    } else { warn!("[CN] TPDO Mapping object {:#06X} not found.", mapping_index); }
 
-                // Read value from OD
-                let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
-                    warn!(
-                        "[CN] TPDO mapping for 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
-                        entry.index, entry.sub_index
-                    );
-                    // Write zeros to the payload for this entry as per OD read failure
-                    payload[offset..end_pos].fill(0);
-                    continue; // Continue with next mapping entry
-                };
-
-                // Serialize and copy to payload buffer
-                let serialized_data = value_cow.serialize();
-                if serialized_data.len() != length {
-                    warn!(
-                        "[CN] TPDO mapping for 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes. Truncating/Padding.",
-                        entry.index,
-                        entry.sub_index,
-                        length,
-                        serialized_data.len()
-                    );
-                    let copy_len = serialized_data.len().min(length);
-                    payload[offset..offset + copy_len]
-                        .copy_from_slice(&serialized_data[..copy_len]);
-                    // Zero out remaining bytes if object was shorter than mapping
-                    if length > copy_len {
-                        payload[offset + copy_len..end_pos].fill(0);
-                    }
-                } else {
-                    payload[offset..end_pos].copy_from_slice(&serialized_data);
-                }
-                trace!(
-                    "[CN] Applied TPDO to PRes: Read {:?} from 0x{:04X}/{}",
-                    value_cow, entry.index, entry.sub_index
-                );
-            }
-        } else {
-            trace!(
-                "[CN] TPDO Mapping object {:#06X} not found or sub-index 0 invalid.",
-                mapping_index
-            );
-        }
-    } else {
-        trace!("[CN] TPDO Mapping object {:#06X} not found.", mapping_index);
-    }
-
-    // Truncate payload to the actual size needed based on mapping
     payload.truncate(max_offset_len);
     trace!(
         "[CN] Built PRes payload with actual size: {}",
@@ -500,3 +397,4 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
     );
     Ok((payload, pdo_version))
 }
+
