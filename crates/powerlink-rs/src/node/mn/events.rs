@@ -1,7 +1,6 @@
-// crates/powerlink-rs/src/node/mn/events.rs
 use super::main::ManagingNode;
 use super::scheduler;
-use super::state::{AsyncRequest, CnState, CyclePhase};
+use super::state::{AsyncRequest, CnInfo, CnState, CyclePhase};
 use crate::Node;
 use crate::frame::{
     ASndFrame, DllMsEvent, PResFrame, PowerlinkFrame, ServiceId,
@@ -52,7 +51,7 @@ pub(super) fn process_frame(node: &mut ManagingNode, frame: PowerlinkFrame, curr
                 // Handle async and error signaling flags in PRes
                 handle_pres_frame(node, &pres_frame);
                 // PRes received, advance to the next action in the cycle.
-                let action = node.advance_cycle_phase(current_time_us);
+                let _action = node.advance_cycle_phase(current_time_us);
                 // TODO: The action needs to be returned to the main loop to be sent.
                 // This is a current limitation of the refactoring.
             } else {

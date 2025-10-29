@@ -6,11 +6,10 @@ use crate::frame::{
     SocFrame,
 };
 use crate::nmt::events::NmtCommand;
-use crate::node::Node;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use super::main::ManagingNode;
-use crate::PowerlinkError;
+use crate::{Node, PowerlinkError};
 use crate::common::{NetTime, RelativeTime};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId}; // Added C_ADR_BROADCAST_NODE_ID
 use alloc::vec;

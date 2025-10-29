@@ -9,7 +9,7 @@ use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader}
 use crate::sdo::state::{SdoServerState, SdoTransferState};
 use alloc::vec;
 use alloc::vec::Vec;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, trace, warn, info};
 
 /// Manages a single SDO server connection.
 ///
@@ -27,6 +27,8 @@ pub struct SdoServer {
 }
 
 const MAX_EXPEDITED_PAYLOAD: usize = 1452; // Max SDO payload within ASnd frame (excluding headers)
+const OD_IDX_SDO_TIMEOUT: u16 = 0x1300;
+const OD_IDX_SDO_RETRIES: u16 = 0x1302;
 
 impl SdoServer {
     pub fn new() -> Self {
@@ -62,6 +64,80 @@ impl SdoServer {
         }
     }
 
+    /// Returns the absolute timestamp of the next SDO timeout, if any.
+    pub fn next_action_time(&self) -> Option<u64> {
+        if let SdoServerState::SegmentedUpload(state) = &self.state {
+            state.deadline_us
+        } else {
+            None
+        }
+    }
+
+    /// Handles time-based events for the SDO server, like retransmission timeouts.
+    pub fn tick(
+        &mut self,
+        current_time_us: u64,
+        od: &ObjectDictionary,
+    ) -> Result<Option<Vec<u8>>, PowerlinkError> {
+        let mut retransmit_command = None;
+        let mut abort_params: Option<(u8, u32)> = None;
+
+        if let SdoServerState::SegmentedUpload(state) = &mut self.state {
+            if let Some(deadline) = state.deadline_us {
+                if current_time_us >= deadline {
+                    // Timeout occurred!
+                    if state.retransmissions_left > 0 {
+                        state.retransmissions_left -= 1;
+                        warn!(
+                            "[SDO] Server: Segment ACK timeout for TID {}. Retransmitting ({} retries left).",
+                            state.transaction_id, state.retransmissions_left
+                        );
+
+                        // Reschedule the next timeout
+                        let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
+                        state.deadline_us = Some(current_time_us + timeout_ms * 1000);
+
+                        // Retransmit the last sent segment.
+                        if let Some(last_command) = &state.last_sent_segment {
+                            retransmit_command = Some(last_command.clone());
+                        } else {
+                            // This should not happen if we are in this state.
+                            return Err(PowerlinkError::InternalError("Missing last sent segment during retransmission"));
+                        }
+                    } else {
+                        // No retransmissions left, abort the connection.
+                        error!("[SDO] Server: No retransmissions left for TID {}. Aborting connection.", state.transaction_id);
+                        abort_params = Some((state.transaction_id, 0x0504_0000)); // SDO protocol timed out
+                    }
+                }
+            }
+        }
+
+        if let Some(command) = retransmit_command {
+            let response_header = SequenceLayerHeader {
+                receive_sequence_number: self.last_received_sequence_number,
+                receive_con: ReceiveConnState::ConnectionValid,
+                send_sequence_number: self.send_sequence_number, // Use the same sequence number
+                send_con: SendConnState::ConnectionValidAckRequest, // Request ACK again
+            };
+            return self.serialize_sdo_response(response_header, command).map(Some);
+        }
+
+        if let Some((tid, code)) = abort_params {
+            let abort_command = self.abort(tid, code);
+            let response_header = SequenceLayerHeader {
+                receive_sequence_number: self.last_received_sequence_number,
+                receive_con: ReceiveConnState::ConnectionValid,
+                send_sequence_number: self.send_sequence_number,
+                send_con: SendConnState::NoConnection, // Closing connection
+            };
+            return self.serialize_sdo_response(response_header, abort_command).map(Some);
+        }
+
+        Ok(None)
+    }
+
+
     /// Processes an incoming SDO request contained within an ASnd payload.
     ///
     /// This function handles the Sequence Layer logic and will eventually delegate
@@ -71,6 +147,7 @@ impl SdoServer {
         &mut self,
         request_sdo_payload: &[u8], // Renamed to clarify it's SDO Seq+Cmd+Data
         od: &mut ObjectDictionary,
+        current_time_us: u64,
     ) -> Result<Vec<u8>, PowerlinkError> {
         // SDO Sequence Layer Header starts at offset 0 of the ASnd payload.
         // SDO Command Layer Header starts at offset 4.
@@ -100,7 +177,7 @@ impl SdoServer {
             // If we are in a segmented upload, the ACK should trigger the next segment
             if let SdoServerState::SegmentedUpload(state) = core::mem::take(&mut self.state) {
                 debug!("Client ACK received, continuing segmented upload.");
-                let response_command = self.handle_segmented_upload(state);
+                let response_command = self.handle_segmented_upload(state, od, current_time_us);
                 response_header.receive_sequence_number = self.last_received_sequence_number;
                 return self.serialize_sdo_response(response_header, response_command);
             }
@@ -130,7 +207,7 @@ impl SdoServer {
         debug!("Parsed SDO command: {:?}", sdo_command);
 
         // Process the command and generate a response command.
-        let response_command = self.process_command_layer(sdo_command, od);
+        let response_command = self.process_command_layer(sdo_command, od, current_time_us);
         debug!("Generated SDO response command: {:?}", response_command);
 
         // Acknowledge the received sequence number in the response.
@@ -161,6 +238,7 @@ impl SdoServer {
         &mut self,
         command: SdoCommand,
         od: &mut ObjectDictionary,
+        current_time_us: u64,
     ) -> SdoCommand {
         // Temporarily take ownership of the state to avoid borrow checker issues.
         let current_state = core::mem::take(&mut self.state);
@@ -173,7 +251,7 @@ impl SdoServer {
                 // Reset send sequence number on ACK according to state diagram logic
                 // (though the logic is complex, this simplification works for basic ACK)
                 // self.send_sequence_number = state.last_sent_seq_num; // Need to track last sent
-                return self.handle_segmented_upload(state);
+                return self.handle_segmented_upload(state, od, current_time_us);
             }
             // If transaction ID doesn't match, restore state and fall through.
             error!(
@@ -233,9 +311,12 @@ impl SdoServer {
                                         offset: 0, // Start sending from the beginning
                                         index: req.index,
                                         sub_index: req.sub_index,
+                                        deadline_us: None,
+                                        retransmissions_left: 0, // Will be set in handle_segmented_upload
+                                        last_sent_segment: None,
                                     };
                                     // The handle_segmented_upload function now mutates self.state
-                                    self.handle_segmented_upload(transfer_state)
+                                    self.handle_segmented_upload(transfer_state, od, current_time_us)
                                 }
                             }
                             None => self.abort(
@@ -272,7 +353,12 @@ impl SdoServer {
 
     /// Handles sending the next segment during an upload, or initiates the upload.
     /// Updates self.state.
-    fn handle_segmented_upload(&mut self, mut state: SdoTransferState) -> SdoCommand {
+    fn handle_segmented_upload(
+        &mut self,
+        mut state: SdoTransferState,
+        od: &ObjectDictionary,
+        current_time_us: u64,
+    ) -> SdoCommand {
         let mut response_header = CommandLayerHeader {
             transaction_id: state.transaction_id,
             is_response: true,
@@ -314,18 +400,29 @@ impl SdoServer {
             response_header.segmentation = Segmentation::Complete;
             self.state = SdoServerState::Established; // Transition back after sending last segment
         } else {
-            // More segments to follow, update the state
+            // More segments to follow, set up for retransmission
+            let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
+            state.deadline_us = Some(current_time_us + timeout_ms * 1000);
+            state.retransmissions_left = od.read_u32(OD_IDX_SDO_RETRIES, 0).unwrap_or(2);
             self.state = SdoServerState::SegmentedUpload(state);
         }
 
         response_header.segment_size = chunk.len() as u16;
 
-        SdoCommand {
+        let command = SdoCommand {
             header: response_header,
             data_size,
             payload: chunk,
+        };
+
+        // Store the command for potential retransmission
+        if let SdoServerState::SegmentedUpload(ref mut s) = self.state {
+            s.last_sent_segment = Some(command.clone());
         }
+
+        command
     }
+
 
     fn handle_write_by_index(
         &mut self,
@@ -362,6 +459,9 @@ impl SdoServer {
                             offset: req.data.len(),         // Track bytes received
                             index: req.index,
                             sub_index: req.sub_index,
+                            deadline_us: None,
+                            retransmissions_left: 0,
+                            last_sent_segment: None,
                         });
                         SdoCommand {
                             header: response_header, // Send ACK response
@@ -503,7 +603,7 @@ impl SdoServer {
         debug!("Processing sequence layer in state {:?}", self.state);
         let mut response = SequenceLayerHeader::default(); // Start with default response
 
-        match self.state {
+        match &mut self.state {
             SdoServerState::Closed => {
                 if request.send_con == SendConnState::Initialization {
                     self.state = SdoServerState::Opening;
@@ -559,9 +659,7 @@ impl SdoServer {
                     ));
                 }
             }
-            SdoServerState::Established
-            | SdoServerState::SegmentedDownload(_)
-            | SdoServerState::SegmentedUpload(_) => {
+            SdoServerState::Established | SdoServerState::SegmentedDownload(_) | SdoServerState::SegmentedUpload(_) => {
                 // --- Sequence Number Check ---
                 // Expected sequence number from the client
                 let expected_seq = self.last_received_sequence_number.wrapping_add(1) % 64;
@@ -613,6 +711,12 @@ impl SdoServer {
                 // --- Sequence OK ---
                 else {
                     self.last_received_sequence_number = request.send_sequence_number;
+                    // Acknowledgment received for an upload, so clear the timeout.
+                    if let SdoServerState::SegmentedUpload(ref mut state) = self.state {
+                        state.deadline_us = None;
+                        state.last_sent_segment = None;
+                    }
+
                     // Increment send sequence number *only if* we aren't handling retransmission/duplicates
                     if request.receive_con != ReceiveConnState::ErrorResponse {
                         self.send_sequence_number = self.send_sequence_number.wrapping_add(1) % 64;

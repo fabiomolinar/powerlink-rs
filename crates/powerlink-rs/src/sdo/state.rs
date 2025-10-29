@@ -1,4 +1,4 @@
-// crates/powerlink-rs/src/sdo/state.rs
+use crate::sdo::command::SdoCommand;
 use alloc::vec::Vec;
 
 /// The state of an SDO connection from the server's perspective.
@@ -23,4 +23,8 @@ pub struct SdoTransferState {
     pub(super) offset: usize,
     pub(super) index: u16,
     pub(super) sub_index: u8,
+    // New fields for retransmission logic
+    pub(super) deadline_us: Option<u64>,
+    pub(super) retransmissions_left: u32,
+    pub(super) last_sent_segment: Option<SdoCommand>,
 }

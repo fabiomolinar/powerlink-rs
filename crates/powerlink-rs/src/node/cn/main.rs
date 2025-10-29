@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/cn/main.rs
 use super::payload;
 use crate::PowerlinkError;
 use crate::common::NetTime;
@@ -147,7 +146,7 @@ impl<'s> ControlledNode<'s> {
 
                 let response_frame = match self
                     .sdo_server
-                    .handle_request(&asnd_frame.payload, &mut self.od)
+                    .handle_request(&asnd_frame.payload, &mut self.od, current_time_us)
                 {
                     Ok(response_payload) => {
                         // Build and send the normal SDO response

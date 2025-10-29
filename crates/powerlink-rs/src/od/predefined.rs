@@ -43,6 +43,35 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
         },
     );
 
+    // Add SDO Sequence Layer Timeout (1300h)
+    od.insert(
+        0x1300,
+        ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(15000)), // Default: 15000ms
+            name: "SDO_SequLayerTimeout_U32",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadWriteStore),
+            default_value: Some(ObjectValue::Unsigned32(15000)),
+            value_range: None,
+            pdo_mapping: Some(PdoMapping::No),
+        },
+    );
+
+    // Add SDO Number of Acknowledge Retries (1302h)
+    od.insert(
+        0x1302,
+        ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(2)), // Default: 2 retries
+            name: "SDO_SequLayerNoAck_U32",
+            category: Category::Optional,
+            access: Some(AccessType::ReadWriteStore),
+            default_value: Some(ObjectValue::Unsigned32(2)),
+            value_range: None,
+            pdo_mapping: Some(PdoMapping::No),
+        },
+    );
+
+
     // Add "PDO_CommParamRecord_TYPE" (0x0420) definition
     od.insert(
         0x0420,
