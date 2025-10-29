@@ -84,7 +84,7 @@ pub trait PdoHandler<'s> {
 
                     if !version_ok {
                         warn!(
-                            "PDO version mismatch for source Node {}. Expected {}, got {}. Ignoring payload.",
+                            "PDO version mismatch for source Node {}. Expected {}, got {}. Ignoring payload. [E_PDO_MAP_VERS]",
                             source_node_id.0, expected_version, received_version.0
                         );
                         // Use self.dll_error_manager() - Log error E_PDO_MAP_VERS (Spec 6.4.8.1.1)
@@ -181,7 +181,7 @@ pub trait PdoHandler<'s> {
         // Check payload bounds (Spec 6.4.8.1.2 Unexpected End of PDO)
         if payload.len() < offset + length {
             warn!(
-                "RPDO mapping for 0x{:04X}/{} from Node {} is out of bounds. Payload size: {}, expected at least {}.",
+                "RPDO mapping for 0x{:04X}/{} from Node {} is out of bounds. Payload size: {}, expected at least {}. [E_PDO_SHORT_RX]",
                 entry.index,
                 entry.sub_index,
                 source_node_id.0,
@@ -217,15 +217,19 @@ pub trait PdoHandler<'s> {
 
         match ObjectValue::deserialize(data_slice, &type_template) {
             Ok(value) => {
-                // Check if the received value type matches the OD entry type *exactly*
-                // (deserialize might succeed with type coercion, e.g., u8 into u16, which we might not want for PDO)
-                // Using core::mem::discriminant for type comparison without PartialEq on ObjectValue itself.
+                // Check if the received value type matches the OD entry type *exactly*.
+                // This prevents silent type coercion (e.g., a u8 from payload being written to a u16 OD object).
                 if core::mem::discriminant(&value) != core::mem::discriminant(&type_template) {
                     warn!(
                         "RPDO type mismatch after deserialize for 0x{:04X}/{}. Expected {:?}, got {:?}. Value ignored.",
                         entry.index, entry.sub_index, type_template, value
                     );
-                    // Log a specific PDO type mismatch error?
+                    // This is a form of E_PDO_MAP_OVERRUN or general parameter incompatibility (0x06040043).
+                    // We can signal it as a general PDO mapping error.
+                    self.dll_error_manager()
+                        .handle_error(DllError::PdoMapVersion {
+                            node_id: source_node_id,
+                        });
                     return;
                 }
 
@@ -251,7 +255,12 @@ pub trait PdoHandler<'s> {
                     "Failed to deserialize RPDO data for 0x{:04X}/{}: {:?}. Data slice: {:02X?}",
                     entry.index, entry.sub_index, e, data_slice
                 );
-                // Log a PDO data error? Spec implies ignoring the PDO.
+                // This implies a configuration mismatch (length in mapping vs OD data type).
+                // Signal as E_PDO_SHORT_RX as the payload slice length doesn't match expected type length.
+                self.dll_error_manager()
+                    .handle_error(DllError::PdoPayloadShort {
+                        node_id: source_node_id,
+                    });
             }
         }
     }

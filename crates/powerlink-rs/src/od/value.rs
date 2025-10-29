@@ -97,10 +97,10 @@ impl ObjectValue {
                 if $data.len() < expected_len {
                     Err(PowerlinkError::BufferTooShort) // Use BufferTooShort for length issues
                 } else {
-                    // Use try_into directly on the potentially longer slice
-                     match $data[..expected_len].try_into() {
-                         Ok(bytes) => Ok($variant(<$type>::from_le_bytes(bytes))),
-                         Err(_) => Err(PowerlinkError::SliceConversion), // Should not happen if length check passes
+                    // Use try_into directly on the correctly sized sub-slice
+                    match $data[..expected_len].try_into() {
+                        Ok(bytes) => Ok($variant(<$type>::from_le_bytes(bytes))),
+                        Err(_) => Err(PowerlinkError::SliceConversion), // Should not happen if length check passes
                     }
                 }
             }};

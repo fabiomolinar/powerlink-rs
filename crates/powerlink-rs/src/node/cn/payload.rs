@@ -111,7 +111,7 @@ pub(super) fn build_pres_response(
     let (payload, pdo_version, payload_is_valid) = match build_tpdo_payload(od) {
         Ok((payload, version)) => (payload, version, true),
         Err(e) => {
-            warn!(
+            error!( // Changed to error as this indicates a configuration problem
                 "Failed to build TPDO payload for PRes: {:?}. Sending empty PRes.",
                 e
             );
@@ -357,11 +357,11 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
                 // Check if mapping exceeds the payload limit defined in 0x1F98/5
                 if end_pos > payload_limit {
                     error!(
-                        "[CN] TPDO mapping for 0x{:04X}/{} (offset {}, len {}) exceeds PRes payload limit {} bytes. Mapping invalid.",
+                        "[CN] TPDO mapping for 0x{:04X}/{} (offset {}, len {}) exceeds PRes payload limit {} bytes. Mapping invalid. [E_PDO_MAP_OVERRUN]",
                         entry.index, entry.sub_index, offset, length, payload_limit
                     );
                     // Return error according to spec 6.4.8.2 (E_PDO_MAP_OVERRUN)
-                    // We don't have direct access to SDO abort here, signal via error
+                    // This is a configuration error detected at runtime.
                     return Err(PowerlinkError::ValidationError(
                         "PDO mapping exceeds PRes payload limit",
                     ));
