@@ -32,7 +32,7 @@ use crate::od::ObjectDictionary;
 use crate::sdo::udp::{deserialize_sdo_udp_payload, serialize_sdo_udp_payload};
 use crate::sdo::server::{SdoClientInfo, SdoResponseData};
 use crate::sdo::SdoServer;
-use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -178,40 +178,42 @@ impl<'s> ControlledNode<'s> {
     ) -> NodeAction {
         debug!(
             "Received UDP SDO request from {}:{} ({} bytes)",
-            core::net::Ipv4Addr::from(source_ip), source_port, data.len()
+            core::net::Ipv4Addr::from(source_ip),
+            source_port,
+            data.len()
         );
 
-        match deserialize_sdo_udp_payload(data) {
-             Ok(sdo_payload) => { // Deserialized SDO payload (Seq + Cmd + Data) slice
-                let client_info = SdoClientInfo::Udp {
-                    source_ip,
-                    source_port,
-                };
-                 // Pass the raw SDO payload slice (starting with Seq Header)
-                match self
-                    .sdo_server
-                    .handle_request(sdo_payload, client_info, &mut self.od, current_time_us)
-                {
-                    Ok(response_data) => {
-                        match self.build_udp_from_sdo_response(response_data) {
-                             Ok(action) => action,
-                             Err(e) => {
-                                 error!("Failed to build SDO/UDP response: {:?}", e);
-                                 NodeAction::NoAction
-                             }
-                        }
-                    }
-                    Err(e) => {
-                        error!("SDO server error (UDP): {:?}", e);
-                        // Abort is handled internally by SdoServer::handle_request now
-                         NodeAction::NoAction
-                    }
-                }
+        // Validate UDP SDO prefix (from EPSG DS 301, Table 47) and get the SDO payload slice.
+        // The SDO payload starts *after* the 4-byte POWERLINK UDP prefix.
+        let sdo_payload = match data {
+            // Check for prefix: MessageType(ASnd), Reserved(2), ServiceID(Sdo)
+            [0x06, _, _, 0x05, rest @ ..] => rest,
+            _ => {
+                error!("Invalid or malformed SDO/UDP payload prefix.");
+                // We cannot send an SDO abort because the frame is fundamentally broken.
+                return NodeAction::NoAction;
             }
+        };
+
+        let client_info = SdoClientInfo::Udp {
+            source_ip,
+            source_port,
+        };
+        match self
+            .sdo_server
+            .handle_request(sdo_payload, client_info, &mut self.od, current_time_us)
+        {
+            Ok(response_data) => match self.build_udp_from_sdo_response(response_data) {
+                Ok(action) => action,
+                Err(e) => {
+                    error!("Failed to build SDO/UDP response: {:?}", e);
+                    NodeAction::NoAction
+                }
+            },
             Err(e) => {
-                error!("Failed to deserialize SDO/UDP payload: {:?}", e);
-                 // Cannot easily send SDO abort if payload is invalid
-                 NodeAction::NoAction
+                error!("SDO server error (UDP): {:?}", e);
+                // Abort is handled internally by SdoServer::handle_request now
+                NodeAction::NoAction
             }
         }
     }
@@ -1095,4 +1097,3 @@ mod tests {
         );
     }
 }
-
