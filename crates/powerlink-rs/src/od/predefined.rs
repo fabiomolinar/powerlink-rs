@@ -1,5 +1,3 @@
-// crates/powerlink-rs/src/od/predefined.rs
-
 use super::ObjectDictionary;
 use super::entry::{AccessType, Category, Object, ObjectEntry, PdoMapping};
 use super::value::ObjectValue;
@@ -124,6 +122,35 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             pdo_mapping: None,
         },
     );
+
+    // Add "PDO_ErrMapVers_OSTR" (1C80h) - Optional error logging
+    od.insert(
+        0x1C80,
+        ObjectEntry {
+            object: Object::Variable(ObjectValue::OctetString(vec![0; 32])),
+            name: "PDO_ErrMapVers_OSTR",
+            category: Category::Optional,
+            access: Some(AccessType::ReadWrite),
+            default_value: Some(ObjectValue::OctetString(vec![0; 32])),
+            value_range: None,
+            pdo_mapping: Some(PdoMapping::No),
+        },
+    );
+
+    // Add "PDO_ErrShort_RX_OSTR" (1C81h) - Optional error logging
+    od.insert(
+        0x1C81,
+        ObjectEntry {
+            object: Object::Variable(ObjectValue::OctetString(vec![0; 32])),
+            name: "PDO_ErrShort_RX_OSTR",
+            category: Category::Optional,
+            access: Some(AccessType::ReadWrite),
+            default_value: Some(ObjectValue::OctetString(vec![0; 32])),
+            value_range: None,
+            pdo_mapping: Some(PdoMapping::No),
+        },
+    );
+
 
     // Add "NMT_CurrNMTState_U8" (1F8Ch)
     od.insert(

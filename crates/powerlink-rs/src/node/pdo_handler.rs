@@ -5,12 +5,15 @@ use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::NodeId;
+use alloc::borrow::Cow;
 use log::{error, trace, warn}; // Added error
 
 const OD_IDX_RPDO_COMM_PARAM_BASE: u16 = 0x1400;
 const OD_IDX_RPDO_MAPP_PARAM_BASE: u16 = 0x1600;
 const OD_SUBIDX_PDO_COMM_NODEID: u8 = 1;
 const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
+const OD_IDX_PDO_ERR_MAP_VERS: u16 = 0x1C80;
+const OD_IDX_PDO_ERR_SHORT_RX: u16 = 0x1C81;
 
 /// A trait for handling Process Data Object (PDO) logic.
 /// The lifetime parameter 's matches the lifetime of the Node implementing this trait.
@@ -20,6 +23,43 @@ pub trait PdoHandler<'s> {
 
     /// Provides access to the node's DLL error manager.
     fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler>;
+
+    /// Helper to update the PDO error logging objects (0x1C80, 0x1C81).
+    fn update_pdo_error_object(
+        &mut self,
+        object_index: u16,
+        source_node_id: NodeId,
+    ) {
+        let node_id_val = source_node_id.0;
+        // Do not log for PReq source (0) or invalid/broadcast node IDs
+        if node_id_val == 0 || node_id_val > 254 {
+            return;
+        }
+
+        // Per spec 7.3.1.2.3, the node list format is a 32-byte bitmask.
+        // This logic uses a standard bitmask interpretation where:
+        // byte_index = (id-1)/8 and bit_index = (id-1)%8.
+        let byte_index = (node_id_val - 1) as usize / 8;
+        let bit_index = (node_id_val - 1) % 8;
+
+        // Clone the object value to modify it. This is simpler than dealing with mutable borrows.
+        if let Some(cow) = self.od().read(object_index, 0) {
+            if let ObjectValue::OctetString(mut bytes) = cow.into_owned() {
+                if let Some(byte_to_modify) = bytes.get_mut(byte_index) {
+                    *byte_to_modify |= 1 << bit_index;
+                    // Write back to the OD, ignoring access rights.
+                    if let Err(e) = self.od().write_internal(object_index, 0, ObjectValue::OctetString(bytes), false) {
+                        error!("[PDO] Failed to update PDO error object {:#06X}: {:?}", object_index, e);
+                    }
+                } else {
+                    warn!("[PDO] Error object {:#06X} has incorrect length (expected 32 bytes).", object_index);
+                }
+            } else {
+                warn!("[PDO] Error object {:#06X} is not an OctetString.", object_index);
+            }
+        }
+        // If the object doesn't exist (it's optional), we silently do nothing.
+    }
 
     /// Reads RPDO mappings for a given source Node ID and writes
     /// data from the payload into the Object Dictionary.
@@ -92,6 +132,8 @@ pub trait PdoHandler<'s> {
                             .handle_error(DllError::PdoMapVersion {
                                 node_id: source_node_id,
                             });
+                        // Update PDO error object 0x1C80
+                        self.update_pdo_error_object(OD_IDX_PDO_ERR_MAP_VERS, source_node_id);
                         return; // Stop processing this payload due to version mismatch
                     }
 
@@ -193,6 +235,8 @@ pub trait PdoHandler<'s> {
                 .handle_error(DllError::PdoPayloadShort {
                     node_id: source_node_id,
                 });
+            // Update PDO error object 0x1C81
+            self.update_pdo_error_object(OD_IDX_PDO_ERR_SHORT_RX, source_node_id);
             return; // Ignore this specific mapping entry, but continue with others if any
         }
 
