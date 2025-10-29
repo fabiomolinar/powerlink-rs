@@ -5,7 +5,6 @@ use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::NodeId;
-use alloc::borrow::Cow;
 use log::{error, trace, warn}; // Added error
 
 const OD_IDX_RPDO_COMM_PARAM_BASE: u16 = 0x1400;

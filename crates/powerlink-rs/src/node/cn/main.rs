@@ -4,7 +4,6 @@ use super::payload;
 use crate::PowerlinkError;
 use crate::frame::{
     ASndFrame,
-    Codec,
     DllCsEvent,
     DllCsStateMachine,
     DllError,
@@ -14,7 +13,6 @@ use crate::frame::{
     PowerlinkFrame,
     RequestedServiceId,
     ServiceId,
-    SoAFrame,
     basic::MacAddress,
     // deserialize_frame is now only used in process_raw_frame
     deserialize_frame,
@@ -31,7 +29,6 @@ use crate::od::ObjectDictionary;
 use crate::sdo::SdoServer;
 // SdoCommand and Headers are needed for SDO logic
 use crate::sdo::command::SdoCommand;
-use crate::sdo::sequence::SequenceLayerHeader;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::vec;
 use alloc::vec::Vec;

@@ -2,7 +2,6 @@
 use super::cycle;
 use super::events;
 use super::payload;
-use super::scheduler;
 use super::state::{AsyncRequest, CnState, CyclePhase};
 use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
@@ -12,7 +11,7 @@ use crate::frame::{
     DllMsEvent, DllMsStateMachine, PowerlinkFrame, SocFrame, deserialize_frame,
     error::{
         DllError, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler,
-        MnErrorCounters, NmtAction,
+        MnErrorCounters,
     },
 };
 use crate::nmt::NmtStateMachine;
@@ -21,7 +20,7 @@ use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::{Object, ObjectDictionary, ObjectValue};
-use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
+use crate::types::{C_ADR_BROADCAST_NODE_ID, NodeId};
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec;
 use alloc::vec::Vec;
