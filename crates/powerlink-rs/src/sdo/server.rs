@@ -1,32 +1,30 @@
+// crates/powerlink-rs/src/sdo/server.rs
 use crate::PowerlinkError;
 use crate::frame::PRFlag;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::command::{
-    CommandId, CommandLayerHeader, ReadByIndexRequest, ReadByNameRequest, ReadMultipleParamRequest,
-    SdoCommand, Segmentation, WriteByIndexRequest,
+    CommandId, CommandLayerHeader, DefaultSdoHandler, ReadByIndexRequest, ReadByNameRequest,
+    ReadMultipleParamRequest, SdoCommand, SdoCommandHandler, Segmentation, WriteByIndexRequest,
 };
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::state::{SdoServerState, SdoTransferState};
+use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, trace, warn, info};
 
 /// Manages a single SDO server connection.
-///
-/// A full implementation would use a BTreeMap or similar to manage multiple
-/// connections, keyed by a client identifier (like NodeId or a socket address).
-/// For now, this struct manages a single connection for simplicity.
 pub struct SdoServer {
     state: SdoServerState,
-    // The next sequence number this server will send.
     pub(super) send_sequence_number: u8,
-    // The last sequence number the server correctly received from the client.
     pub(super) last_received_sequence_number: u8,
-    // A queue for pending client requests (outgoing SDO frames) initiated by this node's application.
     pub(super) pending_client_requests: Vec<Vec<u8>>,
+    /// Optional handler for vendor-specific or complex commands.
+    handler: Box<dyn SdoCommandHandler>,
 }
 
-const MAX_EXPEDITED_PAYLOAD: usize = 1452; // Max SDO payload within ASnd frame (excluding headers)
+
+const MAX_EXPEDITED_PAYLOAD: usize = 1452;
 const OD_IDX_SDO_TIMEOUT: u16 = 0x1300;
 const OD_IDX_SDO_RETRIES: u16 = 0x1302;
 
@@ -34,6 +32,15 @@ impl SdoServer {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Creates a new SdoServer with a custom command handler.
+    pub fn with_handler<H: SdoCommandHandler + 'static>(handler: H) -> Self {
+        Self {
+            handler: Box::new(handler),
+            ..Default::default()
+        }
+    }
+
 
     /// Queues an SDO request payload to be sent to the MN.
     /// This would be called by the application logic.
@@ -260,31 +267,22 @@ impl SdoServer {
         if let SdoServerState::SegmentedUpload(state) = current_state {
             if state.transaction_id == command.header.transaction_id {
                 debug!("Client ACK received, continuing segmented upload.");
-                // Reset send sequence number on ACK according to state diagram logic
-                // (though the logic is complex, this simplification works for basic ACK)
-                // self.send_sequence_number = state.last_sent_seq_num; // Need to track last sent
                 return self.handle_segmented_upload(state, od, current_time_us);
             }
-            // If transaction ID doesn't match, restore state and fall through.
             error!(
                 "Mismatched transaction ID during segmented upload. Expected {}, got {}",
                 state.transaction_id, command.header.transaction_id
             );
             self.state = SdoServerState::SegmentedUpload(state);
-            // Abort with general error if transaction IDs don't match mid-transfer
             return self.abort(command.header.transaction_id, 0x0800_0000);
         } else {
-            // Not a segmented upload, restore state.
             self.state = current_state;
         }
 
         let response_header = CommandLayerHeader {
             transaction_id: command.header.transaction_id,
             is_response: true,
-            is_aborted: false,
-            segmentation: Segmentation::Expedited, // Default response is expedited
-            command_id: command.header.command_id,
-            segment_size: 0,
+            ..Default::default()
         };
 
         match command.header.command_id {
@@ -295,21 +293,17 @@ impl SdoServer {
             CommandId::ReadAllByIndex => self.handle_read_all_by_index(command, response_header, od, current_time_us),
             CommandId::ReadMultipleParamByIndex => self.handle_read_multiple_params(command, response_header, od, current_time_us),
             CommandId::MaxSegmentSize => self.handle_max_segment_size(command, response_header),
-            CommandId::WriteAllByIndex | CommandId::WriteMultipleParamByIndex => {
-                // Segmented/complex writes are not fully supported yet
-                warn!("Received currently unsupported write command: {:?}", command.header.command_id);
-                self.abort(command.header.transaction_id, 0x0601_0001) // Unsupported access
-            }
-            CommandId::FileRead | CommandId::FileWrite => {
-                warn!("Received unsupported File Transfer command: {:?}", command.header.command_id);
-                self.abort(command.header.transaction_id, 0x0601_0001) // Unsupported access
-            }
+            CommandId::WriteAllByIndex => self.handler.handle_write_all_by_index(command, od),
+            CommandId::WriteMultipleParamByIndex => self.handler.handle_write_multiple_params(command, od),
+            CommandId::FileRead => self.handler.handle_file_read(command, od),
+            CommandId::FileWrite => self.handler.handle_file_write(command, od),
             CommandId::Nil => {
                 debug!("Received NIL command, sending empty ACK.");
                 SdoCommand { header: response_header, data_size: None, payload: Vec::new() }
             }
         }
     }
+
 
     fn handle_read_by_index(
         &mut self,
@@ -532,7 +526,7 @@ impl SdoServer {
     fn handle_read_by_name(
         &mut self,
         command: SdoCommand,
-        mut response_header: CommandLayerHeader,
+        response_header: CommandLayerHeader,
         od: &ObjectDictionary,
         current_time_us: u64,
     ) -> SdoCommand {
@@ -557,8 +551,8 @@ impl SdoServer {
     fn handle_write_by_name(
         &mut self,
         command: SdoCommand,
-        response_header: CommandLayerHeader,
-        od: &mut ObjectDictionary,
+        _response_header: CommandLayerHeader,
+        _od: &mut ObjectDictionary,
     ) -> SdoCommand {
         // This is complex as payload contains name and data. Not implementing segmented transfer for it yet.
         warn!("WriteByName is not fully supported.");
@@ -863,6 +857,7 @@ impl Default for SdoServer {
             send_sequence_number: 0,
             last_received_sequence_number: 63, // Set to 63 (equiv to -1) so first received seq (0) is valid
             pending_client_requests: Vec::new(),
+            handler: Box::new(DefaultSdoHandler),
         }
     }
 }

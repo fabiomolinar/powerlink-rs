@@ -1,11 +1,11 @@
 // crates/powerlink-rs/src/sdo/command/base.rs
 use crate::PowerlinkError;
-use crate::types::{UNSIGNED8, UNSIGNED16, UNSIGNED32};
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use alloc::string::String;
+use core::convert::TryFrom;
 
-/// Defines the SDO command IDs.
-/// (Reference: EPSG DS 301, Table 58)
+/// Represents the SDO command identifier.
+/// (Reference: EPSG DS 301, Section 6.3.2.1, Table 100)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum CommandId {
@@ -31,6 +31,7 @@ pub enum CommandId {
 
 impl TryFrom<u8> for CommandId {
     type Error = PowerlinkError;
+
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0x00 => Ok(Self::Nil),
@@ -50,8 +51,7 @@ impl TryFrom<u8> for CommandId {
     }
 }
 
-/// Defines the segmentation type for SDO transfers.
-/// (Reference: EPSG DS 301, Table 55)
+/// Represents the segmentation type of an SDO transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum Segmentation {
@@ -75,119 +75,111 @@ impl TryFrom<u8> for Segmentation {
     }
 }
 
-/// Represents the fixed part of the SDO Command Layer header.
-/// (Reference: EPSG DS 301, Table 54)
+/// Represents the fixed 4-byte header of the SDO Command Layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CommandLayerHeader {
-    pub transaction_id: UNSIGNED8,
+    pub transaction_id: u8,
     pub is_response: bool,
     pub is_aborted: bool,
     pub segmentation: Segmentation,
     pub command_id: CommandId,
-    pub segment_size: UNSIGNED16,
+    pub segment_size: u16,
 }
 
-/// Represents a complete SDO command layer frame, including the header and payload.
+/// Represents a complete SDO command, including its header and payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdoCommand {
     pub header: CommandLayerHeader,
-    /// Data size is only present in Initiate Segmented Transfer frames.
-    pub data_size: Option<UNSIGNED32>,
-    /// The payload, which contains command-specific data.
+    // Total size of the data, only present in Initiate frames.
+    pub data_size: Option<u32>,
     pub payload: Vec<u8>,
 }
 
-// SdoCommand is a payload, not a full frame. It does not implement Codec.
 impl SdoCommand {
-    /// Serializes the SDO command into the provided buffer.
-    /// Returns the number of bytes written.
-    pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        let mut offset = 0;
-        if buffer.len() < 8 {
-            return Err(PowerlinkError::BufferTooShort);
-        }
-
-        buffer[offset] = 0; // Reserved
-        offset += 1;
-        buffer[offset] = self.header.transaction_id;
-        offset += 1;
-
-        let mut flags = 0u8;
-        if self.header.is_response {
-            flags |= 1 << 7;
-        }
-        if self.header.is_aborted {
-            flags |= 1 << 6;
-        }
-        flags |= (self.header.segmentation as u8) << 4;
-        buffer[offset] = flags;
-        offset += 1;
-
-        buffer[offset] = self.header.command_id as u8;
-        offset += 1;
-        buffer[offset..offset + 2].copy_from_slice(&self.header.segment_size.to_le_bytes());
-        offset += 2;
-        buffer[offset..offset + 2].copy_from_slice(&[0, 0]); // Reserved
-        offset += 2;
-
-        if let Some(data_size) = self.data_size {
-            if buffer.len() < offset + 4 {
-                return Err(PowerlinkError::BufferTooShort);
-            }
-            buffer[offset..offset + 4].copy_from_slice(&data_size.to_le_bytes());
-            offset += 4;
-        }
-
-        if buffer.len() < offset + self.payload.len() {
-            return Err(PowerlinkError::BufferTooShort);
-        }
-        buffer[offset..offset + self.payload.len()].copy_from_slice(&self.payload);
-        offset += self.payload.len();
-
-        Ok(offset)
-    }
-
-    /// Deserializes an SDO command from the provided buffer.
     pub fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        if buffer.len() < 8 {
+        if buffer.len() < 4 {
             return Err(PowerlinkError::BufferTooShort);
         }
-
-        let transaction_id = buffer[1];
-        let flags = buffer[2];
-        let is_response = (flags & (1 << 7)) != 0;
-        let is_aborted = (flags & (1 << 6)) != 0;
-        let segmentation = Segmentation::try_from((flags >> 4) & 0b11)?;
-        let command_id = CommandId::try_from(buffer[3])?;
-        let segment_size = u16::from_le_bytes(buffer[4..6].try_into()?);
-
-        let mut offset = 8;
-        let data_size = if segmentation == Segmentation::Initiate {
-            if buffer.len() < 12 {
-                return Err(PowerlinkError::BufferTooShort);
-            }
-            offset = 12;
-            Some(u32::from_le_bytes(buffer[8..12].try_into()?))
-        } else {
-            None
+        let flags = buffer[0];
+        let transaction_id = flags & 0x0F;
+        let is_response = (flags & 0x10) != 0;
+        let is_aborted = (flags & 0x20) != 0;
+        let segmentation = match (flags >> 6) & 0b11 {
+            0 => Segmentation::Expedited,
+            1 => Segmentation::Initiate,
+            2 => Segmentation::Segment,
+            3 => Segmentation::Complete,
+            _ => unreachable!(),
         };
 
-        let payload = buffer[offset..].to_vec();
+        let command_id = CommandId::try_from(buffer[1])?;
+        let segment_size = u16::from_le_bytes(buffer[2..4].try_into()?);
+
+        let header = CommandLayerHeader {
+            transaction_id,
+            is_response,
+            is_aborted,
+            segmentation,
+            command_id,
+            segment_size,
+        };
+
+        // If it's an Initiate frame, the next 4 bytes are the total data size.
+        let (data_size, payload_offset) = if segmentation == Segmentation::Initiate {
+            if buffer.len() < 8 {
+                return Err(PowerlinkError::BufferTooShort);
+            }
+            let size = u32::from_le_bytes(buffer[4..8].try_into()?);
+            (Some(size), 8)
+        } else {
+            (None, 4)
+        };
+
+        // The rest of the buffer is the payload.
+        let payload = buffer[payload_offset..].to_vec();
 
         Ok(SdoCommand {
-            header: CommandLayerHeader {
-                transaction_id,
-                is_response,
-                is_aborted,
-                segmentation,
-                command_id,
-                segment_size,
-            },
+            header,
             data_size,
             payload,
         })
     }
+
+    pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
+        let flags = (self.header.transaction_id & 0x0F)
+            | if self.header.is_response { 0x10 } else { 0 }
+            | if self.header.is_aborted { 0x20 } else { 0 }
+            | ((match self.header.segmentation {
+                Segmentation::Expedited => 0,
+                Segmentation::Initiate => 1,
+                Segmentation::Segment => 2,
+                Segmentation::Complete => 3,
+            }) << 6);
+
+        buffer[0] = flags;
+        buffer[1] = self.header.command_id as u8;
+        buffer[2..4].copy_from_slice(&self.header.segment_size.to_le_bytes());
+
+        let mut current_offset = 4;
+
+        if self.header.segmentation == Segmentation::Initiate {
+            if let Some(size) = self.data_size {
+                buffer[current_offset..current_offset + 4].copy_from_slice(&size.to_le_bytes());
+                current_offset += 4;
+            }
+        }
+
+        let payload_len = self.payload.len();
+        if buffer.len() < current_offset + payload_len {
+            return Err(PowerlinkError::BufferTooShort);
+        }
+        buffer[current_offset..current_offset + payload_len].copy_from_slice(&self.payload);
+
+        Ok(current_offset + payload_len)
+    }
 }
+
+// --- Request Payload Structures ---
 
 /// Payload for a ReadByIndex or WriteByIndex command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
