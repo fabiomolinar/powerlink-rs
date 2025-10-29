@@ -278,35 +278,18 @@ impl<'a> ObjectDictionary<'a> {
     
         let is_tpdo = (0x1A00..=0x1AFF).contains(&index);
         let is_rpdo = (0x1600..=0x16FF).contains(&index);
-        // This function is only called for mapping objects, so this check is redundant but safe.
         if !is_tpdo && !is_rpdo {
-            return Ok(());
+            return Ok(()); // Not a mapping object, no validation needed here.
         }
     
-        // --- 1. Determine the payload size limit for this PDO channel ---
-        // This logic must read other OD values to find the correct limit.
+        // --- 1. Determine the HARD payload size limit for this PDO channel ---
+        // Per spec 6.4.8.2, this check is against the max buffer size, not the actual frame size.
         let payload_limit_bytes = if is_tpdo {
-            let comm_param_index = 0x1800 + (index - 0x1A00);
-            // This is a TPDO. For a CN, this is its PRes. For an MN, it's a PReq.
-            let node_id = self.read_u8(comm_param_index, 1).unwrap_or(0);
-            if node_id == 0 {
-                // This could be a PRes from an MN, or a PRes from a CN (where NodeID is not 0 but reflects self).
-                // Let's assume the local PRes limit applies.
-                self.read_u16(0x1F98, 5).unwrap_or(36) as usize // PresActPayloadLimit_U16
-            } else { // This is a PReq from an MN to a specific CN.
-                // The limit is in the MN-specific list 0x1F8B, indexed by the target CN's Node ID.
-                self.read_u16(0x1F8B, node_id).unwrap_or(36) as usize // NMT_MNPReqPayloadLimitList_AU16
-            }
+            // TPDOs are checked against the max isochronous TRANSMIT buffer size.
+            self.read_u16(0x1F98, 1).unwrap_or(1490) as usize // IsochrTxMaxPayload_U16
         } else { // is_rpdo
-            let comm_param_index = 0x1400 + (index - 0x1600);
-            // This is an RPDO. It comes from either a PReq (NodeID=0) or a PRes from another CN.
-            let node_id = self.read_u8(comm_param_index, 1).unwrap_or(0);
-            if node_id == 0 { // RPDO from a PReq
-                self.read_u16(0x1F98, 4).unwrap_or(36) as usize // PreqActPayloadLimit_U16
-            } else { // RPDO from a PRes of another CN
-                // The limit is based on the expected PRes size from that CN, defined in 0x1F8D.
-                self.read_u16(0x1F8D, node_id).unwrap_or(36) as usize // NMT_PresPayloadLimitList_AU16
-            }
+            // RPDOs are checked against the max isochronous RECEIVE buffer size.
+            self.read_u16(0x1F98, 2).unwrap_or(1490) as usize // IsochrRxMaxPayload_U16
         };
     
         // --- 2. Calculate the required size from the existing mapping entries ---
@@ -338,13 +321,13 @@ impl<'a> ObjectDictionary<'a> {
         // --- 3. Compare and return result ---
         if required_bytes as usize > payload_limit_bytes {
             error!(
-                "PDO mapping validation failed for index {:#06X}. Required size: {} bytes, Limit: {} bytes. [E_PDO_MAP_OVERRUN]",
+                "PDO mapping validation failed for index {:#06X}. Required size: {} bytes, Hard Limit: {} bytes. [E_PDO_MAP_OVERRUN]",
                 index, required_bytes, payload_limit_bytes
             );
             Err(PowerlinkError::PdoMapOverrun)
         } else {
             trace!(
-                "PDO mapping validation successful for index {:#06X}. Required: {} bytes, Limit: {}",
+                "PDO mapping validation successful for index {:#06X}. Required: {} bytes, Hard Limit: {}",
                 index, required_bytes, payload_limit_bytes
             );
             Ok(())
@@ -658,30 +641,47 @@ mod tests {
     #[test]
     fn test_pdo_mapping_validation_success() {
         let mut od = ObjectDictionary::new(None);
-        // PRes Payload Limit = 40 bytes
-        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(40)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
-        // Mapping for PRes (TPDO 0x1A00)
+        // IsochrTxMaxPayload = 100 bytes, PresActPayloadLimit = 40 bytes
+        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(100), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(40)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+        // Mapping for PRes (TPDO 0x1A00) requiring 6 bytes. 6 < 100 (hard limit) -> OK. 6 < 40 (actual limit) -> OK at runtime.
         let mapping1 = PdoMappingEntry { index: 0x6000, sub_index: 1, offset_bits: 0, length_bits: 8 }; // 1 byte at offset 0
         let mapping2 = PdoMappingEntry { index: 0x6001, sub_index: 0, offset_bits: 16, length_bits: 32 }; // 4 bytes at offset 2. Total size = 2+4=6 bytes.
         od.insert(0x1A00, ObjectEntry { object: Object::Array(vec![ObjectValue::Unsigned64(mapping1.to_u64()), ObjectValue::Unsigned64(mapping2.to_u64())]), name: "PDO_TxMappParam_00h_AU64", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
 
-        // Try to enable a mapping with 2 entries. Total size is 6 bytes, which is < 40.
+        // Try to enable a mapping with 2 entries. Total size is 6 bytes, which is < 100 hard limit.
         let result = od.write(0x1A00, 0, ObjectValue::Unsigned8(2));
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_pdo_mapping_validation_failure() {
+    fn test_pdo_mapping_validation_failure_hard_limit() {
         let mut od = ObjectDictionary::new(None);
-        // PRes Payload Limit = 10 bytes
-        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(10)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
-        // Mapping for PRes (TPDO 0x1A00)
+        // IsochrTxMaxPayload = 10 bytes (hard limit)
+        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(10), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(40)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+        // Mapping for PRes (TPDO 0x1A00) requiring 12 bytes.
         let mapping1 = PdoMappingEntry { index: 0x6000, sub_index: 1, offset_bits: 0, length_bits: 64 }; // 8 bytes at offset 0
         let mapping2 = PdoMappingEntry { index: 0x6001, sub_index: 0, offset_bits: 64, length_bits: 32 }; // 4 bytes at offset 8. Total size = 8+4=12 bytes.
         od.insert(0x1A00, ObjectEntry { object: Object::Array(vec![ObjectValue::Unsigned64(mapping1.to_u64()), ObjectValue::Unsigned64(mapping2.to_u64())]), name: "PDO_TxMappParam_00h_AU64", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
 
-        // Try to enable a mapping with 2 entries. Total size is 12 bytes, which is > 10.
+        // Try to enable a mapping with 2 entries. Total size is 12 bytes, which is > 10 hard limit.
         let result = od.write(0x1A00, 0, ObjectValue::Unsigned8(2));
         assert!(matches!(result, Err(PowerlinkError::PdoMapOverrun)));
+    }
+
+    #[test]
+    fn test_pdo_mapping_validation_success_soft_limit() {
+        let mut od = ObjectDictionary::new(None);
+        // IsochrTxMaxPayload = 100 bytes (hard limit), PresActPayloadLimit = 10 bytes (soft limit)
+        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(100), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(10)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+        // Mapping for PRes (TPDO 0x1A00) requiring 12 bytes.
+        let mapping1 = PdoMappingEntry { index: 0x6000, sub_index: 1, offset_bits: 0, length_bits: 64 }; // 8 bytes at offset 0
+        let mapping2 = PdoMappingEntry { index: 0x6001, sub_index: 0, offset_bits: 64, length_bits: 32 }; // 4 bytes at offset 8. Total size = 8+4=12 bytes.
+        od.insert(0x1A00, ObjectEntry { object: Object::Array(vec![ObjectValue::Unsigned64(mapping1.to_u64()), ObjectValue::Unsigned64(mapping2.to_u64())]), name: "PDO_TxMappParam_00h_AU64", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+
+        // Try to enable a mapping with 2 entries. Total size is 12 bytes.
+        // 12 > 10 (soft limit) but 12 < 100 (hard limit).
+        // The configuration should be ACCEPTED.
+        let result = od.write(0x1A00, 0, ObjectValue::Unsigned8(2));
+        assert!(result.is_ok(), "Configuration should be accepted even if it exceeds the soft limit");
     }
 }
