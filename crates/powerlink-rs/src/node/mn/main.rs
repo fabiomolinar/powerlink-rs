@@ -1,8 +1,7 @@
-// crates/powerlink-rs/src/node/mn/main.rs
 use super::cycle;
 use super::events;
 use super::payload;
-use super::state::{AsyncRequest, CnState, CyclePhase};
+use super::state::{AsyncRequest, CnInfo, CnState, CyclePhase};
 use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
@@ -44,7 +43,7 @@ pub struct ManagingNode<'s> {
     pub(super) multiplex_cycle_len: u8,
     pub(super) multiplex_assign: BTreeMap<NodeId, u8>,
     pub(super) current_multiplex_cycle: u8,
-    pub(super) node_states: BTreeMap<NodeId, CnState>,
+    pub(super) node_info: BTreeMap<NodeId, CnInfo>,
     pub(super) mandatory_nodes: Vec<NodeId>,
     pub(super) isochronous_nodes: Vec<NodeId>,
     pub(super) async_only_nodes: Vec<NodeId>,
@@ -52,6 +51,7 @@ pub struct ManagingNode<'s> {
     pub(super) current_phase: CyclePhase,
     pub(super) current_polled_cn: Option<NodeId>,
     pub(super) async_request_queue: BinaryHeap<AsyncRequest>,
+    pub(super) pending_status_requests: Vec<NodeId>,
     pub(super) pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
     pub(super) mn_async_send_queue: Vec<PowerlinkFrame>,
     pub(super) last_ident_poll_node_id: NodeId,
@@ -78,7 +78,7 @@ impl<'s> ManagingNode<'s> {
             .read_u8(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_MULTIPLEX_CYCLE_LEN)
             .unwrap_or(0);
 
-        let mut node_states = BTreeMap::new();
+        let mut node_info = BTreeMap::new();
         let mut mandatory_nodes = Vec::new();
         let mut isochronous_nodes = Vec::new();
         let mut async_only_nodes = Vec::new();
@@ -89,7 +89,7 @@ impl<'s> ManagingNode<'s> {
                 if let ObjectValue::Unsigned32(assignment) = entry {
                     if (assignment & 1) != 0 {
                         if let Ok(node_id) = NodeId::try_from(i as u8) {
-                            node_states.insert(node_id, CnState::Unknown);
+                            node_info.insert(node_id, CnInfo::default());
                             if (assignment & (1 << 3)) != 0 {
                                 mandatory_nodes.push(node_id);
                             }
@@ -108,7 +108,7 @@ impl<'s> ManagingNode<'s> {
         }
         info!(
             "MN configured to manage {} nodes ({} mandatory, {} isochronous, {} async-only). Multiplex Cycle Length: {}",
-            node_states.len(),
+            node_info.len(),
             mandatory_nodes.len(),
             isochronous_nodes.len(),
             async_only_nodes.len(),
@@ -125,7 +125,7 @@ impl<'s> ManagingNode<'s> {
             multiplex_cycle_len,
             multiplex_assign,
             current_multiplex_cycle: 0,
-            node_states,
+            node_info,
             mandatory_nodes,
             isochronous_nodes,
             async_only_nodes,
@@ -133,6 +133,7 @@ impl<'s> ManagingNode<'s> {
             current_phase: CyclePhase::Idle,
             current_polled_cn: None,
             async_request_queue: BinaryHeap::new(),
+            pending_status_requests: Vec::new(),
             pending_nmt_commands: Vec::new(),
             mn_async_send_queue: Vec::new(),
             last_ident_poll_node_id: NodeId(0),
@@ -352,9 +353,9 @@ impl<'s> Node for ManagingNode<'s> {
             events::handle_dll_event(self, timeout_event, &dummy_frame);
 
             if timeout_event == DllMsEvent::PresTimeout {
-                if let Some(state) = self.node_states.get_mut(&missed_node) {
-                    if *state >= CnState::Identified && *state != CnState::Stopped {
-                        *state = CnState::Missing;
+                if let Some(info) = self.node_info.get_mut(&missed_node) {
+                    if info.state >= CnState::Identified && info.state != CnState::Stopped {
+                        info.state = CnState::Missing;
                     }
                 }
                 action = self.advance_cycle_phase(current_time_us);

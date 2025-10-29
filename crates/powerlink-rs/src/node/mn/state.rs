@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/mn/state.rs
 use crate::types::NodeId;
 use core::cmp::Ordering;
 
@@ -18,6 +17,29 @@ pub enum CnState {
     /// Node missed a PRes or timed out, or other communication error occurred.
     Missing,
 }
+
+/// A struct holding all state information for a single CN, as tracked by the MN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CnInfo {
+    /// The last known NMT state of the CN.
+    pub state: CnState,
+    /// The last known EN (Exception New) flag received from the CN.
+    pub en_flag: bool,
+    /// The last EA (Exception Acknowledge) flag sent *to* the CN by the MN.
+    pub ea_flag: bool,
+}
+
+impl Default for CnInfo {
+    fn default() -> Self {
+        Self {
+            state: CnState::Unknown,
+            // Both flags start as false, as no error has been signaled or acknowledged.
+            en_flag: false,
+            ea_flag: false,
+        }
+    }
+}
+
 
 /// Tracks the current phase within the POWERLINK cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

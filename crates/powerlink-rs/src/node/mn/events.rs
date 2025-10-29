@@ -1,7 +1,6 @@
-// crates/powerlink-rs/src/node/mn/events.rs
 use super::main::ManagingNode;
 use super::scheduler;
-use super::state::{AsyncRequest, CnState, CyclePhase};
+use super::state::{AsyncRequest, CnInfo, CnState, CyclePhase};
 use crate::Node;
 use crate::frame::{
     ASndFrame, DllMsEvent, PResFrame, PowerlinkFrame, ServiceId,
@@ -49,8 +48,8 @@ pub(super) fn process_frame(node: &mut ManagingNode, frame: PowerlinkFrame, curr
                     pres_frame.pdo_version,
                     pres_frame.flags.rd,
                 );
-                // Handle async requests flagged in PRes
-                handle_pres_flags(node, &pres_frame);
+                // Handle async and error signaling flags in PRes
+                handle_pres_frame(node, &pres_frame);
                 // PRes received, advance to the next action in the cycle.
                 let action = node.advance_cycle_phase(current_time_us);
                 // TODO: The action needs to be returned to the main loop to be sent.
@@ -60,7 +59,7 @@ pub(super) fn process_frame(node: &mut ManagingNode, frame: PowerlinkFrame, curr
                     "[MN] Received unexpected PRes from Node {}.",
                     pres_frame.source.0
                 );
-                handle_pres_flags(node, &pres_frame);
+                handle_pres_frame(node, &pres_frame);
             }
         }
         PowerlinkFrame::ASnd(asnd_frame) => {
@@ -122,8 +121,8 @@ pub(super) fn handle_dll_event(
                         "[MN] DLL Error threshold met for Node {}. Requesting Node Reset.",
                         node_id.0
                     );
-                    if let Some(state) = node.node_states.get_mut(&node_id) {
-                        *state = CnState::Missing;
+                    if let Some(info) = node.node_info.get_mut(&node_id) {
+                        info.state = CnState::Missing;
                     }
                     node.pending_nmt_commands
                         .push((crate::nmt::events::NmtCommand::ResetNode, node_id));
@@ -145,10 +144,10 @@ fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
     match frame.service_id {
         ServiceId::IdentResponse => {
             let node_id = frame.source;
-            if let Some(state) = node.node_states.get_mut(&node_id) {
-                if *state == CnState::Unknown || *state == CnState::Missing {
-                    *state = CnState::Identified;
-                    info!("[MN] Node {} identified.", node_id.0);
+            if let Some(info) = node.node_info.get_mut(&node_id) {
+                if info.state == CnState::Unknown || info.state == CnState::Missing {
+                    info.state = CnState::Identified;
+                    info!("_ [MN] Node {} identified.", node_id.0);
                     scheduler::check_bootup_state(node);
                 }
             } else {
@@ -159,10 +158,21 @@ fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
             }
         }
         ServiceId::StatusResponse => {
+            let node_id = frame.source;
             trace!(
-                "[MN] Received StatusResponse from CN {}. Processing not yet fully implemented.",
+                "[MN] Received StatusResponse from CN {}.",
                 frame.source.0
             );
+            if let Some(info) = node.node_info.get_mut(&node_id) {
+                // The handshake is complete. Update the MN's EA flag to match the CN's EN flag.
+                // This new EA value will be sent in the next PReq.
+                info.ea_flag = info.en_flag;
+                info!(
+                    "[MN] StatusResponse from Node {} processed. Updated EA flag to {}.",
+                    node_id.0, info.ea_flag
+                );
+                // TODO: Process the actual error information in the StatusResponse payload.
+            }
         }
         _ => {
             trace!(
@@ -173,8 +183,9 @@ fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
     }
 }
 
-/// Checks the flags in a received PRes frame and queues async requests.
-fn handle_pres_flags(node: &mut ManagingNode, pres: &PResFrame) {
+/// Checks the flags in a received PRes frame for async requests and error signals.
+fn handle_pres_frame(node: &mut ManagingNode, pres: &PResFrame) {
+    // 1. Handle async requests flagged by RS.
     if pres.flags.rs.get() > 0 {
         debug!("[MN] Node {} requesting async transmission.", pres.source.0);
         node.async_request_queue.push(AsyncRequest {
@@ -182,24 +193,45 @@ fn handle_pres_flags(node: &mut ManagingNode, pres: &PResFrame) {
             priority: pres.flags.pr as u8,
         });
     }
+
+    // 2. Handle error signaling with EN/EA flags.
+    if let Some(info) = node.node_info.get_mut(&pres.source) {
+        // Store the received EN flag from the CN
+        info.en_flag = pres.flags.en;
+
+        // Spec 6.5.6: If the MN detects that the last sent EA bit is different to
+        // the last received EN bit, it shall send a StatusRequest frame to the CN.
+        if info.en_flag != info.ea_flag {
+            info!(
+                "[MN] Detected EN/EA mismatch for Node {}. (EN={}, EA={}). Queuing StatusRequest.",
+                pres.source.0, info.en_flag, info.ea_flag
+            );
+            // Add the node to a queue to be polled with a StatusRequest.
+            // Avoid adding duplicates if a request is already pending.
+            if !node.pending_status_requests.contains(&pres.source) {
+                node.pending_status_requests.push(pres.source);
+            }
+        }
+    }
 }
+
 
 /// Updates the MN's internal state tracker for a CN based on its reported NMT state.
 fn update_cn_state(node: &mut ManagingNode, node_id: NodeId, reported_state: NmtState) {
-    if let Some(current_state_ref) = node.node_states.get_mut(&node_id) {
+    if let Some(current_info) = node.node_info.get_mut(&node_id) {
         let new_state = match reported_state {
             NmtState::NmtPreOperational1 => CnState::Identified,
             NmtState::NmtPreOperational2 | NmtState::NmtReadyToOperate => CnState::PreOperational,
             NmtState::NmtOperational => CnState::Operational,
             NmtState::NmtCsStopped => CnState::Stopped,
-            _ => *current_state_ref,
+            _ => current_info.state,
         };
-        if *current_state_ref != new_state {
+        if current_info.state != new_state {
             info!(
                 "[MN] Node {} state changed: {:?} -> {:?}",
-                node_id.0, *current_state_ref, new_state
+                node_id.0, current_info.state, new_state
             );
-            *current_state_ref = new_state;
+            current_info.state = new_state;
             scheduler::check_bootup_state(node);
         }
     }

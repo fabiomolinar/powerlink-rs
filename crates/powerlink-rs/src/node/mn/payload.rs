@@ -1,26 +1,22 @@
-// crates/powerlink-rs/src/node/mn/payload.rs
-// path: crates/powerlink-rs/src/node/mn/payload.rs
-use crate::frame::basic::MacAddress; // Import needed for build_nmt_command_frame
+use crate::frame::basic::MacAddress;
 use crate::frame::control::{SoAFlags, SocFlags};
 use crate::frame::poll::PReqFlags; // Import directly
-// Added ASndFrame and ServiceId for NMT commands
 use crate::frame::{
     ASndFrame, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame,
     SocFrame,
 };
-// Added NmtCommand
 use crate::nmt::events::NmtCommand;
-use crate::node::Node; // Import Node trait for nmt_state()
+use crate::node::mn::state::CnState;
+use crate::node::Node;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
-// Added needed constants
 use super::main::ManagingNode;
 use crate::PowerlinkError;
-use crate::common::{NetTime, RelativeTime}; // ERROR FIX: Added imports
+use crate::common::{NetTime, RelativeTime};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId}; // Added C_ADR_BROADCAST_NODE_ID
 use alloc::vec;
 use alloc::vec::Vec;
-use log::{debug, error, trace, warn}; // ERROR FIX: Added import
+use log::{debug, error, trace, warn, info};
 
 // Constants for OD access
 const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
@@ -112,10 +108,16 @@ pub(super) fn build_preq_frame(
     match payload_result {
         Ok((payload, pdo_version)) => {
             let rd_flag = node.nmt_state() == crate::nmt::states::NmtState::NmtOperational;
+            // Get the last known EA flag for this node
+            let ea_flag = node
+                .node_info
+                .get(&target_node_id)
+                .map_or(false, |info| info.ea_flag);
+
             let flags = PReqFlags {
                 rd: rd_flag,
                 ms: is_multiplexed,
-                ea: false,
+                ea: ea_flag,
             };
 
             PowerlinkFrame::PReq(PReqFrame::new(
@@ -248,12 +250,29 @@ pub(super) fn build_soa_frame(
     );
     let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
 
-    // State mutation is now handled by the caller in main.rs
+    let mut flags = SoAFlags::default();
+    // Check if this SoA is a StatusRequest that needs the ER flag set.
+    // Spec 6.5.5: MN sends ER=1 to prepare CN for error signaling.
+    // A good time to do this is during the boot-up process.
+    if req_service == RequestedServiceId::StatusRequest {
+        if let Some(info) = node.node_info.get(&target_node) {
+            // Send ER=1 if the CN is in PreOp2 and we haven't confirmed
+            // its error signaling is initialized yet.
+            if info.state == CnState::PreOperational {
+                // Heuristic: if EA is false, we probably haven't completed the handshake yet.
+                // A more robust check might involve a separate "error_signaling_initialized" flag.
+                if !info.ea_flag {
+                    flags.er = true;
+                    info!("[MN] Setting ER=1 in SoA(StatusRequest) for Node {} during boot-up.", target_node.0);
+                }
+            }
+        }
+    }
 
     PowerlinkFrame::SoA(SoAFrame::new(
         node.mac_address,
         node.nmt_state(),
-        SoAFlags::default(),
+        flags,
         req_service,
         target_node,
         epl_version,
