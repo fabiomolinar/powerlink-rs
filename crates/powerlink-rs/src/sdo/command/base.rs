@@ -200,7 +200,7 @@ impl ReadByIndexRequest {
     }
 }
 
-/// Payload for a ReadByName or WriteByName command.
+/// Payload for a ReadByName command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadByNameRequest {
     pub name: String,
@@ -236,6 +236,26 @@ impl<'a> WriteByIndexRequest<'a> {
         })
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteByNameRequest<'a> {
+    pub name: String,
+    pub data: &'a [u8],
+}
+
+impl<'a> WriteByNameRequest<'a> {
+    pub fn from_payload(payload: &'a [u8]) -> Result<Self, PowerlinkError> {
+        let name_end = payload.iter().position(|&b| b == 0).unwrap_or(0);
+        if name_end == 0 {
+            return Err(PowerlinkError::SdoInvalidCommandPayload);
+        }
+        let name = String::from_utf8(payload[..name_end].to_vec())
+            .map_err(|_| PowerlinkError::SdoInvalidCommandPayload)?;
+        let data = &payload[name_end + 1..];
+        Ok(Self { name, data })
+    }
+}
+
 
 /// A single entry in a Read/Write Multiple Parameters request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

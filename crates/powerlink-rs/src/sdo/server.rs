@@ -5,6 +5,7 @@ use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::command::{
     CommandId, CommandLayerHeader, DefaultSdoHandler, ReadByIndexRequest, ReadByNameRequest,
     ReadMultipleParamRequest, SdoCommand, SdoCommandHandler, Segmentation, WriteByIndexRequest,
+    WriteByNameRequest,
 };
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::state::{SdoServerState, SdoTransferState};
@@ -289,7 +290,7 @@ impl SdoServer {
             CommandId::ReadByIndex => self.handle_read_by_index(command, response_header, od, current_time_us),
             CommandId::WriteByIndex => self.handle_write_by_index(command, response_header, od, current_time_us),
             CommandId::ReadByName => self.handle_read_by_name(command, response_header, od, current_time_us),
-            CommandId::WriteByName => self.handle_write_by_name(command, response_header, od),
+            CommandId::WriteByName => self.handle_write_by_name(command, response_header, od, current_time_us),
             CommandId::ReadAllByIndex => self.handle_read_all_by_index(command, response_header, od, current_time_us),
             CommandId::ReadMultipleParamByIndex => self.handle_read_multiple_params(command, response_header, od, current_time_us),
             CommandId::MaxSegmentSize => self.handle_max_segment_size(command, response_header),
@@ -550,14 +551,32 @@ impl SdoServer {
 
     fn handle_write_by_name(
         &mut self,
-        command: SdoCommand,
-        _response_header: CommandLayerHeader,
-        _od: &mut ObjectDictionary,
+        mut command: SdoCommand,
+        response_header: CommandLayerHeader,
+        od: &mut ObjectDictionary,
+        current_time_us: u64,
     ) -> SdoCommand {
-        // This is complex as payload contains name and data. Not implementing segmented transfer for it yet.
-        warn!("WriteByName is not fully supported.");
-        self.abort(command.header.transaction_id, 0x0601_0001) // Unsupported access
+        match WriteByNameRequest::from_payload(&command.payload) {
+            Ok(req) => {
+                info!("Processing SDO WriteByName for '{}'", req.name);
+                if let Some((index, sub_index)) = od.find_by_name(&req.name) {
+                    // Reconstruct the payload to match WriteByIndex format: [index, sub_index, data...]
+                    let mut new_payload = Vec::with_capacity(3 + req.data.len());
+                    new_payload.extend_from_slice(&index.to_le_bytes());
+                    new_payload.push(sub_index);
+                    new_payload.extend_from_slice(req.data);
+                    command.payload = new_payload;
+
+                    // Delegate to the existing WriteByIndex handler
+                    self.handle_write_by_index(command, response_header, od, current_time_us)
+                } else {
+                    self.abort(command.header.transaction_id, 0x060A_0023) // Resource not available
+                }
+            }
+            Err(_) => self.abort(command.header.transaction_id, 0x0800_0000),
+        }
     }
+
 
     fn handle_read_all_by_index(
         &mut self,
