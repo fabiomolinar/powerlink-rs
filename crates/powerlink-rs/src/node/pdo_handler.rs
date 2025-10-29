@@ -24,11 +24,7 @@ pub trait PdoHandler<'s> {
     fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler>;
 
     /// Helper to update the PDO error logging objects (0x1C80, 0x1C81).
-    fn update_pdo_error_object(
-        &mut self,
-        object_index: u16,
-        source_node_id: NodeId,
-    ) {
+    fn update_pdo_error_object(&mut self, object_index: u16, source_node_id: NodeId) {
         let node_id_val = source_node_id.0;
         // Do not log for PReq source (0) or invalid/broadcast node IDs
         if node_id_val == 0 || node_id_val > 254 {
@@ -47,14 +43,28 @@ pub trait PdoHandler<'s> {
                 if let Some(byte_to_modify) = bytes.get_mut(byte_index) {
                     *byte_to_modify |= 1 << bit_index;
                     // Write back to the OD, ignoring access rights.
-                    if let Err(e) = self.od().write_internal(object_index, 0, ObjectValue::OctetString(bytes), false) {
-                        error!("[PDO] Failed to update PDO error object {:#06X}: {:?}", object_index, e);
+                    if let Err(e) = self.od().write_internal(
+                        object_index,
+                        0,
+                        ObjectValue::OctetString(bytes),
+                        false,
+                    ) {
+                        error!(
+                            "[PDO] Failed to update PDO error object {:#06X}: {:?}",
+                            object_index, e
+                        );
                     }
                 } else {
-                    warn!("[PDO] Error object {:#06X} has incorrect length (expected 32 bytes).", object_index);
+                    warn!(
+                        "[PDO] Error object {:#06X} has incorrect length (expected 32 bytes).",
+                        object_index
+                    );
                 }
             } else {
-                warn!("[PDO] Error object {:#06X} is not an OctetString.", object_index);
+                warn!(
+                    "[PDO] Error object {:#06X} is not an OctetString.",
+                    object_index
+                );
             }
         }
         // If the object doesn't exist (it's optional), we silently do nothing.

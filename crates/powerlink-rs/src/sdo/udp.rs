@@ -2,11 +2,11 @@
 //! Handles serialization and deserialization of SDO data within UDP payloads.
 //! (Reference: EPSG DS 301, Section 6.3.2.1 and Table 47)
 
+use crate::PowerlinkError;
+use crate::frame::ServiceId;
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
-use crate::frame::ServiceId;
 use crate::types::MessageType;
-use crate::PowerlinkError;
 use log::trace;
 
 /// The fixed size prefix before the SDO Sequence Layer in a UDP payload.
@@ -66,7 +66,8 @@ pub fn deserialize_sdo_udp_payload(
 ) -> Result<(SequenceLayerHeader, SdoCommand), PowerlinkError> {
     trace!(
         "Deserializing SDO UDP payload ({} bytes): {:02X?}",
-        buffer.len(), buffer
+        buffer.len(),
+        buffer
     );
     // 1. Check minimum length (prefix + seq header) and prefix values
     if buffer.len() < UDP_SDO_PREFIX_SIZE + 4 {

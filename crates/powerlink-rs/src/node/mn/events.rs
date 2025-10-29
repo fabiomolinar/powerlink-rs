@@ -10,7 +10,7 @@ use crate::nmt::NmtStateMachine;
 use crate::nmt::{events::NmtEvent, states::NmtState};
 use crate::node::PdoHandler;
 use crate::types::NodeId;
-use log::{debug, info, trace, warn, error};
+use log::{debug, error, info, trace, warn};
 
 /// Internal function to process a deserialized `PowerlinkFrame`.
 /// The MN primarily *consumes* PRes and ASnd frames.
@@ -159,10 +159,7 @@ fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
         }
         ServiceId::StatusResponse => {
             let node_id = frame.source;
-            trace!(
-                "[MN] Received StatusResponse from CN {}.",
-                frame.source.0
-            );
+            trace!("[MN] Received StatusResponse from CN {}.", frame.source.0);
             if let Some(info) = node.node_info.get_mut(&node_id) {
                 // The handshake is complete. Update the MN's EA flag to match the CN's EN flag.
                 // This new EA value will be sent in the next PReq.
@@ -189,22 +186,35 @@ fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
 fn process_status_response_payload(source_node: NodeId, payload: &[u8]) {
     // The StatusResponse payload starts at offset 6 within the ASnd service slot.
     if payload.len() < 6 {
-        warn!("[MN] Received StatusResponse from Node {} with invalid short payload ({} bytes).", source_node.0, payload.len());
+        warn!(
+            "[MN] Received StatusResponse from Node {} with invalid short payload ({} bytes).",
+            source_node.0,
+            payload.len()
+        );
         return;
     }
     let status_payload = &payload[6..];
 
     // 1. Parse Static Error Bit Field (first 8 bytes)
     if status_payload.len() < 8 {
-        warn!("[MN] StatusResponse payload from Node {} is too short for Static Error Bit Field.", source_node.0);
+        warn!(
+            "[MN] StatusResponse payload from Node {} is too short for Static Error Bit Field.",
+            source_node.0
+        );
         return;
     }
     match StaticErrorBitField::deserialize(status_payload) {
         Ok(field) => {
-            info!("[MN] StatusResponse from Node {}: ErrorRegister = {:#04x}, SpecificErrors = {:02X?}", source_node.0, field.error_register, field.specific_errors);
+            info!(
+                "[MN] StatusResponse from Node {}: ErrorRegister = {:#04x}, SpecificErrors = {:02X?}",
+                source_node.0, field.error_register, field.specific_errors
+            );
         }
         Err(e) => {
-            error!("[MN] Failed to parse StaticErrorBitField from Node {}: {:?}", source_node.0, e);
+            error!(
+                "[MN] Failed to parse StaticErrorBitField from Node {}: {:?}",
+                source_node.0, e
+            );
             return;
         }
     }
@@ -217,21 +227,29 @@ fn process_status_response_payload(source_node: NodeId, payload: &[u8]) {
             Ok(entry) => {
                 // The list is terminated by an entry with Mode = Terminator
                 if entry.entry_type.mode == ErrorEntryMode::Terminator {
-                    trace!("[MN] End of StatusResponse error entries for Node {}.", source_node.0);
+                    trace!(
+                        "[MN] End of StatusResponse error entries for Node {}.",
+                        source_node.0
+                    );
                     break;
                 }
-                warn!("[MN] StatusResponse from Node {}: Received Error/Event Entry: {:?}", source_node.0, entry);
+                warn!(
+                    "[MN] StatusResponse from Node {}: Received Error/Event Entry: {:?}",
+                    source_node.0, entry
+                );
                 // In a real application, this entry would be processed or stored.
                 offset += 20;
             }
             Err(e) => {
-                error!("[MN] Failed to parse ErrorEntry from Node {}: {:?}", source_node.0, e);
+                error!(
+                    "[MN] Failed to parse ErrorEntry from Node {}: {:?}",
+                    source_node.0, e
+                );
                 break; // Stop parsing on error
             }
         }
     }
 }
-
 
 /// Checks the flags in a received PRes frame for async requests and error signals.
 fn handle_pres_frame(node: &mut ManagingNode, pres: &PResFrame) {
@@ -264,7 +282,6 @@ fn handle_pres_frame(node: &mut ManagingNode, pres: &PResFrame) {
         }
     }
 }
-
 
 /// Updates the MN's internal state tracker for a CN based on its reported NMT state.
 fn update_cn_state(node: &mut ManagingNode, node_id: NodeId, reported_state: NmtState) {

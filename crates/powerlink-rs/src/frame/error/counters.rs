@@ -391,7 +391,6 @@ mod tests {
         // A further decrement when inactive should return false
         assert!(!cn_counters.on_cycle_complete());
 
-
         let mut mn_counters = MnErrorCounters::new();
         let node_id = NodeId(10);
         mn_counters.handle_error(

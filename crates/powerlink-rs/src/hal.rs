@@ -205,10 +205,8 @@ pub trait ObjectDictionaryStorage {
     fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, PowerlinkError>;
 
     /// Saves the given storable parameters to non-volatile memory.
-    fn save(
-        &mut self,
-        parameters: &BTreeMap<(u16, u8), ObjectValue>,
-    ) -> Result<(), PowerlinkError>;
+    fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>)
+    -> Result<(), PowerlinkError>;
 
     /// Clears all stored parameters from non-volatile memory.
     fn clear(&mut self) -> Result<(), PowerlinkError>;

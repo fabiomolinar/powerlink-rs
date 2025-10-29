@@ -1,7 +1,7 @@
 use super::main::ManagingNode;
 use crate::frame::RequestedServiceId;
-use crate::nmt::{NmtEvent, NmtStateMachine, states::NmtState}; 
-use crate::node::Node; 
+use crate::nmt::{NmtEvent, NmtStateMachine, states::NmtState};
+use crate::node::Node;
 use crate::node::mn::state::{CnInfo, CnState};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use log::{debug, info, trace};
@@ -15,7 +15,9 @@ use log::{debug, info, trace};
 /// 5. Find and identify unknown/missing nodes.
 /// 6. Poll async-only nodes.
 /// 7. Service pending ASnd requests from CNs.
-pub(super) fn determine_next_async_action(node: &mut ManagingNode) -> (RequestedServiceId, NodeId, bool) {
+pub(super) fn determine_next_async_action(
+    node: &mut ManagingNode,
+) -> (RequestedServiceId, NodeId, bool) {
     // 1. Check for pending Exception Reset requests (highest priority).
     if let Some(node_to_reset) = node.pending_er_requests.pop() {
         info!("[MN] Prioritizing ER for Node {}.", node_to_reset.0);
@@ -78,7 +80,6 @@ pub(super) fn determine_next_async_action(node: &mut ManagingNode) -> (Requested
     // 8. If nothing else to do, send a SoA with NoService
     (RequestedServiceId::NoService, NodeId(0), false)
 }
-
 
 /// Checks if MN can transition NMT state based on mandatory CN states.
 pub(super) fn check_bootup_state(node: &mut ManagingNode) {
@@ -185,7 +186,16 @@ pub(super) fn find_next_node_to_identify(node: &mut ManagingNode) -> Option<Node
         // Check if this node ID exists in our configured node state map
         // AND if its current state is Unknown or Missing.
         let info = node.node_info.get(&node_id).copied();
-        if matches!(info, Some(CnInfo { state: CnState::Unknown, .. }) | Some(CnInfo { state: CnState::Missing, .. })) {
+        if matches!(
+            info,
+            Some(CnInfo {
+                state: CnState::Unknown,
+                ..
+            }) | Some(CnInfo {
+                state: CnState::Missing,
+                ..
+            })
+        ) {
             // Found a node to poll
             debug!(
                 "[MN] Found unidentified or missing Node {} to poll.",

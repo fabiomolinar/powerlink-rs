@@ -113,7 +113,8 @@ pub(super) fn build_pres_response(
     let (payload, pdo_version, payload_is_valid) = match build_tpdo_payload(od) {
         Ok((payload, version)) => (payload, version, true),
         Err(e) => {
-            error!( // Changed to error as this indicates a configuration problem
+            error!(
+                // Changed to error as this indicates a configuration problem
                 "Failed to build TPDO payload for PRes: {:?}. Sending empty PRes.",
                 e
             );
@@ -221,7 +222,9 @@ fn build_status_response_payload(
 ) -> Vec<u8> {
     // --- Determine max payload size ---
     // The payload limit is defined by AsyncMTU (0x1F98/8), minus ASnd header (4 bytes)
-    let mtu = od.read_u16(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_MTU).unwrap_or(300) as usize;
+    let mtu = od
+        .read_u16(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_MTU)
+        .unwrap_or(300) as usize;
     let max_payload_size = mtu.saturating_sub(4);
 
     // --- Base payload with fixed fields ---
@@ -246,13 +249,30 @@ fn build_status_response_payload(
     while let Some(entry) = emergency_queue.front() {
         // Check if there is enough space for the next 20-byte entry.
         if payload.len() + 20 > max_payload_size {
-            warn!("[CN] Not enough space in StatusResponse for all queued errors. Remaining: {}", emergency_queue.len());
+            warn!(
+                "[CN] Not enough space in StatusResponse for all queued errors. Remaining: {}",
+                emergency_queue.len()
+            );
             break;
         }
 
         // Serialize the entry into the temporary buffer.
         entry_buffer.fill(0);
-        entry_buffer[0..2].copy_from_slice(&((entry.entry_type.profile & 0x0FFF) | ((entry.entry_type.mode as u16) << 12) | if entry.entry_type.is_status_entry { 1 << 15 } else { 0 } | if entry.entry_type.send_to_queue { 1 << 14 } else { 0 }).to_le_bytes());
+        entry_buffer[0..2].copy_from_slice(
+            &((entry.entry_type.profile & 0x0FFF)
+                | ((entry.entry_type.mode as u16) << 12)
+                | if entry.entry_type.is_status_entry {
+                    1 << 15
+                } else {
+                    0
+                }
+                | if entry.entry_type.send_to_queue {
+                    1 << 14
+                } else {
+                    0
+                })
+            .to_le_bytes(),
+        );
         entry_buffer[2..4].copy_from_slice(&entry.error_code.to_le_bytes());
         entry_buffer[4..8].copy_from_slice(&entry.timestamp.seconds.to_le_bytes());
         entry_buffer[8..12].copy_from_slice(&entry.timestamp.nanoseconds.to_le_bytes());
@@ -261,14 +281,16 @@ fn build_status_response_payload(
         // Append to the main payload and remove from the queue.
         payload.extend_from_slice(&entry_buffer);
         emergency_queue.pop_front();
-        trace!("[CN] Added error entry to StatusResponse. Queue size: {}", emergency_queue.len());
+        trace!(
+            "[CN] Added error entry to StatusResponse. Queue size: {}",
+            emergency_queue.len()
+        );
     }
 
     // Per spec 6.5.8.2, if not all available space is used, a terminator entry (Mode=0) should be added.
     if payload.len() + 20 <= max_payload_size {
         payload.extend_from_slice(&[0u8; 20]); // Add an all-zero entry as a terminator
     }
-
 
     payload
 }
@@ -293,7 +315,6 @@ pub(super) fn build_sdo_abort_from_payload(
     );
     PowerlinkFrame::ASnd(abort_asnd)
 }
-
 
 /// Builds an ASnd frame containing an SDO Abort message.
 pub(super) fn build_sdo_abort_response(

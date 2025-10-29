@@ -139,7 +139,6 @@ impl<'a> ObjectDictionary<'a> {
             })
     }
 
-
     /// Reads an object's enum (`Object::Variable`, `Object::Array`, etc.) by index.
     /// This is a helper for accessing the structural part of an entry.
     pub fn read_object(&self, index: u16) -> Option<&Object> {
@@ -195,7 +194,10 @@ impl<'a> ObjectDictionary<'a> {
         sub_index: u8,
         value: ObjectValue,
     ) -> Result<(), PowerlinkError> {
-        trace!("Attempting OD write: {:#06X}/{}, Value: {:?}", index, sub_index, value);
+        trace!(
+            "Attempting OD write: {:#06X}/{}, Value: {:?}",
+            index, sub_index, value
+        );
         // Special case for Store Parameters command (1010h).
         if index == 0x1010 {
             if let ObjectValue::VisibleString(s) = &value {
@@ -214,12 +216,12 @@ impl<'a> ObjectDictionary<'a> {
         // Special case for Restore Default Parameters command (1011h).
         if index == 0x1011 {
             if let ObjectValue::VisibleString(s) = &value {
-                 // Allow "load" string for sub-indices > 0
+                // Allow "load" string for sub-indices > 0
                 if sub_index > 0 && s == "load" {
                     return self.restore_defaults(sub_index);
                 }
             }
-             // Reject if sub-index is 0 or signature is wrong
+            // Reject if sub-index is 0 or signature is wrong
             error!("Invalid signature or sub-index for Restore Defaults (1011h)");
             return Err(PowerlinkError::StorageError(
                 "Invalid signature or sub-index for Restore Defaults",
@@ -235,12 +237,18 @@ impl<'a> ObjectDictionary<'a> {
             if let ObjectValue::Unsigned8(new_num_entries) = value {
                 // Validate the mapping size *before* attempting the internal write.
                 self.validate_pdo_mapping(index, new_num_entries)?;
-                 trace!("PDO mapping validation successful for {:#06X}, enabling {} entries.", index, new_num_entries);
+                trace!(
+                    "PDO mapping validation successful for {:#06X}, enabling {} entries.",
+                    index, new_num_entries
+                );
                 // Proceed to write_internal, but bypass normal access checks and the sub-index 0 check
-                 return self.write_internal(index, sub_index, value, false);
+                return self.write_internal(index, sub_index, value, false);
             } else {
                 // NumberOfEntries must always be a U8 value.
-                error!("Type mismatch writing to PDO mapping {:#06X}/0: Expected U8.", index);
+                error!(
+                    "Type mismatch writing to PDO mapping {:#06X}/0: Expected U8.",
+                    index
+                );
                 return Err(PowerlinkError::TypeMismatch);
             }
         }
@@ -348,16 +356,22 @@ impl<'a> ObjectDictionary<'a> {
     /// This should be called *before* writing to NumberOfEntries (sub-index 0) of a mapping object.
     fn validate_pdo_mapping(&self, index: u16, new_num_entries: u8) -> Result<(), PowerlinkError> {
         if new_num_entries == 0 {
-             trace!("PDO mapping {:#06X} deactivated (0 entries). Validation skipped.", index);
+            trace!(
+                "PDO mapping {:#06X} deactivated (0 entries). Validation skipped.",
+                index
+            );
             return Ok(()); // Deactivating a mapping is always valid.
         }
 
         let is_tpdo = (0x1A00..=0x1AFF).contains(&index);
         let is_rpdo = (0x1600..=0x16FF).contains(&index);
         if !is_tpdo && !is_rpdo {
-             // Should not happen if called correctly from `write`
-             error!("validate_pdo_mapping called for non-PDO index {:#06X}", index);
-             return Ok(());
+            // Should not happen if called correctly from `write`
+            error!(
+                "validate_pdo_mapping called for non-PDO index {:#06X}",
+                index
+            );
+            return Ok(());
         }
 
         // --- 1. Determine the HARD payload size limit for this PDO channel ---
@@ -365,7 +379,8 @@ impl<'a> ObjectDictionary<'a> {
         let payload_limit_bytes = if is_tpdo {
             // TPDOs (PRes on CN, PReq on MN) checked against IsochrTxMaxPayload_U16 (0x1F98/1).
             self.read_u16(0x1F98, 1).unwrap_or(1490) as usize
-        } else { // is_rpdo
+        } else {
+            // is_rpdo
             // RPDOs (PReq on CN, PRes on MN) checked against IsochrRxMaxPayload_U16 (0x1F98/2).
             self.read_u16(0x1F98, 2).unwrap_or(1490) as usize
         };
@@ -380,22 +395,29 @@ impl<'a> ObjectDictionary<'a> {
                 // .get(i) accesses the elements written to sub-indices 1, 2, ...
                 if let Some(ObjectValue::Unsigned64(raw_mapping)) = entries.get(i) {
                     let entry = PdoMappingEntry::from_u64(*raw_mapping);
-                     // Calculate the end position (offset + length) in bits.
+                    // Calculate the end position (offset + length) in bits.
                     let end_pos_bits = entry.offset_bits as u32 + entry.length_bits as u32;
-                     // Keep track of the highest bit position reached.
+                    // Keep track of the highest bit position reached.
                     max_bits_required = max_bits_required.max(end_pos_bits);
                 } else {
                     // This indicates a configuration error: trying to enable more entries than have been written/exist.
                     error!(
                         "PDO mapping validation error for {:#06X}: Trying to enable {} entries, but entry {} is missing.",
-                        index, new_num_entries, i + 1
+                        index,
+                        new_num_entries,
+                        i + 1
                     );
-                    return Err(PowerlinkError::ValidationError("Incomplete PDO mapping configuration: Missing entries"));
+                    return Err(PowerlinkError::ValidationError(
+                        "Incomplete PDO mapping configuration: Missing entries",
+                    ));
                 }
             }
         } else {
-             // This should not happen if called correctly, as the object must exist.
-             error!("PDO mapping validation error: Object {:#06X} not found or not an Array.", index);
+            // This should not happen if called correctly, as the object must exist.
+            error!(
+                "PDO mapping validation error: Object {:#06X} not found or not an Array.",
+                index
+            );
             return Err(PowerlinkError::ObjectNotFound);
         }
 
@@ -418,11 +440,10 @@ impl<'a> ObjectDictionary<'a> {
         }
     }
 
-
     /// Collects all storable parameters and tells the storage backend to save them.
     fn store_parameters(&mut self, list_to_save: u8) -> Result<(), PowerlinkError> {
         if list_to_save == 0 {
-             error!("Attempted to store parameters with invalid sub-index 0.");
+            error!("Attempted to store parameters with invalid sub-index 0.");
             return Err(PowerlinkError::StorageError("Cannot save to sub-index 0"));
         }
         if let Some(s) = &mut self.storage {
@@ -439,19 +460,19 @@ impl<'a> ObjectDictionary<'a> {
 
                 if should_save {
                     // Check if the entry itself has a storable access type
-                     if let Some(access) = entry.access {
+                    if let Some(access) = entry.access {
                         if matches!(
                             access,
                             AccessType::ReadWriteStore | AccessType::WriteOnlyStore
                         ) {
-                             // Extract values based on object type
+                            // Extract values based on object type
                             match &entry.object {
                                 Object::Variable(val) => {
                                     // Store Variable at sub-index 0
                                     storable_params.insert((index, 0), val.clone());
                                 }
                                 Object::Record(vals) | Object::Array(vals) => {
-                                     // Store Array/Record elements at sub-indices 1..N
+                                    // Store Array/Record elements at sub-indices 1..N
                                     for (i, val) in vals.iter().enumerate() {
                                         storable_params.insert((index, (i + 1) as u8), val.clone());
                                     }
@@ -464,13 +485,16 @@ impl<'a> ObjectDictionary<'a> {
                 }
             }
             if storable_params.is_empty() {
-                 trace!("No storable parameters found for sub-index {}", list_to_save);
-             } else {
-                 trace!("Saving {} parameters.", storable_params.len());
-             }
+                trace!(
+                    "No storable parameters found for sub-index {}",
+                    list_to_save
+                );
+            } else {
+                trace!("Saving {} parameters.", storable_params.len());
+            }
             s.save(&storable_params)
         } else {
-             error!("Store parameters failed: No storage backend configured.");
+            error!("Store parameters failed: No storage backend configured.");
             Err(PowerlinkError::StorageError(
                 "No storage backend configured",
             ))
@@ -490,17 +514,19 @@ impl<'a> ObjectDictionary<'a> {
             // For now, any valid "load" command flags a full restore.
             // A full implementation could pass `list_to_restore` to the storage backend
             // to potentially allow partial restores, although the spec isn't explicit on this.
-             trace!("Requesting restore defaults for sub-index {}", list_to_restore);
+            trace!(
+                "Requesting restore defaults for sub-index {}",
+                list_to_restore
+            );
             s.request_restore_defaults()
         } else {
-             error!("Restore defaults failed: No storage backend configured.");
+            error!("Restore defaults failed: No storage backend configured.");
             Err(PowerlinkError::StorageError(
                 "No storage backend configured",
             ))
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -576,8 +602,8 @@ mod tests {
 
         let value = od.read(0x1006, 0).unwrap();
         assert_eq!(*value, ObjectValue::Unsigned32(12345));
-         // Test reading non-existent sub-index
-         assert!(od.read(0x1006, 1).is_none());
+        // Test reading non-existent sub-index
+        assert!(od.read(0x1006, 1).is_none());
     }
 
     #[test]
@@ -586,7 +612,7 @@ mod tests {
         od.insert(
             0x2000,
             ObjectEntry {
-                 // Initialize with one element for sub-index 1
+                // Initialize with one element for sub-index 1
                 object: Object::Array(vec![ObjectValue::Unsigned16(100)]),
                 name: "TestArray",
                 category: Category::Mandatory,
@@ -602,10 +628,16 @@ mod tests {
         let value = od.read(0x2000, 1).unwrap();
         assert_eq!(*value, ObjectValue::Unsigned16(999));
 
-         // Test writing to non-existent sub-index
-         assert!(matches!(od.write(0x2000, 2, ObjectValue::Unsigned16(111)), Err(PowerlinkError::SubObjectNotFound)));
-         // Test writing wrong type
-         assert!(matches!(od.write(0x2000, 1, ObjectValue::Unsigned8(5)), Err(PowerlinkError::TypeMismatch)));
+        // Test writing to non-existent sub-index
+        assert!(matches!(
+            od.write(0x2000, 2, ObjectValue::Unsigned16(111)),
+            Err(PowerlinkError::SubObjectNotFound)
+        ));
+        // Test writing wrong type
+        assert!(matches!(
+            od.write(0x2000, 1, ObjectValue::Unsigned8(5)),
+            Err(PowerlinkError::TypeMismatch)
+        ));
     }
 
     #[test]
@@ -673,10 +705,13 @@ mod tests {
                     pdo_mapping: None,
                 },
             );
-             od.insert(
+            od.insert(
                 0x1800, // Communication object
                 ObjectEntry {
-                    object: Object::Record(vec![ObjectValue::Unsigned8(10), ObjectValue::Unsigned8(1)]),
+                    object: Object::Record(vec![
+                        ObjectValue::Unsigned8(10),
+                        ObjectValue::Unsigned8(1),
+                    ]),
                     name: "StorableCommVar",
                     category: Category::Optional,
                     access: Some(AccessType::ReadWriteStore), // Storable
@@ -685,7 +720,7 @@ mod tests {
                     pdo_mapping: None,
                 },
             );
-             od.insert(
+            od.insert(
                 0x7000, // Another Application object
                 ObjectEntry {
                     object: Object::Variable(ObjectValue::Integer16(-5)),
@@ -710,14 +745,15 @@ mod tests {
             storage.saved_data.get(&(0x6000, 0)),
             Some(&ObjectValue::Unsigned32(123))
         );
-         assert!(storage.saved_data.get(&(0x1800, 1)).is_none()); // Comm var not saved
-         assert!(storage.saved_data.get(&(0x7000, 0)).is_none()); // Non-storable var not saved
+        assert!(storage.saved_data.get(&(0x1800, 1)).is_none()); // Comm var not saved
+        assert!(storage.saved_data.get(&(0x7000, 0)).is_none()); // Non-storable var not saved
     }
 
     #[test]
     fn test_restore_defaults_command_flags_for_reboot() {
         let mut storage = MockStorage::new();
-        { // Scope for mutable borrow of storage by OD
+        {
+            // Scope for mutable borrow of storage by OD
             let mut od = ObjectDictionary::new(Some(&mut storage));
             assert!(!od.storage.as_ref().unwrap().restore_defaults_requested());
 
@@ -728,16 +764,21 @@ mod tests {
             // Check that the flag is set within the storage backend
             assert!(od.storage.as_ref().unwrap().restore_defaults_requested());
 
-             // Writing wrong signature should fail
-             assert!(od.write(0x1011, 1, ObjectValue::VisibleString("loads".to_string())).is_err());
-             // Writing to sub-index 0 should fail
-             assert!(od.write(0x1011, 0, ObjectValue::VisibleString("load".to_string())).is_err());
+            // Writing wrong signature should fail
+            assert!(
+                od.write(0x1011, 1, ObjectValue::VisibleString("loads".to_string()))
+                    .is_err()
+            );
+            // Writing to sub-index 0 should fail
+            assert!(
+                od.write(0x1011, 0, ObjectValue::VisibleString("load".to_string()))
+                    .is_err()
+            );
         } // od goes out of scope
 
         // Verify flag remains set after OD is dropped
         assert!(storage.restore_requested);
     }
-
 
     #[test]
     fn test_loading_from_storage_on_init() {
@@ -766,7 +807,7 @@ mod tests {
 
         // Check that the value loaded from storage overwrote the initial value
         assert_eq!(od.read_u32(0x6000, 0).unwrap(), 999);
-         assert!(storage.load_called);
+        assert!(storage.load_called);
     }
 
     #[test]
@@ -779,7 +820,8 @@ mod tests {
         // Set the restore flag
         storage.restore_requested = true;
 
-        { // Scope for OD borrow
+        {
+            // Scope for OD borrow
             let mut od = ObjectDictionary::new(Some(&mut storage));
             od.insert(
                 0x6000,
@@ -810,28 +852,114 @@ mod tests {
         let mut od = ObjectDictionary::new(None);
         // IsochrTxMaxPayload (Hard Limit) = 100 bytes (0x1F98/1)
         // PresActPayloadLimit (Soft Limit) = 40 bytes (0x1F98/5)
-        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(100), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(40)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+        od.insert(
+            0x1F98,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned16(100),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned32(0),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned16(40),
+                ]),
+                name: "NMT_CycleTiming_REC",
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        );
         // Mapping for PRes (TPDO 0x1A00) requiring 6 bytes total.
-        let mapping1 = PdoMappingEntry { index: 0x6000, sub_index: 1, offset_bits: 0, length_bits: 8 }; // 1 byte @ offset 0
-        let mapping2 = PdoMappingEntry { index: 0x6001, sub_index: 0, offset_bits: 16, length_bits: 32 }; // 4 bytes @ offset 2. Max bit = 16+32=48. Required bytes = ceil(48/8) = 6.
-        od.insert(0x1A00, ObjectEntry { object: Object::Array(vec![ObjectValue::Unsigned64(mapping1.to_u64()), ObjectValue::Unsigned64(mapping2.to_u64())]), name: "PDO_TxMappParam_00h_AU64", category: Category::Mandatory, access: Some(AccessType::ReadWriteStore), default_value: None, value_range: None, pdo_mapping: None }); // Use RW access
+        let mapping1 = PdoMappingEntry {
+            index: 0x6000,
+            sub_index: 1,
+            offset_bits: 0,
+            length_bits: 8,
+        }; // 1 byte @ offset 0
+        let mapping2 = PdoMappingEntry {
+            index: 0x6001,
+            sub_index: 0,
+            offset_bits: 16,
+            length_bits: 32,
+        }; // 4 bytes @ offset 2. Max bit = 16+32=48. Required bytes = ceil(48/8) = 6.
+        od.insert(
+            0x1A00,
+            ObjectEntry {
+                object: Object::Array(vec![
+                    ObjectValue::Unsigned64(mapping1.to_u64()),
+                    ObjectValue::Unsigned64(mapping2.to_u64()),
+                ]),
+                name: "PDO_TxMappParam_00h_AU64",
+                category: Category::Mandatory,
+                access: Some(AccessType::ReadWriteStore),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        ); // Use RW access
 
         // Try to enable the mapping with 2 entries.
         // Required size (6 bytes) < Hard Limit (100 bytes). Should succeed.
         let result = od.write(0x1A00, 0, ObjectValue::Unsigned8(2));
         // FIX: Check if the result is Ok.
-        assert!(result.is_ok(), "Validation failed unexpectedly: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Validation failed unexpectedly: {:?}",
+            result.err()
+        );
     }
 
     #[test]
     fn test_pdo_mapping_validation_failure_hard_limit() {
         let mut od = ObjectDictionary::new(None);
         // IsochrTxMaxPayload (Hard limit) = 10 bytes
-        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(10), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(40)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+        od.insert(
+            0x1F98,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned16(10),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned32(0),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned16(40),
+                ]),
+                name: "NMT_CycleTiming_REC",
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        );
         // Mapping for PRes (TPDO 0x1A00) requiring 12 bytes. Max bit = 64+32=96. Bytes = 12.
-        let mapping1 = PdoMappingEntry { index: 0x6000, sub_index: 1, offset_bits: 0, length_bits: 64 }; // 8 bytes @ offset 0
-        let mapping2 = PdoMappingEntry { index: 0x6001, sub_index: 0, offset_bits: 64, length_bits: 32 }; // 4 bytes @ offset 8.
-        od.insert(0x1A00, ObjectEntry { object: Object::Array(vec![ObjectValue::Unsigned64(mapping1.to_u64()), ObjectValue::Unsigned64(mapping2.to_u64())]), name: "PDO_TxMappParam_00h_AU64", category: Category::Mandatory, access: Some(AccessType::ReadWriteStore), default_value: None, value_range: None, pdo_mapping: None }); // Use RW access
+        let mapping1 = PdoMappingEntry {
+            index: 0x6000,
+            sub_index: 1,
+            offset_bits: 0,
+            length_bits: 64,
+        }; // 8 bytes @ offset 0
+        let mapping2 = PdoMappingEntry {
+            index: 0x6001,
+            sub_index: 0,
+            offset_bits: 64,
+            length_bits: 32,
+        }; // 4 bytes @ offset 8.
+        od.insert(
+            0x1A00,
+            ObjectEntry {
+                object: Object::Array(vec![
+                    ObjectValue::Unsigned64(mapping1.to_u64()),
+                    ObjectValue::Unsigned64(mapping2.to_u64()),
+                ]),
+                name: "PDO_TxMappParam_00h_AU64",
+                category: Category::Mandatory,
+                access: Some(AccessType::ReadWriteStore),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        ); // Use RW access
 
         // Try to enable mapping with 2 entries.
         // Required size (12 bytes) > Hard Limit (10 bytes). Should fail.
@@ -843,17 +971,62 @@ mod tests {
     fn test_pdo_mapping_validation_success_soft_limit() {
         let mut od = ObjectDictionary::new(None);
         // IsochrTxMaxPayload = 100 bytes (hard limit), PresActPayloadLimit = 10 bytes (soft limit, irrelevant for validation)
-        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(100), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(10)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+        od.insert(
+            0x1F98,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned16(100),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned32(0),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned16(10),
+                ]),
+                name: "NMT_CycleTiming_REC",
+                category: Category::Mandatory,
+                access: None,
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        );
         // Mapping for PRes (TPDO 0x1A00) requiring 12 bytes.
-        let mapping1 = PdoMappingEntry { index: 0x6000, sub_index: 1, offset_bits: 0, length_bits: 64 }; // 8 bytes @ offset 0
-        let mapping2 = PdoMappingEntry { index: 0x6001, sub_index: 0, offset_bits: 64, length_bits: 32 }; // 4 bytes @ offset 8. Max bit = 96. Bytes = 12.
-        od.insert(0x1A00, ObjectEntry { object: Object::Array(vec![ObjectValue::Unsigned64(mapping1.to_u64()), ObjectValue::Unsigned64(mapping2.to_u64())]), name: "PDO_TxMappParam_00h_AU64", category: Category::Mandatory, access: Some(AccessType::ReadWriteStore), default_value: None, value_range: None, pdo_mapping: None }); // Use RW access
+        let mapping1 = PdoMappingEntry {
+            index: 0x6000,
+            sub_index: 1,
+            offset_bits: 0,
+            length_bits: 64,
+        }; // 8 bytes @ offset 0
+        let mapping2 = PdoMappingEntry {
+            index: 0x6001,
+            sub_index: 0,
+            offset_bits: 64,
+            length_bits: 32,
+        }; // 4 bytes @ offset 8. Max bit = 96. Bytes = 12.
+        od.insert(
+            0x1A00,
+            ObjectEntry {
+                object: Object::Array(vec![
+                    ObjectValue::Unsigned64(mapping1.to_u64()),
+                    ObjectValue::Unsigned64(mapping2.to_u64()),
+                ]),
+                name: "PDO_TxMappParam_00h_AU64",
+                category: Category::Mandatory,
+                access: Some(AccessType::ReadWriteStore),
+                default_value: None,
+                value_range: None,
+                pdo_mapping: None,
+            },
+        ); // Use RW access
 
         // Try to enable mapping with 2 entries.
         // Required size (12 bytes) > Soft Limit (10 bytes) BUT Required size < Hard Limit (100 bytes).
         // The configuration validation should ACCEPT this based on the HARD limit check.
         let result = od.write(0x1A00, 0, ObjectValue::Unsigned8(2));
         // FIX: Check if the result is Ok.
-        assert!(result.is_ok(), "Configuration should be accepted even if it exceeds the soft limit, as long as it's within the hard limit. Error: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Configuration should be accepted even if it exceeds the soft limit, as long as it's within the hard limit. Error: {:?}",
+            result.err()
+        );
     }
 }

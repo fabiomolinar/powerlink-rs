@@ -209,13 +209,15 @@ pub struct ReadByNameRequest {
 impl ReadByNameRequest {
     pub fn from_payload(payload: &[u8]) -> Result<Self, PowerlinkError> {
         // The name is a zero-terminated string.
-        let name_end = payload.iter().position(|&b| b == 0).unwrap_or(payload.len());
+        let name_end = payload
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(payload.len());
         let name = String::from_utf8(payload[..name_end].to_vec())
             .map_err(|_| PowerlinkError::SdoInvalidCommandPayload)?;
         Ok(Self { name })
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WriteByIndexRequest<'a> {
@@ -255,7 +257,6 @@ impl<'a> WriteByNameRequest<'a> {
         Ok(Self { name, data })
     }
 }
-
 
 /// A single entry in a Read/Write Multiple Parameters request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

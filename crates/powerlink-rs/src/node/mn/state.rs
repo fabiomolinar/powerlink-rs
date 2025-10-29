@@ -40,7 +40,6 @@ impl Default for CnInfo {
     }
 }
 
-
 /// Tracks the current phase within the POWERLINK cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CyclePhase {

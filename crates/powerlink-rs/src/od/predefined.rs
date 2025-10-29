@@ -71,7 +71,6 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
         },
     );
 
-
     // Add "PDO_CommParamRecord_TYPE" (0x0420) definition
     od.insert(
         0x0420,
@@ -179,7 +178,6 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             pdo_mapping: Some(PdoMapping::No),
         },
     );
-
 
     // Add "NMT_CurrNMTState_U8" (1F8Ch)
     od.insert(

@@ -168,7 +168,6 @@ impl<'s> ManagingNode<'s> {
         }
     }
 
-
     /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
     pub(super) fn advance_cycle_phase(&mut self, current_time_us: u64) -> NodeAction {
         cycle::advance_cycle_phase(self, current_time_us)

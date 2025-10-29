@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/frame/error/status_response.rs
-use crate::common::NetTime;
 use crate::PowerlinkError;
+use crate::common::NetTime;
 
 /// Represents the Static Error Bit Field from a StatusResponse frame.
 /// (Reference: EPSG DS 301, Section 6.5.8.1)
@@ -48,7 +48,6 @@ impl TryFrom<u8> for ErrorEntryMode {
     }
 }
 
-
 /// Represents the 16-bit EntryType field of an Error Entry.
 /// (Reference: EPSG DS 301, Table 96)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +73,6 @@ impl EntryType {
     }
 }
 
-
 /// Represents a single 20-byte Error/Event History Entry.
 /// (Reference: EPSG DS 301, Table 94)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +97,10 @@ impl ErrorEntry {
         Ok(Self {
             entry_type: EntryType::from_u16(entry_type_val)?,
             error_code,
-            timestamp: NetTime { seconds, nanoseconds },
+            timestamp: NetTime {
+                seconds,
+                nanoseconds,
+            },
             additional_information,
         })
     }
