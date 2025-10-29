@@ -657,75 +657,54 @@ impl SdoServer {
                     ));
                 }
             }
-            SdoServerState::Established | SdoServerState::SegmentedDownload(_) | SdoServerState::SegmentedUpload(_) => {
-                // --- Sequence Number Check ---
-                // Expected sequence number from the client
+            SdoServerState::Established | SdoServerState::SegmentedDownload(_) => {
                 let expected_seq = self.last_received_sequence_number.wrapping_add(1) % 64;
-
-                // Handle retransmission request from client
-                if request.receive_con == ReceiveConnState::ErrorResponse {
-                    warn!(
-                        "Client requested retransmission from sequence {}",
-                        request.receive_sequence_number
-                    );
-                    // TODO: Implement retransmission logic from history buffer
-                    // For now, just respond normally, acknowledging their request seq number
-                    self.last_received_sequence_number = request.send_sequence_number;
-                // Do NOT increment send_sequence_number here, as we'd resend the previous frame
-                }
-                // Handle duplicate frame from client
-                else if request.send_sequence_number == self.last_received_sequence_number {
-                    debug!(
-                        "Duplicate SDO frame received (Seq: {}). Ignoring command, sending ACK.",
-                        request.send_sequence_number
-                    );
-                    // Just send ACK, don't process command layer again
+                if request.send_sequence_number == self.last_received_sequence_number {
+                    debug!("Duplicate SDO frame received (Seq: {}). Ignoring command, sending ACK.", request.send_sequence_number);
                     response.receive_con = ReceiveConnState::ConnectionValid;
                     response.receive_sequence_number = self.last_received_sequence_number;
                     response.send_con = SendConnState::ConnectionValid;
-                    // Use the *same* send sequence number as the previous response
                     response.send_sequence_number = self.send_sequence_number;
-                // Return immediately, skipping command processing
-                // We must return Ok here, but signal to the caller to *not* process command
-                // This is tricky. Let's let the command layer handle the empty payload.
-                }
-                // Handle out-of-order/lost frame from client
-                else if request.send_sequence_number != expected_seq {
-                    error!(
-                        "SDO sequence number mismatch. Expected {}, got {}. Requesting retransmission from client.",
-                        expected_seq, request.send_sequence_number
-                    );
-                    // Request retransmission from the client starting after the last good one.
-                    // Do not update server state or sequence numbers on error
-                    // Send ErrorResponse
+                } else if request.send_sequence_number != expected_seq {
+                    error!("SDO sequence number mismatch. Expected {}, got {}. Requesting retransmission from client.", expected_seq, request.send_sequence_number);
                     response.receive_con = ReceiveConnState::ErrorResponse;
                     response.receive_sequence_number = self.last_received_sequence_number;
                     response.send_con = SendConnState::ConnectionValid;
-                    response.send_sequence_number = self.send_sequence_number; // Resend our last frame's number
-                    return Err(PowerlinkError::SdoSequenceError(
-                        "SDO sequence number mismatch.",
-                    )); // Signal error upstream
-                }
-                // --- Sequence OK ---
-                else {
+                    response.send_sequence_number = self.send_sequence_number;
+                    return Err(PowerlinkError::SdoSequenceError("SDO sequence number mismatch."));
+                } else {
                     self.last_received_sequence_number = request.send_sequence_number;
-                    // Acknowledgment received for an upload, so clear the timeout.
-                    if let SdoServerState::SegmentedUpload(ref mut state) = self.state {
-                        state.deadline_us = None;
-                        state.last_sent_segment = None;
-                    }
-
-                    // Increment send sequence number *only if* we aren't handling retransmission/duplicates
-                    if request.receive_con != ReceiveConnState::ErrorResponse {
-                        self.send_sequence_number = self.send_sequence_number.wrapping_add(1) % 64;
-                    }
+                    self.send_sequence_number = self.send_sequence_number.wrapping_add(1) % 64;
+                    response.receive_con = ReceiveConnState::ConnectionValid;
+                    response.receive_sequence_number = self.last_received_sequence_number;
+                    response.send_con = SendConnState::ConnectionValid;
+                    response.send_sequence_number = self.send_sequence_number;
                 }
-
-                // Default response for valid sequence
-                response.receive_con = ReceiveConnState::ConnectionValid;
-                response.receive_sequence_number = self.last_received_sequence_number;
-                response.send_con = SendConnState::ConnectionValid; // Default, might be overridden by command layer
-                response.send_sequence_number = self.send_sequence_number;
+            }
+            SdoServerState::SegmentedUpload(state) => {
+                if request.receive_con == ReceiveConnState::ErrorResponse {
+                    warn!("Client requested retransmission of segment with seq {}.", request.receive_sequence_number);
+                    // The command layer will handle resending the last segment.
+                    // We just need to not advance our sequence numbers.
+                    self.last_received_sequence_number = request.send_sequence_number;
+                    response.receive_con = ReceiveConnState::ConnectionValid;
+                    response.receive_sequence_number = self.last_received_sequence_number;
+                    response.send_con = SendConnState::ConnectionValid;
+                    response.send_sequence_number = self.send_sequence_number;
+                } else {
+                    let expected_seq = self.last_received_sequence_number.wrapping_add(1) % 64;
+                    if request.send_sequence_number != expected_seq {
+                        return Err(PowerlinkError::SdoSequenceError("SDO sequence number mismatch during upload ACK."));
+                    }
+                    self.last_received_sequence_number = request.send_sequence_number;
+                    self.send_sequence_number = self.send_sequence_number.wrapping_add(1) % 64;
+                    state.deadline_us = None;
+                    state.last_sent_segment = None;
+                    response.receive_con = ReceiveConnState::ConnectionValid;
+                    response.receive_sequence_number = self.last_received_sequence_number;
+                    response.send_con = SendConnState::ConnectionValid;
+                    response.send_sequence_number = self.send_sequence_number;
+                }
             }
         }
         Ok(response) // Return the calculated response header
