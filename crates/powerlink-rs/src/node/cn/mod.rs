@@ -1,6 +1,6 @@
-// crates/powerlink-rs/src/node/cn/mod.rs
-
+mod events;
 mod main;
 mod payload;
+mod state;
 
 pub use main::ControlledNode;

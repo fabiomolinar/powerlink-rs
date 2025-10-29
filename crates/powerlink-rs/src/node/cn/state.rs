@@ -1,0 +1,38 @@
+// crates/powerlink-rs/src/node/cn/state.rs
+
+use crate::frame::basic::MacAddress;
+use crate::frame::error::{CnErrorCounters, DllErrorManager, ErrorEntry, LoggingErrorHandler};
+use crate::frame::DllCsStateMachine;
+use crate::nmt::cn_state_machine::CnNmtStateMachine;
+use crate::nmt::events::NmtCommand;
+use crate::od::ObjectDictionary;
+use crate::sdo::SdoServer;
+use crate::types::NodeId;
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
+
+/// Holds the complete state for a Controlled Node.
+pub struct CnContext<'s> {
+    pub od: ObjectDictionary<'s>,
+    pub nmt_state_machine: CnNmtStateMachine,
+    pub dll_state_machine: DllCsStateMachine,
+    pub dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
+    pub mac_address: MacAddress,
+    pub sdo_server: SdoServer,
+    /// Queue for NMT commands this CN wants the MN to execute.
+    pub pending_nmt_requests: Vec<(NmtCommand, NodeId)>,
+    /// Queue for detailed error/event entries to be reported in StatusResponse.
+    pub emergency_queue: VecDeque<ErrorEntry>,
+    /// Timestamp of the last successfully received SoC frame (microseconds).
+    pub last_soc_reception_time_us: u64,
+    /// Flag indicating if the SoC timeout check is currently active.
+    pub soc_timeout_check_active: bool,
+    /// The absolute time in microseconds for the next scheduled tick.
+    pub next_tick_us: Option<u64>,
+    /// Exception New flag, toggled when new error info is available.
+    pub en_flag: bool,
+    /// Exception Clear flag, mirrors the last received ER flag from the MN.
+    pub ec_flag: bool,
+    /// A flag that is set when a new error occurs, to trigger toggling the EN flag.
+    pub error_status_changed: bool,
+}
