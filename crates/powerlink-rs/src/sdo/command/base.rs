@@ -2,6 +2,7 @@
 use crate::PowerlinkError;
 use crate::types::{UNSIGNED8, UNSIGNED16, UNSIGNED32};
 use alloc::vec::Vec;
+use alloc::string::String;
 
 /// Defines the SDO command IDs.
 /// (Reference: EPSG DS 301, Table 58)
@@ -185,6 +186,91 @@ impl SdoCommand {
             data_size,
             payload,
         })
+    }
+}
+
+/// Payload for a ReadByIndex or WriteByIndex command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadByIndexRequest {
+    pub index: u16,
+    pub sub_index: u8,
+}
+
+impl ReadByIndexRequest {
+    pub fn from_payload(payload: &[u8]) -> Result<Self, PowerlinkError> {
+        if payload.len() < 3 {
+            return Err(PowerlinkError::SdoInvalidCommandPayload);
+        }
+        Ok(Self {
+            index: u16::from_le_bytes(payload[0..2].try_into()?),
+            sub_index: payload[2],
+        })
+    }
+}
+
+/// Payload for a ReadByName or WriteByName command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadByNameRequest {
+    pub name: String,
+}
+
+impl ReadByNameRequest {
+    pub fn from_payload(payload: &[u8]) -> Result<Self, PowerlinkError> {
+        // The name is a zero-terminated string.
+        let name_end = payload.iter().position(|&b| b == 0).unwrap_or(payload.len());
+        let name = String::from_utf8(payload[..name_end].to_vec())
+            .map_err(|_| PowerlinkError::SdoInvalidCommandPayload)?;
+        Ok(Self { name })
+    }
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WriteByIndexRequest<'a> {
+    pub index: u16,
+    pub sub_index: u8,
+    pub data: &'a [u8],
+}
+
+impl<'a> WriteByIndexRequest<'a> {
+    pub fn from_payload(payload: &'a [u8]) -> Result<Self, PowerlinkError> {
+        if payload.len() < 3 {
+            return Err(PowerlinkError::SdoInvalidCommandPayload);
+        }
+        Ok(Self {
+            index: u16::from_le_bytes(payload[0..2].try_into()?),
+            sub_index: payload[2],
+            data: &payload[3..],
+        })
+    }
+}
+
+/// A single entry in a Read/Write Multiple Parameters request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MultipleParamEntry {
+    pub index: u16,
+    pub sub_index: u8,
+}
+
+/// Payload for a ReadMultipleParamByIndex request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadMultipleParamRequest {
+    pub entries: Vec<MultipleParamEntry>,
+}
+
+impl ReadMultipleParamRequest {
+    pub fn from_payload(payload: &[u8]) -> Result<Self, PowerlinkError> {
+        if payload.len() % 3 != 0 {
+            return Err(PowerlinkError::SdoInvalidCommandPayload);
+        }
+        let entries = payload
+            .chunks_exact(3)
+            .map(|chunk| MultipleParamEntry {
+                index: u16::from_le_bytes(chunk[0..2].try_into().unwrap()),
+                sub_index: chunk[2],
+            })
+            .collect();
+        Ok(Self { entries })
     }
 }
 

@@ -2,8 +2,8 @@ use crate::PowerlinkError;
 use crate::frame::PRFlag;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::command::{
-    CommandId, CommandLayerHeader, ReadByIndexRequest, SdoCommand, Segmentation,
-    WriteByIndexRequest,
+    CommandId, CommandLayerHeader, ReadByIndexRequest, ReadByNameRequest, ReadMultipleParamRequest,
+    SdoCommand, Segmentation, WriteByIndexRequest,
 };
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::state::{SdoServerState, SdoTransferState};
@@ -278,7 +278,7 @@ impl SdoServer {
             self.state = current_state;
         }
 
-        let mut response_header = CommandLayerHeader {
+        let response_header = CommandLayerHeader {
             transaction_id: command.header.transaction_id,
             is_response: true,
             is_aborted: false,
@@ -288,80 +288,69 @@ impl SdoServer {
         };
 
         match command.header.command_id {
-            CommandId::ReadByIndex => {
-                match ReadByIndexRequest::from_payload(&command.payload) {
-                    Ok(req) => {
-                        info!(
-                            "Processing SDO Read request for 0x{:04X}/{}",
-                            req.index, req.sub_index
-                        );
-                        match od.read(req.index, req.sub_index) {
-                            Some(value) => {
-                                let payload = value.serialize();
-                                if payload.len() <= MAX_EXPEDITED_PAYLOAD {
-                                    // Expedited transfer
-                                    info!(
-                                        "Responding with expedited read of {} bytes.",
-                                        payload.len()
-                                    );
-                                    response_header.segment_size = payload.len() as u16;
-                                    SdoCommand {
-                                        header: response_header,
-                                        data_size: None,
-                                        payload,
-                                    }
-                                } else {
-                                    // Initiate segmented transfer
-                                    info!(
-                                        "Initiating segmented upload of {} bytes.",
-                                        payload.len()
-                                    );
-                                    let transfer_state = SdoTransferState {
-                                        transaction_id: command.header.transaction_id,
-                                        total_size: payload.len(),
-                                        data_buffer: payload,
-                                        offset: 0, // Start sending from the beginning
-                                        index: req.index,
-                                        sub_index: req.sub_index,
-                                        deadline_us: None,
-                                        retransmissions_left: 0, // Will be set in handle_segmented_upload
-                                        last_sent_segment: None,
-                                    };
-                                    // The handle_segmented_upload function now mutates self.state
-                                    self.handle_segmented_upload(transfer_state, od, current_time_us)
-                                }
-                            }
-                            None => self.abort(
-                                command.header.transaction_id,
-                                0x0602_0000, // Object does not exist
-                            ),
-                        }
-                    }
-                    Err(_) => self.abort(command.header.transaction_id, 0x0800_0000), // General error parsing payload
-                }
-            }
+            CommandId::ReadByIndex => self.handle_read_by_index(command, response_header, od, current_time_us),
             CommandId::WriteByIndex => self.handle_write_by_index(command, response_header, od, current_time_us),
-            CommandId::Nil => {
-                // A NIL command acts as an ACK, often used during segmented uploads.
-                // The main logic for handling this is already at the start of this function.
-                // If we reach here, it means we're not in a segmented upload, so just send an empty ack.
-                debug!("Received NIL command, sending empty ACK.");
-                SdoCommand {
-                    header: response_header,
-                    data_size: None,
-                    payload: Vec::new(),
-                }
+            CommandId::ReadByName => self.handle_read_by_name(command, response_header, od, current_time_us),
+            CommandId::WriteByName => self.handle_write_by_name(command, response_header, od),
+            CommandId::ReadAllByIndex => self.handle_read_all_by_index(command, response_header, od, current_time_us),
+            CommandId::ReadMultipleParamByIndex => self.handle_read_multiple_params(command, response_header, od, current_time_us),
+            CommandId::MaxSegmentSize => self.handle_max_segment_size(command, response_header),
+            CommandId::WriteAllByIndex | CommandId::WriteMultipleParamByIndex => {
+                // Segmented/complex writes are not fully supported yet
+                warn!("Received currently unsupported write command: {:?}", command.header.command_id);
+                self.abort(command.header.transaction_id, 0x0601_0001) // Unsupported access
             }
-            _ => {
-                // Unsupported command
-                error!(
-                    "Unsupported SDO command received: {:?}",
-                    command.header.command_id
-                );
-                self.abort(command.header.transaction_id, 0x0504_0001) // Command specifier not valid
+            CommandId::FileRead | CommandId::FileWrite => {
+                warn!("Received unsupported File Transfer command: {:?}", command.header.command_id);
+                self.abort(command.header.transaction_id, 0x0601_0001) // Unsupported access
+            }
+            CommandId::Nil => {
+                debug!("Received NIL command, sending empty ACK.");
+                SdoCommand { header: response_header, data_size: None, payload: Vec::new() }
             }
         }
     }
+
+    fn handle_read_by_index(
+        &mut self,
+        command: SdoCommand,
+        mut response_header: CommandLayerHeader,
+        od: &ObjectDictionary,
+        current_time_us: u64,
+    ) -> SdoCommand {
+        match ReadByIndexRequest::from_payload(&command.payload) {
+            Ok(req) => {
+                info!("Processing SDO Read request for 0x{:04X}/{}", req.index, req.sub_index);
+                match od.read(req.index, req.sub_index) {
+                    Some(value) => {
+                        let payload = value.serialize();
+                        if payload.len() <= MAX_EXPEDITED_PAYLOAD {
+                            info!("Responding with expedited read of {} bytes.", payload.len());
+                            response_header.segment_size = payload.len() as u16;
+                            SdoCommand { header: response_header, data_size: None, payload }
+                        } else {
+                            info!("Initiating segmented upload of {} bytes.", payload.len());
+                            let transfer_state = SdoTransferState {
+                                transaction_id: command.header.transaction_id,
+                                total_size: payload.len(),
+                                data_buffer: payload,
+                                offset: 0,
+                                index: req.index,
+                                sub_index: req.sub_index,
+                                deadline_us: None,
+                                retransmissions_left: 0,
+                                last_sent_segment: None,
+                            };
+                            self.handle_segmented_upload(transfer_state, od, current_time_us)
+                        }
+                    }
+                    None => self.abort(command.header.transaction_id, 0x0602_0000), // Object does not exist
+                }
+            }
+            Err(_) => self.abort(command.header.transaction_id, 0x0800_0000),
+        }
+    }
+
 
     /// Handles sending the next segment during an upload, or initiates the upload.
     /// Updates self.state.
@@ -539,6 +528,144 @@ impl SdoServer {
             }
         }
     }
+
+    fn handle_read_by_name(
+        &mut self,
+        command: SdoCommand,
+        mut response_header: CommandLayerHeader,
+        od: &ObjectDictionary,
+        current_time_us: u64,
+    ) -> SdoCommand {
+        match ReadByNameRequest::from_payload(&command.payload) {
+            Ok(req) => {
+                info!("Processing SDO ReadByName request for '{}'", req.name);
+                if let Some((index, sub_index)) = od.find_by_name(&req.name) {
+                    // Found it, now treat it as a ReadByIndex
+                    let read_req_command = SdoCommand {
+                        payload: [index.to_le_bytes().as_slice(), &[sub_index]].concat(),
+                        ..command
+                    };
+                    self.handle_read_by_index(read_req_command, response_header, od, current_time_us)
+                } else {
+                    self.abort(command.header.transaction_id, 0x060A_0023) // Resource not available
+                }
+            }
+            Err(_) => self.abort(command.header.transaction_id, 0x0800_0000),
+        }
+    }
+
+    fn handle_write_by_name(
+        &mut self,
+        command: SdoCommand,
+        response_header: CommandLayerHeader,
+        od: &mut ObjectDictionary,
+    ) -> SdoCommand {
+        // This is complex as payload contains name and data. Not implementing segmented transfer for it yet.
+        warn!("WriteByName is not fully supported.");
+        self.abort(command.header.transaction_id, 0x0601_0001) // Unsupported access
+    }
+
+    fn handle_read_all_by_index(
+        &mut self,
+        command: SdoCommand,
+        mut response_header: CommandLayerHeader,
+        od: &ObjectDictionary,
+        current_time_us: u64,
+    ) -> SdoCommand {
+        match ReadByIndexRequest::from_payload(&command.payload) {
+            Ok(req) if req.sub_index == 0 => {
+                info!("Processing SDO ReadAllByIndex for 0x{:04X}", req.index);
+                if let Some(crate::od::Object::Record(sub_indices)) = od.read_object(req.index) {
+                    let mut payload = Vec::new();
+                    for value in sub_indices {
+                        payload.extend_from_slice(&value.serialize());
+                    }
+                    // Now send this payload, either expedited or segmented
+                    if payload.len() <= MAX_EXPEDITED_PAYLOAD {
+                        response_header.segment_size = payload.len() as u16;
+                        SdoCommand { header: response_header, data_size: None, payload }
+                    } else {
+                        let transfer_state = SdoTransferState {
+                            transaction_id: command.header.transaction_id,
+                            total_size: payload.len(),
+                            data_buffer: payload,
+                            offset: 0,
+                            index: req.index,
+                            sub_index: 0,
+                            deadline_us: None,
+                            retransmissions_left: 0,
+                            last_sent_segment: None,
+                        };
+                        self.handle_segmented_upload(transfer_state, od, current_time_us)
+                    }
+                } else {
+                    self.abort(command.header.transaction_id, 0x0609_0030) // Value range exceeded (not a record)
+                }
+            }
+            _ => self.abort(command.header.transaction_id, 0x0609_0011), // Sub-index does not exist
+        }
+    }
+
+    fn handle_read_multiple_params(
+        &mut self,
+        command: SdoCommand,
+        mut response_header: CommandLayerHeader,
+        od: &ObjectDictionary,
+        current_time_us: u64,
+    ) -> SdoCommand {
+        match ReadMultipleParamRequest::from_payload(&command.payload) {
+            Ok(req) => {
+                info!("Processing SDO ReadMultipleParamByIndex for {} entries", req.entries.len());
+                let mut payload = Vec::new();
+                for entry in req.entries {
+                    match od.read(entry.index, entry.sub_index) {
+                        Some(value) => {
+                            let data = value.serialize();
+                            payload.extend_from_slice(&(data.len() as u32).to_le_bytes());
+                            payload.extend_from_slice(&data);
+                        }
+                        None => return self.abort(command.header.transaction_id, 0x0602_0000), // Object does not exist
+                    }
+                }
+                // Now send this payload, either expedited or segmented
+                if payload.len() <= MAX_EXPEDITED_PAYLOAD {
+                    response_header.segment_size = payload.len() as u16;
+                    SdoCommand { header: response_header, data_size: None, payload }
+                } else {
+                    let transfer_state = SdoTransferState {
+                        transaction_id: command.header.transaction_id,
+                        total_size: payload.len(),
+                        data_buffer: payload,
+                        offset: 0,
+                        index: 0, // Not applicable
+                        sub_index: 0, // Not applicable
+                        deadline_us: None,
+                        retransmissions_left: 0,
+                        last_sent_segment: None,
+                    };
+                    self.handle_segmented_upload(transfer_state, od, current_time_us)
+                }
+            }
+            Err(_) => self.abort(command.header.transaction_id, 0x0800_0000),
+        }
+    }
+
+    fn handle_max_segment_size(
+        &mut self,
+        command: SdoCommand,
+        mut response_header: CommandLayerHeader,
+    ) -> SdoCommand {
+        info!("Processing SDO MaxSegmentSize command");
+        // We respond with our maximum supported size for a single SDO segment payload.
+        let max_size = MAX_EXPEDITED_PAYLOAD as u32;
+        response_header.segment_size = 4;
+        SdoCommand {
+            header: response_header,
+            data_size: None,
+            payload: max_size.to_le_bytes().to_vec(),
+        }
+    }
+
 
     /// Helper to perform the final write to the Object Dictionary after all data is received.
     fn write_to_od(

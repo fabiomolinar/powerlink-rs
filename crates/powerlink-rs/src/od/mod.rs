@@ -249,6 +249,24 @@ impl<'a> ObjectDictionary<'a> {
         self.write_internal(index, sub_index, value, true)
     }
 
+    /// Finds an object by its string name. Returns the index and sub-index if found.
+    /// Note: This performs a linear search and may be slow.
+    pub fn find_by_name(&self, name: &str) -> Option<(u16, u8)> {
+        for (&index, entry) in &self.entries {
+            // Check the main object name
+            if entry.name == name {
+                // If it's a variable, sub-index is always 0
+                if let Object::Variable(_) = entry.object {
+                    return Some((index, 0));
+                }
+                // For records/arrays, finding by main name isn't well-defined without a sub-index name.
+                // This basic implementation will just match the main object name and return sub-index 0.
+                return Some((index, 0));
+            }
+            // TODO: A more advanced implementation could search sub-index names if they were stored.
+        }
+        None
+    }
 
     /// Internal write function with an option to bypass access checks.
     pub(super) fn write_internal(

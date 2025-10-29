@@ -2,5 +2,5 @@
 mod base;
 mod payload;
 
-pub use base::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
+pub use base::{CommandId, CommandLayerHeader, SdoCommand, Segmentation, ReadByNameRequest, ReadMultipleParamRequest};
 pub use payload::{ReadByIndexRequest, WriteByIndexRequest};
