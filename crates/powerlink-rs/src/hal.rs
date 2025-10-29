@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/hal.rs
 use crate::od::ObjectValue;
 use crate::pdo::PayloadSizeError;
 use crate::types::{InvalidMessageTypeError, NodeIdError};
@@ -52,6 +53,8 @@ pub enum PowerlinkError {
     SdoAborted(u32), // Include abort code
     /// SDO command payload could not be parsed correctly (e.g., ReadByIndexRequest format).
     SdoInvalidCommandPayload,
+    /// A configured PDO mapping exceeds the available payload size for that channel.
+    PdoMapOverrun,
     /// Internal logic error.
     InternalError(&'static str),
 }
@@ -85,6 +88,7 @@ impl fmt::Display for PowerlinkError {
             Self::SdoSequenceError(s) => write!(f, "SDO sequence error: {}", s),
             Self::SdoAborted(code) => write!(f, "SDO transfer aborted with code {:#010X}", code),
             Self::SdoInvalidCommandPayload => write!(f, "Invalid SDO command payload format"),
+            Self::PdoMapOverrun => write!(f, "PDO mapping exceeds configured payload size limit"),
             Self::InternalError(s) => write!(f, "Internal error: {}", s),
         }
     }

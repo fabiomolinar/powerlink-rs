@@ -8,9 +8,10 @@ pub use entry::{AccessType, Category, Object, ObjectEntry, PdoMapping, ValueRang
 pub use value::ObjectValue;
 
 use crate::hal::ObjectDictionaryStorage;
-use crate::{NodeId, PowerlinkError};
+use crate::{NodeId, PowerlinkError, pdo::PdoMappingEntry}; // Added PdoMappingEntry
 use alloc::{borrow::Cow, collections::BTreeMap, vec::Vec};
 use core::fmt;
+use log::{error, trace}; // Added error and trace
 
 /// The main Object Dictionary structure.
 pub struct ObjectDictionary<'a> {
@@ -213,6 +214,17 @@ impl<'a> ObjectDictionary<'a> {
                 "Invalid signature for Restore Defaults",
             ));
         }
+        
+        // --- Special validation for PDO mapping ---
+        if sub_index == 0 && ((0x1600..=0x16FF).contains(&index) || (0x1A00..=0x1AFF).contains(&index)) {
+            if let ObjectValue::Unsigned8(new_num_entries) = value {
+                // This is a write to NumberOfEntries of a mapping object. Validate it before committing.
+                self.validate_pdo_mapping(index, new_num_entries)?;
+            } else {
+                // NumberOfEntries must always be a U8 value.
+                return Err(PowerlinkError::TypeMismatch);
+            }
+        }
         self.write_internal(index, sub_index, value, true)
     }
 
@@ -255,6 +267,88 @@ impl<'a> ObjectDictionary<'a> {
                     }
                 }
             })
+    }
+    
+    /// Validates that a new PDO mapping configuration does not exceed payload size limits.
+    /// This should be called *before* writing to NumberOfEntries (sub-index 0) of a mapping object.
+    fn validate_pdo_mapping(&self, index: u16, new_num_entries: u8) -> Result<(), PowerlinkError> {
+        if new_num_entries == 0 {
+            return Ok(()); // Deactivating a mapping is always valid.
+        }
+    
+        let is_tpdo = (0x1A00..=0x1AFF).contains(&index);
+        let is_rpdo = (0x1600..=0x16FF).contains(&index);
+        // This function is only called for mapping objects, so this check is redundant but safe.
+        if !is_tpdo && !is_rpdo {
+            return Ok(());
+        }
+    
+        // --- 1. Determine the payload size limit for this PDO channel ---
+        // This logic must read other OD values to find the correct limit.
+        let payload_limit_bytes = if is_tpdo {
+            let comm_param_index = 0x1800 + (index - 0x1A00);
+            // This is a TPDO. For a CN, this is its PRes. For an MN, it's a PReq.
+            let node_id = self.read_u8(comm_param_index, 1).unwrap_or(0);
+            if node_id == 0 {
+                // This could be a PRes from an MN, or a PRes from a CN (where NodeID is not 0 but reflects self).
+                // Let's assume the local PRes limit applies.
+                self.read_u16(0x1F98, 5).unwrap_or(36) as usize // PresActPayloadLimit_U16
+            } else { // This is a PReq from an MN to a specific CN.
+                // The limit is in the MN-specific list 0x1F8B, indexed by the target CN's Node ID.
+                self.read_u16(0x1F8B, node_id).unwrap_or(36) as usize // NMT_MNPReqPayloadLimitList_AU16
+            }
+        } else { // is_rpdo
+            let comm_param_index = 0x1400 + (index - 0x1600);
+            // This is an RPDO. It comes from either a PReq (NodeID=0) or a PRes from another CN.
+            let node_id = self.read_u8(comm_param_index, 1).unwrap_or(0);
+            if node_id == 0 { // RPDO from a PReq
+                self.read_u16(0x1F98, 4).unwrap_or(36) as usize // PreqActPayloadLimit_U16
+            } else { // RPDO from a PRes of another CN
+                // The limit is based on the expected PRes size from that CN, defined in 0x1F8D.
+                self.read_u16(0x1F8D, node_id).unwrap_or(36) as usize // NMT_PresPayloadLimitList_AU16
+            }
+        };
+    
+        // --- 2. Calculate the required size from the existing mapping entries ---
+        // The spec implies that mapping entries are written *before* NumberOfEntries is set.
+        let mut max_bits_required: u32 = 0;
+        if let Some(Object::Array(entries)) = self.read_object(index) {
+            // Iterate up to the *new* number of entries that is being proposed.
+            for i in 0..(new_num_entries as usize) {
+                if let Some(ObjectValue::Unsigned64(raw_mapping)) = entries.get(i) {
+                    let entry = PdoMappingEntry::from_u64(*raw_mapping);
+                    let end_pos_bits = entry.offset_bits as u32 + entry.length_bits as u32;
+                    if end_pos_bits > max_bits_required {
+                        max_bits_required = end_pos_bits;
+                    }
+                } else {
+                    // This indicates a configuration error: trying to enable more entries than have been written.
+                    // This is an invalid state, but we can treat it as a validation failure.
+                    return Err(PowerlinkError::ValidationError("Incomplete PDO mapping configuration"));
+                }
+            }
+        } else {
+             // This should not happen if called correctly, as the object must exist.
+            return Err(PowerlinkError::ObjectNotFound);
+        }
+    
+        // Convert bits to bytes, rounding up.
+        let required_bytes = (max_bits_required + 7) / 8;
+    
+        // --- 3. Compare and return result ---
+        if required_bytes as usize > payload_limit_bytes {
+            error!(
+                "PDO mapping validation failed for index {:#06X}. Required size: {} bytes, Limit: {} bytes. [E_PDO_MAP_OVERRUN]",
+                index, required_bytes, payload_limit_bytes
+            );
+            Err(PowerlinkError::PdoMapOverrun)
+        } else {
+            trace!(
+                "PDO mapping validation successful for index {:#06X}. Required: {} bytes, Limit: {}",
+                index, required_bytes, payload_limit_bytes
+            );
+            Ok(())
+        }
     }
 
     /// Collects all storable parameters and tells the storage backend to save them.
@@ -559,5 +653,35 @@ mod tests {
         assert!(storage.clear_called);
         assert!(!storage.save_called);
         assert!(!storage.restore_requested);
+    }
+
+    #[test]
+    fn test_pdo_mapping_validation_success() {
+        let mut od = ObjectDictionary::new(None);
+        // PRes Payload Limit = 40 bytes
+        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(40)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+        // Mapping for PRes (TPDO 0x1A00)
+        let mapping1 = PdoMappingEntry { index: 0x6000, sub_index: 1, offset_bits: 0, length_bits: 8 }; // 1 byte at offset 0
+        let mapping2 = PdoMappingEntry { index: 0x6001, sub_index: 0, offset_bits: 16, length_bits: 32 }; // 4 bytes at offset 2. Total size = 2+4=6 bytes.
+        od.insert(0x1A00, ObjectEntry { object: Object::Array(vec![ObjectValue::Unsigned64(mapping1.to_u64()), ObjectValue::Unsigned64(mapping2.to_u64())]), name: "PDO_TxMappParam_00h_AU64", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+
+        // Try to enable a mapping with 2 entries. Total size is 6 bytes, which is < 40.
+        let result = od.write(0x1A00, 0, ObjectValue::Unsigned8(2));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pdo_mapping_validation_failure() {
+        let mut od = ObjectDictionary::new(None);
+        // PRes Payload Limit = 10 bytes
+        od.insert(0x1F98, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned32(0), ObjectValue::Unsigned16(0), ObjectValue::Unsigned16(10)]), name: "NMT_CycleTiming_REC", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+        // Mapping for PRes (TPDO 0x1A00)
+        let mapping1 = PdoMappingEntry { index: 0x6000, sub_index: 1, offset_bits: 0, length_bits: 64 }; // 8 bytes at offset 0
+        let mapping2 = PdoMappingEntry { index: 0x6001, sub_index: 0, offset_bits: 64, length_bits: 32 }; // 4 bytes at offset 8. Total size = 8+4=12 bytes.
+        od.insert(0x1A00, ObjectEntry { object: Object::Array(vec![ObjectValue::Unsigned64(mapping1.to_u64()), ObjectValue::Unsigned64(mapping2.to_u64())]), name: "PDO_TxMappParam_00h_AU64", category: Category::Mandatory, access: None, default_value: None, value_range: None, pdo_mapping: None });
+
+        // Try to enable a mapping with 2 entries. Total size is 12 bytes, which is > 10.
+        let result = od.write(0x1A00, 0, ObjectValue::Unsigned8(2));
+        assert!(matches!(result, Err(PowerlinkError::PdoMapOverrun)));
     }
 }
