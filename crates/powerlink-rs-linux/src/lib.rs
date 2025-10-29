@@ -8,7 +8,7 @@ use powerlink_rs::{
     NetworkInterface,
 };
 use std::io;
-use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex}; // Use Arc for shared UDP socket
 use std::time::Duration;
 
@@ -146,8 +146,7 @@ impl NetworkInterface for LinuxPnetInterface {
         self.mac_address
     }
 
-    // --- UDP Methods (Implementation always compiled for this crate) ---
-    // Removed #[cfg(feature = "sdo-udp")] guards from implementation methods
+    // --- UDP Methods ---
     fn send_udp(
         &mut self,
         dest_ip: IpAddress,
@@ -166,7 +165,6 @@ impl NetworkInterface for LinuxPnetInterface {
             })
     }
 
-    // Removed #[cfg(feature = "sdo-udp")] guards from implementation methods
     fn receive_udp(
         &mut self,
         buffer: &mut [u8],
