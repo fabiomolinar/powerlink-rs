@@ -665,6 +665,22 @@ impl<'s> Node for ControlledNode<'s> {
     }
 
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
+        // --- SDO Server Tick ---
+        // First, check for SDO timeouts and retransmissions.
+        match self.sdo_server.tick(current_time_us, &self.od) {
+            Ok(Some(sdo_abort_payload)) => {
+                // SDO server generated an abort frame, needs to be sent.
+                let abort_frame = payload::build_sdo_abort_from_payload(
+                    self.mac_address,
+                    self.nmt_state_machine.node_id,
+                    sdo_abort_payload,
+                );
+                return self.serialize_and_prepare_action(abort_frame);
+            }
+            Err(e) => error!("[CN] SDO Server tick error: {:?}", e),
+            _ => {} // No action or no error
+        }
+
         let current_nmt_state = self.nmt_state();
          // Check if a deadline is set and if it has passed
         let deadline_passed = self.next_tick_us.map_or(false, |deadline| current_time_us >= deadline);

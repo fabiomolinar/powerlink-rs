@@ -66,12 +66,13 @@ impl SdoServer {
 
     /// Returns the absolute timestamp of the next SDO timeout, if any.
     pub fn next_action_time(&self) -> Option<u64> {
-        if let SdoServerState::SegmentedUpload(state) = &self.state {
-            state.deadline_us
-        } else {
-            None
+        match &self.state {
+            SdoServerState::SegmentedUpload(state) => state.deadline_us,
+            SdoServerState::SegmentedDownload(state) => state.deadline_us,
+            _ => None,
         }
     }
+
 
     /// Handles time-based events for the SDO server, like retransmission timeouts.
     pub fn tick(
@@ -82,36 +83,49 @@ impl SdoServer {
         let mut retransmit_command = None;
         let mut abort_params: Option<(u8, u32)> = None;
 
-        if let SdoServerState::SegmentedUpload(state) = &mut self.state {
-            if let Some(deadline) = state.deadline_us {
-                if current_time_us >= deadline {
-                    // Timeout occurred!
-                    if state.retransmissions_left > 0 {
-                        state.retransmissions_left -= 1;
-                        warn!(
-                            "[SDO] Server: Segment ACK timeout for TID {}. Retransmitting ({} retries left).",
-                            state.transaction_id, state.retransmissions_left
-                        );
+        match &mut self.state {
+            SdoServerState::SegmentedUpload(state) => {
+                if let Some(deadline) = state.deadline_us {
+                    if current_time_us >= deadline {
+                        // Timeout occurred!
+                        if state.retransmissions_left > 0 {
+                            state.retransmissions_left -= 1;
+                            warn!(
+                                "[SDO] Server: Segment ACK timeout for TID {}. Retransmitting ({} retries left).",
+                                state.transaction_id, state.retransmissions_left
+                            );
 
-                        // Reschedule the next timeout
-                        let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
-                        state.deadline_us = Some(current_time_us + timeout_ms * 1000);
+                            // Reschedule the next timeout
+                            let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
+                            state.deadline_us = Some(current_time_us + timeout_ms * 1000);
 
-                        // Retransmit the last sent segment.
-                        if let Some(last_command) = &state.last_sent_segment {
-                            retransmit_command = Some(last_command.clone());
+                            // Retransmit the last sent segment.
+                            if let Some(last_command) = &state.last_sent_segment {
+                                retransmit_command = Some(last_command.clone());
+                            } else {
+                                // This should not happen if we are in this state.
+                                return Err(PowerlinkError::InternalError("Missing last sent segment during retransmission"));
+                            }
                         } else {
-                            // This should not happen if we are in this state.
-                            return Err(PowerlinkError::InternalError("Missing last sent segment during retransmission"));
+                            // No retransmissions left, abort the connection.
+                            error!("[SDO] Server: No retransmissions left for TID {}. Aborting connection.", state.transaction_id);
+                            abort_params = Some((state.transaction_id, 0x0504_0000)); // SDO protocol timed out
                         }
-                    } else {
-                        // No retransmissions left, abort the connection.
-                        error!("[SDO] Server: No retransmissions left for TID {}. Aborting connection.", state.transaction_id);
+                    }
+                }
+            }
+            SdoServerState::SegmentedDownload(state) => {
+                if let Some(deadline) = state.deadline_us {
+                    if current_time_us >= deadline {
+                        // Download timeout occurred, no retransmission possible, just abort.
+                        error!("[SDO] Server: Segmented download timed out for TID {}. Aborting connection.", state.transaction_id);
                         abort_params = Some((state.transaction_id, 0x0504_0000)); // SDO protocol timed out
                     }
                 }
             }
+            _ => {} // No time-based logic for other states
         }
+
 
         if let Some(command) = retransmit_command {
             let response_header = SequenceLayerHeader {
@@ -328,7 +342,7 @@ impl SdoServer {
                     Err(_) => self.abort(command.header.transaction_id, 0x0800_0000), // General error parsing payload
                 }
             }
-            CommandId::WriteByIndex => self.handle_write_by_index(command, response_header, od),
+            CommandId::WriteByIndex => self.handle_write_by_index(command, response_header, od, current_time_us),
             CommandId::Nil => {
                 // A NIL command acts as an ACK, often used during segmented uploads.
                 // The main logic for handling this is already at the start of this function.
@@ -429,6 +443,7 @@ impl SdoServer {
         command: SdoCommand,
         response_header: CommandLayerHeader,
         od: &mut ObjectDictionary,
+        current_time_us: u64,
     ) -> SdoCommand {
         match command.header.segmentation {
             Segmentation::Expedited => {
@@ -451,7 +466,7 @@ impl SdoServer {
                 // Start a new segmented download.
                 match WriteByIndexRequest::from_payload(&command.payload) {
                     Ok(req) => {
-                        // Check if total size exceeds buffer limits (add later)
+                        let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
                         self.state = SdoServerState::SegmentedDownload(SdoTransferState {
                             transaction_id: command.header.transaction_id,
                             total_size: command.data_size.unwrap_or(0) as usize,
@@ -459,7 +474,7 @@ impl SdoServer {
                             offset: req.data.len(),         // Track bytes received
                             index: req.index,
                             sub_index: req.sub_index,
-                            deadline_us: None,
+                            deadline_us: Some(current_time_us + timeout_ms * 1000),
                             retransmissions_left: 0,
                             last_sent_segment: None,
                         });
@@ -473,7 +488,6 @@ impl SdoServer {
                 }
             }
             Segmentation::Segment | Segmentation::Complete => {
-                // Borrow self.state mutably only within this block
                 if let SdoServerState::SegmentedDownload(ref mut transfer_state) = self.state {
                     if transfer_state.transaction_id != command.header.transaction_id {
                         error!(
@@ -481,44 +495,27 @@ impl SdoServer {
                             transfer_state.transaction_id, command.header.transaction_id
                         );
                         return self.abort(command.header.transaction_id, 0x0800_0000);
-                        // General error
                     }
-
-                    // Append received data
-                    transfer_state
-                        .data_buffer
-                        .extend_from_slice(&command.payload);
+                    transfer_state.data_buffer.extend_from_slice(&command.payload);
                     transfer_state.offset += command.payload.len();
-                    debug!(
-                        "Received download segment: new offset={}",
-                        transfer_state.offset
-                    );
-
+                    debug!("Received download segment: new offset={}", transfer_state.offset);
                     if command.header.segmentation == Segmentation::Complete {
                         info!("Segmented download complete, writing to OD.");
-                        // Check if received size matches expected size
                         if transfer_state.offset != transfer_state.total_size {
                             error!(
                                 "Segmented download size mismatch. Expected {}, got {}",
                                 transfer_state.total_size, transfer_state.offset
                             );
-                            self.state = SdoServerState::Established; // Reset state even on error
+                            self.state = SdoServerState::Established;
                             return self.abort(command.header.transaction_id, 0x0607_0010);
-                            // Data type mismatch / length
                         }
-
-                        // Clone necessary data before resetting state
                         let index = transfer_state.index;
                         let sub_index = transfer_state.sub_index;
-                        let data_buffer = transfer_state.data_buffer.clone(); // Clone data for OD write
-
-                        // Finalize the write to OD
+                        let data_buffer = transfer_state.data_buffer.clone();
                         let result = self.write_to_od(index, sub_index, &data_buffer, od);
-                        self.state = SdoServerState::Established; // Return to established state
-
+                        self.state = SdoServerState::Established;
                         match result {
                             Ok(_) => SdoCommand {
-                                // Send final ACK
                                 header: response_header,
                                 data_size: None,
                                 payload: Vec::new(),
@@ -528,7 +525,9 @@ impl SdoServer {
                             }
                         }
                     } else {
-                        // Acknowledge the intermediate segment.
+                        // Reset the timeout for the next segment
+                        let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
+                        transfer_state.deadline_us = Some(current_time_us + timeout_ms * 1000);
                         SdoCommand {
                             header: response_header,
                             data_size: None,
@@ -536,9 +535,8 @@ impl SdoServer {
                         }
                     }
                 } else {
-                    // Received segment when not in SegmentedDownload state
                     error!("Received unexpected SDO segment frame.");
-                    self.abort(command.header.transaction_id, 0x0504_0003) // Invalid sequence number (state implies sequence error)
+                    self.abort(command.header.transaction_id, 0x0504_0003)
                 }
             }
         }
