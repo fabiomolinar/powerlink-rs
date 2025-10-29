@@ -17,7 +17,7 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
     - [x] 6.1 Basic Data Types (`NetTime`, `RelativeTime`)
     - [x] 6.2 Object Dictionary Structure
     - [x] 6.3 Service Data Objects (SDO) via ASnd
-    - [x] 6.4 Process Data Objects (PDO) mapping and basic handling
+    - [x] 6.4 Process Data Objects (PDO) with mapping, validation, and error handling
     - [ ] 6.5 Error Signaling
   - **Chapter 7 (NMT): 80%**
     - [x] Basic NMT data structures (`NmtState`)
@@ -63,7 +63,7 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
   - Focus: Implementing the core real-time communication mechanism.
   - Key Features (DS-301): Implementation of PDO Mapping structures (Transmit PDOs 1800h-1AFFh, Receive PDOs 1400h-16FFh), and the logic to insert/extract process data into/from PReq and PRes frames based on the cycle timing.
   - Success Metric: The library can correctly map application variables to PDO payloads during simulated cyclic data exchange.
-  - Status: **First draft finished**.
+  - Status: **Completed**.
 - Phase 6: Core NMT Cycle Logic (MN/CN Implementation):
   - Focus: Implementing the roles required to run an entire POWERLINK network.
   - Key Features (DS-301):
