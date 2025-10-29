@@ -66,7 +66,7 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
   - Status: **First draft finished**.
 - Phase 6: Core NMT Cycle Logic (MN/CN Implementation):
   - Focus: Implementing the roles required to run an entire POWERLINK network.
-  - Key Features (DS-301): 
+  - Key Features (DS-301):
     - **MN Cycle Orchestration**: Refine `ManagingNode::tick` to precisely follow the isochronous and asynchronous phases based on OD timings.
     - **MN Boot-Up Sequence**: Implement the detailed boot-up logic for identifying, checking, and commanding state transitions for CNs (Chapter 7.4).
     - **CN Response Logic**: Ensure `ControlledNode` reacts correctly to MN frames (SoC, PReq, SoA) according to its NMT/DLL state.
