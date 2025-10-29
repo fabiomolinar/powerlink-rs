@@ -219,7 +219,22 @@ impl<'s> ControlledNode<'s> {
             self.soc_timeout_check_active = true;
             // A CN's cycle is defined by the reception of an SoC.
             // This is the correct place to decrement threshold counters.
-            self.dll_error_manager.on_cycle_complete();
+            if self.dll_error_manager.on_cycle_complete() {
+                // If the last error was just cleared, update the error register
+                info!("[CN] All DLL errors cleared, resetting Generic Error bit.");
+                let current_err_reg = self.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                // Clear Bit 0: Generic Error
+                let new_err_reg = current_err_reg & !0b1;
+                self.od.write_internal(
+                    OD_IDX_ERROR_REGISTER,
+                    0,
+                    crate::od::ObjectValue::Unsigned8(new_err_reg),
+                    false
+                ).unwrap_or_else(|e| error!("[CN] Failed to clear Error Register: {:?}", e));
+
+                // Also signal this change to the MN
+                self.error_status_changed = true;
+            }
 
             // Schedule the next SoC timeout check.
             // Read cycle time and tolerance only once

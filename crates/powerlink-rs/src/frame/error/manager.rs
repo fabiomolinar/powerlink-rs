@@ -24,7 +24,7 @@ where
         self.counters.handle_error(error, &mut self.handler)
     }
 
-    pub fn on_cycle_complete(&mut self) {
-        self.counters.on_cycle_complete();
+    pub fn on_cycle_complete(&mut self) -> bool {
+        self.counters.on_cycle_complete()
     }
 }

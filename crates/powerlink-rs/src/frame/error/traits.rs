@@ -34,7 +34,8 @@ impl ErrorHandler for StdoutErrorHandler {
 /// Defines the essential behaviors for a set of DLL error counters.
 pub trait ErrorCounters: Sized {
     /// Called once per POWERLINK cycle to decrement all threshold counters.
-    fn on_cycle_complete(&mut self);
+    /// Returns `true` if the last active error was just cleared in this cycle.
+    fn on_cycle_complete(&mut self) -> bool;
 
     /// Processes a given error, updates the appropriate counter, and returns an NMT action
     /// and a boolean indicating if the error status has changed and should be signaled.

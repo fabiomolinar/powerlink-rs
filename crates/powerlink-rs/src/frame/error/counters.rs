@@ -43,6 +43,11 @@ impl ThresholdCounter {
             false
         }
     }
+
+    /// Returns true if the threshold counter is greater than zero.
+    pub fn is_active(&self) -> bool {
+        self.threshold_cnt > 0
+    }
 }
 
 // --- Controlled Node (CN) Counters ---
@@ -74,6 +79,15 @@ impl CnErrorCounters {
             loss_of_link_cumulative: 0,
         }
     }
+    /// Checks if any of the threshold counters are currently active ( > 0).
+    fn is_any_active(&self) -> bool {
+        self.loss_of_soc.is_active()
+            || self.loss_of_soa.is_active()
+            || self.loss_of_preq.is_active()
+            || self.crc_errors.is_active()
+            || self.collision.is_active()
+            || self.soc_jitter.is_active()
+    }
 }
 
 impl Default for CnErrorCounters {
@@ -83,13 +97,20 @@ impl Default for CnErrorCounters {
 }
 
 impl ErrorCounters for CnErrorCounters {
-    fn on_cycle_complete(&mut self) {
+    fn on_cycle_complete(&mut self) -> bool {
+        let was_active = self.is_any_active();
+
         self.loss_of_soc.decrement();
         self.loss_of_soa.decrement();
         self.loss_of_preq.decrement();
         self.crc_errors.decrement();
         self.collision.decrement();
         self.soc_jitter.decrement();
+
+        let is_still_active = self.is_any_active();
+
+        // Return true only if the state changed from active to inactive.
+        was_active && !is_still_active
     }
 
     fn handle_error<H: ErrorHandler>(
@@ -192,7 +213,7 @@ impl MnErrorCounters {
 }
 
 impl ErrorCounters for MnErrorCounters {
-    fn on_cycle_complete(&mut self) {
+    fn on_cycle_complete(&mut self) -> bool {
         self.crc_errors.decrement();
         self.collision.decrement();
         self.cycle_time_exceeded.decrement();
@@ -203,6 +224,9 @@ impl ErrorCounters for MnErrorCounters {
         self.cn_loss_of_status_response
             .values_mut()
             .for_each(|c| c.decrement());
+        // The MN does not signal its own error state in the same way a CN does,
+        // so returning false is appropriate here.
+        false
     }
 
     fn handle_error<H: ErrorHandler>(
@@ -350,8 +374,23 @@ mod tests {
     fn test_counters_on_cycle_complete() {
         let mut cn_counters = CnErrorCounters::new();
         cn_counters.loss_of_soc.increment(); // count = 8
-        cn_counters.on_cycle_complete();
-        assert_eq!(cn_counters.loss_of_soc.threshold_cnt, 7);
+        assert!(cn_counters.is_any_active());
+
+        // Decrement 7 times, should still be active and return false
+        for _ in 0..7 {
+            assert!(!cn_counters.on_cycle_complete());
+        }
+        assert_eq!(cn_counters.loss_of_soc.threshold_cnt, 1);
+        assert!(cn_counters.is_any_active());
+
+        // 8th decrement clears the error, should return true
+        assert!(cn_counters.on_cycle_complete());
+        assert_eq!(cn_counters.loss_of_soc.threshold_cnt, 0);
+        assert!(!cn_counters.is_any_active());
+
+        // A further decrement when inactive should return false
+        assert!(!cn_counters.on_cycle_complete());
+
 
         let mut mn_counters = MnErrorCounters::new();
         let node_id = NodeId(10);
@@ -369,7 +408,8 @@ mod tests {
                 .threshold_cnt,
             8
         );
-        mn_counters.on_cycle_complete();
+        // MN's on_cycle_complete always returns false
+        assert!(!mn_counters.on_cycle_complete());
         assert_eq!(
             mn_counters
                 .cn_loss_of_pres
