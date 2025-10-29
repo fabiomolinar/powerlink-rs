@@ -189,3 +189,4 @@ mod tests {
         assert_eq!(NodeId::try_from(252), Err(NodeIdError::InvalidRange(252)));
     }
 }
+

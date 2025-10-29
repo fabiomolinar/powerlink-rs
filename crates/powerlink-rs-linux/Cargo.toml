@@ -10,7 +10,8 @@ repository.workspace = true
 edition.workspace = true
 
 [dependencies]
-powerlink-rs = { path = "../powerlink-rs", version = "0.0.0", features = ["std"] }
+# Enable both std and the new sdo-udp feature for the core dependency
+powerlink-rs = { path = "../powerlink-rs", version = "0.0.0", features = ["std", "sdo-udp"] }
 pnet = "0.35"
 
 [dev-dependencies]
