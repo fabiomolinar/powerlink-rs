@@ -13,12 +13,12 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
     - [x] 4.7 DLL Error Handling
     - [x] Other DLL concepts
   - **Chapter 5 (Network/Transport Layer): 0%**
-  - **Chapter 6 (Application Layer): 80%**
+  - **Chapter 6 (Application Layer): 90%**
     - [x] 6.1 Basic Data Types (`NetTime`, `RelativeTime`)
     - [x] 6.2 Object Dictionary Structure
     - [x] 6.3 Service Data Objects (SDO) via ASnd
     - [x] 6.4 Process Data Objects (PDO) with mapping, validation, and error handling
-    - [ ] 6.5 Error Signaling
+    - [x] 6.5 Error Signaling
   - **Chapter 7 (NMT): 80%**
     - [x] Basic NMT data structures (`NmtState`)
     - [x] 7.1 NMT State Machines
