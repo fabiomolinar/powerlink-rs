@@ -2,6 +2,11 @@ use super::cycle;
 use super::events;
 use super::payload;
 use super::state::{AsyncRequest, CnInfo, CnState, CyclePhase};
+use crate::frame::ASndFrame;
+use crate::sdo::asnd;
+use crate::sdo::server::{SdoClientInfo, SdoResponseData};
+use crate::sdo::SdoServer;
+use crate::types::{C_ADR_BROADCAST_NODE_ID, MessageType, NodeId};
 use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
@@ -12,6 +17,7 @@ use crate::frame::{
         DllError, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler,
         MnErrorCounters,
     },
+    ServiceId,
 };
 use crate::nmt::NmtStateMachine;
 use crate::nmt::events::{NmtCommand, NmtEvent};
@@ -19,7 +25,8 @@ use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::{Object, ObjectDictionary, ObjectValue};
-use crate::types::{C_ADR_BROADCAST_NODE_ID, NodeId};
+#[cfg(feature = "sdo-udp")]
+use crate::sdo::udp::serialize_sdo_udp_payload;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -39,6 +46,7 @@ pub struct ManagingNode<'s> {
     pub(super) dll_state_machine: DllMsStateMachine,
     pub(super) dll_error_manager: DllErrorManager<MnErrorCounters, LoggingErrorHandler>,
     pub(super) mac_address: MacAddress,
+    sdo_server: SdoServer,
     pub(super) cycle_time_us: u64,
     pub(super) multiplex_cycle_len: u8,
     pub(super) multiplex_assign: BTreeMap<NodeId, u8>,
@@ -56,6 +64,7 @@ pub struct ManagingNode<'s> {
     pub(super) pending_status_requests: Vec<NodeId>,
     pub(super) pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
     pub(super) mn_async_send_queue: Vec<PowerlinkFrame>,
+    pub(super) pending_sdo_client_requests: Vec<(NodeId, Vec<u8>)>,
     pub(super) last_ident_poll_node_id: NodeId,
     pub(super) last_status_poll_node_id: NodeId,
     pub(super) next_tick_us: Option<u64>,
@@ -123,6 +132,7 @@ impl<'s> ManagingNode<'s> {
             dll_state_machine: DllMsStateMachine::new(),
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
             mac_address,
+            sdo_server: SdoServer::new(),
             cycle_time_us,
             multiplex_cycle_len,
             multiplex_assign,
@@ -139,6 +149,7 @@ impl<'s> ManagingNode<'s> {
             pending_status_requests: Vec::new(),
             pending_nmt_commands: Vec::new(),
             mn_async_send_queue: Vec::new(),
+            pending_sdo_client_requests: Vec::new(),
             last_ident_poll_node_id: NodeId(0),
             last_status_poll_node_id: NodeId(0),
             next_tick_us: None,
@@ -157,6 +168,18 @@ impl<'s> ManagingNode<'s> {
         self.mn_async_send_queue.push(frame);
     }
 
+    /// Queues an SDO request payload to be sent from the MN to a specific CN.
+    /// The payload must be a complete SDO payload (Sequence Header + Command Layer).
+    pub fn queue_sdo_request(&mut self, target_node_id: NodeId, sdo_payload: Vec<u8>) {
+        info!(
+            "[MN] Queuing SDO request for Node {} ({} bytes)",
+            target_node_id.0,
+            sdo_payload.len()
+        );
+        self.pending_sdo_client_requests
+            .push((target_node_id, sdo_payload));
+    }
+
     /// Queues a request to send an SoA(StatusRequest) with the ER (Exception Reset)
     /// flag set to `true` to a specific CN.
     /// This allows an application to manually clear a CN's error signaling state.
@@ -166,6 +189,98 @@ impl<'s> ManagingNode<'s> {
         if !self.pending_er_requests.contains(&node_id) {
             self.pending_er_requests.push(node_id);
         }
+    }
+
+    /// Processes an SDO request received over UDP.
+    #[cfg(feature = "sdo-udp")]
+    fn process_udp_packet(
+        &mut self,
+        data: &[u8],
+        source_ip: crate::types::IpAddress,
+        source_port: u16,
+        current_time_us: u64,
+    ) -> NodeAction {
+        debug!(
+            "Received UDP SDO request from {}:{} ({} bytes)",
+            core::net::Ipv4Addr::from(source_ip),
+            source_port,
+            data.len()
+        );
+
+        let sdo_payload = match data {
+            [0x06, _, _, 0x05, rest @ ..] => rest,
+            _ => {
+                error!("Invalid or malformed SDO/UDP payload prefix from UDP.");
+                return NodeAction::NoAction;
+            }
+        };
+
+        let client_info = SdoClientInfo::Udp {
+            source_ip,
+            source_port,
+        };
+        match self
+            .sdo_server
+            .handle_request(sdo_payload, client_info, &mut self.od, current_time_us)
+        {
+            Ok(response_data) => match self.build_udp_from_sdo_response(response_data) {
+                Ok(action) => action,
+                Err(e) => {
+                    error!("Failed to build SDO/UDP response: {:?}", e);
+                    NodeAction::NoAction
+                }
+            },
+            Err(e) => {
+                error!("SDO server error (UDP): {:?}", e);
+                NodeAction::NoAction
+            }
+        }
+    }
+
+    /// Internal function to process a deserialized `PowerlinkFrame`.
+    fn process_powerlink_frame(
+        &mut self,
+        frame: PowerlinkFrame,
+        current_time_us: u64,
+    ) -> NodeAction {
+        // --- Handle SDO ASnd frames before generic processing ---
+        if let PowerlinkFrame::ASnd(ref asnd_frame) = frame {
+            if asnd_frame.destination == self.nmt_state_machine.node_id
+                && asnd_frame.service_id == ServiceId::Sdo
+            {
+                debug!("[MN] Received SDO/ASnd for processing.");
+                let sdo_payload = &asnd_frame.payload;
+                let client_info = SdoClientInfo::Asnd {
+                    source_node_id: asnd_frame.source,
+                    source_mac: asnd_frame.eth_header.source_mac,
+                };
+                match self.sdo_server.handle_request(
+                    sdo_payload,
+                    client_info,
+                    &mut self.od,
+                    current_time_us,
+                ) {
+                    Ok(response_data) => {
+                        return match self.build_asnd_from_sdo_response(response_data) {
+                            Ok(action) => action,
+                            Err(e) => {
+                                error!("Failed to build SDO/ASnd response: {:?}", e);
+                                NodeAction::NoAction
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("SDO server error (ASnd): {:?}", e);
+                        return NodeAction::NoAction;
+                    }
+                }
+            }
+        }
+
+        // If not an SDO frame for us, proceed with general event handling.
+        events::process_frame(self, frame, current_time_us);
+        // General event processing does not return an immediate action.
+        NodeAction::NoAction
     }
 
     /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
@@ -207,6 +322,75 @@ impl<'s> ManagingNode<'s> {
             }
         }
         None
+    }
+
+    /// Helper to build ASnd frame from SdoResponseData.
+    fn build_asnd_from_sdo_response(
+        &self,
+        response_data: SdoResponseData,
+    ) -> Result<NodeAction, PowerlinkError> {
+        let (source_node_id, source_mac) = match response_data.client_info {
+            SdoClientInfo::Asnd {
+                source_node_id,
+                source_mac,
+            } => (source_node_id, source_mac),
+            #[cfg(feature = "sdo-udp")]
+            SdoClientInfo::Udp { .. } => {
+                return Err(PowerlinkError::InternalError(
+                    "Attempted to build ASnd response for UDP client",
+                ))
+            }
+        };
+
+        let sdo_payload =
+            asnd::serialize_sdo_asnd_payload(response_data.seq_header, response_data.command)?;
+        let asnd_frame = ASndFrame::new(
+            self.mac_address,
+            source_mac,
+            source_node_id,
+            self.nmt_state_machine.node_id,
+            ServiceId::Sdo,
+            sdo_payload,
+        );
+        info!("[MN] Sending SDO response via ASnd to Node {}", source_node_id.0);
+        Ok(self.serialize_and_prepare_action(PowerlinkFrame::ASnd(asnd_frame)))
+    }
+
+    /// Helper to build NodeAction::SendUdp from SdoResponseData.
+    #[cfg(feature = "sdo-udp")]
+    fn build_udp_from_sdo_response(
+        &self,
+        response_data: SdoResponseData,
+    ) -> Result<NodeAction, PowerlinkError> {
+        let (source_ip, source_port) = match response_data.client_info {
+            SdoClientInfo::Udp {
+                source_ip,
+                source_port,
+            } => (source_ip, source_port),
+            SdoClientInfo::Asnd { .. } => {
+                return Err(PowerlinkError::InternalError(
+                    "Attempted to build UDP response for ASnd client",
+                ))
+            }
+        };
+
+        let mut udp_buffer = vec![0u8; 1500]; // MTU size
+        let udp_payload_len = serialize_sdo_udp_payload(
+            response_data.seq_header,
+            response_data.command,
+            &mut udp_buffer,
+        )?;
+        udp_buffer.truncate(udp_payload_len);
+        info!(
+            "[MN] Sending SDO response via UDP to {}:{}",
+            core::net::Ipv4Addr::from(source_ip),
+            source_port
+        );
+        Ok(NodeAction::SendUdp {
+            dest_ip: source_ip,
+            dest_port: source_port,
+            data: udp_buffer,
+        })
     }
 
     /// Helper to serialize a PowerlinkFrame and prepare the NodeAction.
@@ -261,13 +445,7 @@ impl<'s> Node for ManagingNode<'s> {
         }
 
         match deserialize_frame(buffer) {
-            Ok(frame) => {
-                // The frame was successfully deserialized, pass it to the event handler.
-                // The event handler will decide if an immediate action is needed, but process_raw_frame
-                // itself does not return it. The main loop will call tick() again.
-                events::process_frame(self, frame, current_time_us);
-                NodeAction::NoAction
-            }
+            Ok(frame) => self.process_powerlink_frame(frame, current_time_us),
             Err(e) if e != PowerlinkError::InvalidEthernetFrame => {
                 // Log any POWERLINK-specific deserialization errors.
                 warn!("[MN] Error during frame deserialization: {:?}", e);
@@ -283,6 +461,36 @@ impl<'s> Node for ManagingNode<'s> {
 
     /// The MN's main scheduler tick.
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
+        // --- 0. SDO Server Tick (handles timeouts/retransmissions) ---
+        match self.sdo_server.tick(current_time_us, &self.od) {
+            Ok(Some(sdo_response_data)) => {
+                #[cfg(feature = "sdo-udp")]
+                let build_udp = || self.build_udp_from_sdo_response(sdo_response_data.clone());
+                #[cfg(not(feature = "sdo-udp"))]
+                let build_udp = || {
+                    Err::<NodeAction, PowerlinkError>(PowerlinkError::InternalError(
+                        "UDP feature disabled",
+                    ))
+                };
+
+                match sdo_response_data.client_info {
+                    SdoClientInfo::Asnd { .. } => {
+                        match self.build_asnd_from_sdo_response(sdo_response_data) {
+                            Ok(action) => return action,
+                            Err(e) => error!("[MN] Failed to build SDO Abort ASnd frame: {:?}", e),
+                        }
+                    }
+                    #[cfg(feature = "sdo-udp")]
+                    SdoClientInfo::Udp { .. } => match build_udp() {
+                        Ok(action) => return action,
+                        Err(e) => error!("[MN] Failed to build SDO Abort UDP frame: {:?}", e),
+                    },
+                }
+            }
+            Err(e) => error!("[MN] SDO Server tick error: {:?}", e),
+            _ => {}
+        }
+
         // --- 1. Handle one-time actions ---
         if self.nmt_state() == NmtState::NmtOperational && !self.initial_operational_actions_done {
             self.initial_operational_actions_done = true;
@@ -320,6 +528,27 @@ impl<'s> Node for ManagingNode<'s> {
                     info!("[MN] Sending queued generic async frame.");
                     self.current_phase = CyclePhase::Idle;
                     return self.serialize_and_prepare_action(frame);
+                } else if let Some((target_node_id, sdo_payload)) =
+                    self.pending_sdo_client_requests.pop()
+                {
+                    info!(
+                        "[MN] Sending queued SDO client request to Node {}.",
+                        target_node_id.0
+                    );
+                    self.current_phase = CyclePhase::Idle;
+                    let dest_mac = self.get_cn_mac_address(target_node_id).unwrap_or(
+                        // Fallback to multicast, though this indicates a configuration error.
+                        MacAddress(crate::types::C_DLL_MULTICAST_ASND),
+                    );
+                    let asnd = ASndFrame::new(
+                        self.mac_address,
+                        dest_mac,
+                        target_node_id,
+                        self.nmt_state_machine.node_id,
+                        ServiceId::Sdo,
+                        sdo_payload,
+                    );
+                    return self.serialize_and_prepare_action(PowerlinkFrame::ASnd(asnd));
                 } else {
                     warn!("[MN] Was in AwaitingMnAsyncSend, but all send queues are empty.");
                     self.current_phase = CyclePhase::Idle;

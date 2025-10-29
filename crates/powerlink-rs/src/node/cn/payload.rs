@@ -1,8 +1,4 @@
-// crates/powerlink-rs/src/node/cn/payload.rs
-
 use crate::frame::basic::MacAddress;
-#[cfg(feature = "sdo-udp")]
-use crate::types::IpAddress;
 use crate::{od::ObjectDictionary, types::NodeId, PowerlinkError};
 use crate::frame::error::ErrorEntry;
 use crate::frame::poll::{PResFlags, RSFlag};
@@ -151,33 +147,6 @@ pub(super) fn build_pres_response(
     PowerlinkFrame::PRes(pres)
 }
 
-
-/// Helper to serialize SDO Sequence + Command into a buffer suitable for ASnd payload.
-pub(super) fn serialize_sdo_asnd_payload(
-    seq_header: SequenceLayerHeader,
-    cmd: SdoCommand,
-) -> Result<Vec<u8>, PowerlinkError> {
-    // Allocate buffer based on command payload size + headers
-    let estimated_size = 4 // Sequence Header
-                       + 4 // Command Header Fixed Part
-                       + if cmd.data_size.is_some() { 4 } else { 0 } // Optional Data Size
-                       + cmd.payload.len();
-    // Use Vec directly instead of pre-allocating large buffer
-    let mut buffer = Vec::with_capacity(estimated_size);
-
-    // Serialize Sequence Layer Header (4 bytes)
-    let mut seq_buf = [0u8; 4];
-    seq_header.serialize(&mut seq_buf)?;
-    buffer.extend_from_slice(&seq_buf);
-
-    // Serialize Command Layer (Header + Payload)
-    // Need a temporary buffer for cmd.serialize as it writes into a slice
-    let mut cmd_buf = vec![0u8; estimated_size - 4]; // Max possible size for cmd part
-    let cmd_len = cmd.serialize(&mut cmd_buf)?;
-    buffer.extend_from_slice(&cmd_buf[..cmd_len]); // Append only the bytes written
-
-    Ok(buffer)
-}
 
 /// Constructs the detailed payload for an `IdentResponse` frame by reading from the OD.
 /// The structure is defined in EPSG DS 301, Section 7.3.3.2.1.
@@ -397,4 +366,3 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
     );
     Ok((payload, pdo_version))
 }
-

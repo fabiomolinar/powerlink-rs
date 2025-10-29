@@ -1,7 +1,6 @@
-// crates/powerlink-rs/src/node/cn/main.rs
-
 use super::payload;
 use crate::frame::ASndFrame;
+use crate::sdo::asnd;
 use crate::PowerlinkError;
 use crate::common::NetTime;
 use crate::frame::{
@@ -481,12 +480,20 @@ impl<'s> ControlledNode<'s> {
         response_data: SdoResponseData,
     ) -> Result<NodeAction, PowerlinkError> {
         let (source_node_id, source_mac) = match response_data.client_info {
-            SdoClientInfo::Asnd { source_node_id, source_mac } => (source_node_id, source_mac),
-             #[cfg(feature = "sdo-udp")]
-             SdoClientInfo::Udp { .. } => return Err(PowerlinkError::InternalError("Attempted to build ASnd response for UDP client")),
+            SdoClientInfo::Asnd {
+                source_node_id,
+                source_mac,
+            } => (source_node_id, source_mac),
+            #[cfg(feature = "sdo-udp")]
+            SdoClientInfo::Udp { .. } => {
+                return Err(PowerlinkError::InternalError(
+                    "Attempted to build ASnd response for UDP client",
+                ))
+            }
         };
 
-        let sdo_payload = payload::serialize_sdo_asnd_payload(response_data.seq_header, response_data.command)?;
+        let sdo_payload =
+            asnd::serialize_sdo_asnd_payload(response_data.seq_header, response_data.command)?;
         let asnd_frame = ASndFrame::new(
             self.mac_address,
             source_mac,

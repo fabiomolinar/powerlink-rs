@@ -11,5 +11,5 @@ edition.workspace = true
 
 
 [dependencies]
-powerlink-rs = { path = "../powerlink-rs", version = "0.0.0", features = ["std"] }
+powerlink-rs = { path = "../powerlink-rs", version = "0.0.0", features = ["std", "sdo-udp"] }
 pnet = "0.35"

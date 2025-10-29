@@ -14,6 +14,8 @@ use log::{debug, error, info, trace, warn};
 
 /// Internal function to process a deserialized `PowerlinkFrame`.
 /// The MN primarily *consumes* PRes and ASnd frames.
+/// This function is now called by `ManagingNode::process_powerlink_frame`
+/// and does not handle SDO frames directly anymore.
 pub(super) fn process_frame(node: &mut ManagingNode, frame: PowerlinkFrame, current_time_us: u64) {
     // 1. Update NMT state machine based on the frame type.
     if let Some(event) = frame.nmt_event() {
