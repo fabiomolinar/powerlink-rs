@@ -1,3 +1,5 @@
+// crates/powerlink-rs/src/types.rs
+
 use core::convert::TryFrom;
 use core::fmt;
 
@@ -29,7 +31,7 @@ pub type UNSIGNED64 = u64;
 pub type REAL32 = f32;
 /// Alias for REAL64 (64-bit floating point).
 pub type REAL64 = f64;
-/// Alias for a 4-byte IP Address.
+/// Alias for a 4-byte IP Address (IPv4).
 pub type IpAddress = [u8; 4];
 
 /// Represents a POWERLINK Node ID, wrapping a `u8` to ensure type safety.
@@ -82,6 +84,10 @@ pub const C_DLL_MULTICAST_SOC: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x01];
 
 /// POWERLINK ASnd multicast MAC address: 01-11-1E-00-00-04.
 pub const C_DLL_MULTICAST_ASND: [u8; 6] = [0x01, 0x11, 0x1E, 0x00, 0x00, 0x04];
+
+/// Default UDP Port for SDO communication via UDP/IP (EPSG DS 301, 6.3.2.1.1).
+#[cfg(feature = "sdo-udp")]
+pub const C_SDO_EPL_PORT: u16 = 3819;
 
 // --- Core Protocol Identifiers ---
 

@@ -136,10 +136,11 @@ impl From<&'static str> for PowerlinkError {
     }
 }
 
-/// Hardware Abstraction Layer (HAL) for raw Ethernet packet transmission.
+/// Hardware Abstraction Layer (HAL) for network communication.
 ///
-/// This trait abstracts the physical sending and receiving of raw Ethernet frames,
-/// enabling the core POWERLINK protocol logic to remain platform-agnostic (no_std).
+/// This trait abstracts the physical sending and receiving of raw Ethernet frames
+/// and UDP datagrams, enabling the core POWERLINK protocol logic to remain
+/// platform-agnostic (no_std).
 pub trait NetworkInterface {
     /// Sends a raw Ethernet frame (including Ethernet header) over the network.
     ///
@@ -160,6 +161,39 @@ pub trait NetworkInterface {
 
     /// Returns the local MAC address of the interface.
     fn local_mac_address(&self) -> [u8; 6];
+
+    /// Sends a UDP datagram. Only available when the `sdo-udp` feature is enabled.
+    ///
+    /// `dest_ip`: The destination IPv4 address.
+    /// `dest_port`: The destination UDP port.
+    /// `data`: The payload to send.
+    #[cfg(feature = "sdo-udp")]
+    fn send_udp(
+        &mut self,
+        dest_ip: crate::types::IpAddress,
+        dest_port: u16,
+        data: &[u8],
+    ) -> Result<(), PowerlinkError>;
+
+    /// Attempts to receive a single UDP datagram. Only available when the `sdo-udp` feature is enabled.
+    ///
+    /// This function may block or timeout depending on the HAL implementation.
+    ///
+    /// Returns `Ok(Some((size, source_ip, source_port)))` on success.
+    /// Returns `Ok(None)` if no datagram is received within a configured timeout (if supported).
+    /// Returns `Err(...)` on error.
+    /// The buffer must be large enough for the expected UDP payload + headers if applicable by the HAL.
+    #[cfg(feature = "sdo-udp")]
+    fn receive_udp(
+        &mut self,
+        buffer: &mut [u8],
+    ) -> Result<Option<(usize, crate::types::IpAddress, u16)>, PowerlinkError>;
+
+    /// Returns the local IP address of the interface. Only available when the `sdo-udp` feature is enabled.
+    ///
+    /// Returns a default or unspecifed address (e.g., 0.0.0.0) if the IP address is not configured or available.
+    #[cfg(feature = "sdo-udp")]
+    fn local_ip_address(&self) -> crate::types::IpAddress;
 }
 
 /// A trait for abstracting the non-volatile storage of OD parameters.
@@ -171,8 +205,10 @@ pub trait ObjectDictionaryStorage {
     fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, PowerlinkError>;
 
     /// Saves the given storable parameters to non-volatile memory.
-    fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>)
-    -> Result<(), PowerlinkError>;
+    fn save(
+        &mut self,
+        parameters: &BTreeMap<(u16, u8), ObjectValue>,
+    ) -> Result<(), PowerlinkError>;
 
     /// Clears all stored parameters from non-volatile memory.
     fn clear(&mut self) -> Result<(), PowerlinkError>;
