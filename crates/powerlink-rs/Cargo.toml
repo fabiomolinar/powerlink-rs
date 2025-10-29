@@ -12,9 +12,10 @@ edition.workspace = true
 [features]
 # Default is no_std support for embedded targets.
 default = []
-
 # Enables features that rely on the standard library (e.g., error handling, filesystem access, large buffers).
 std = []
+# Enables SDO over UDP/IP functionality (requires a HAL implementation).
+sdo-udp = []
 
 [dependencies]
 log = "0.4.28"
