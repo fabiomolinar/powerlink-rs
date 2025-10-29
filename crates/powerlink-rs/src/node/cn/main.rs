@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/cn/main.rs
 use super::payload;
 use crate::PowerlinkError;
 use crate::common::NetTime;
@@ -36,6 +37,7 @@ use log::{debug, error, info, trace, warn};
 // Constants for OD access
 const OD_IDX_CYCLE_TIME: u16 = 0x1006;
 const OD_IDX_LOSS_SOC_TOLERANCE: u16 = 0x1C14;
+const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
 
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct owns and manages all protocol layers and state machines.
@@ -342,6 +344,17 @@ impl<'s> ControlledNode<'s> {
                 if signaled {
                      // Set flag to toggle EN bit before next PRes/StatusResponse
                     self.error_status_changed = true;
+                    // --- Update Error Register (0x1001) ---
+                    let current_err_reg = self.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                    // Set Bit 0: Generic Error
+                    let new_err_reg = current_err_reg | 0b1;
+                    self.od.write_internal(
+                        OD_IDX_ERROR_REGISTER,
+                        0,
+                        crate::od::ObjectValue::Unsigned8(new_err_reg),
+                        false
+                    ).unwrap_or_else(|e| error!("[CN] Failed to update Error Register: {:?}", e));
+
                     // Create and queue a detailed error entry.
                     let error_entry = ErrorEntry {
                         entry_type: EntryType {
