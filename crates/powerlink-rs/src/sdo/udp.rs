@@ -1,7 +1,3 @@
-// crates/powerlink-rs/src/sdo/udp.rs
-//! Handles serialization and deserialization of SDO data within UDP payloads.
-//! (Reference: EPSG DS 301, Section 6.3.2.1 and Table 47)
-
 use crate::PowerlinkError;
 use crate::frame::ServiceId;
 use crate::sdo::command::SdoCommand;
@@ -169,17 +165,20 @@ mod tests {
             Err(PowerlinkError::InvalidServiceId(0x01))
         ));
 
-        // Malformed Sequence Header (buffer ok, but invalid sequence state enum)
+        // Malformed Command Header (Invalid Command ID). The previous test case for a bad sequence
+        // header was flawed because the implementation correctly masks the 2-bit connection state
+        // values, making an InvalidEnumValue error for the sequence header impossible. This case
+        // now tests an invalid command ID to ensure the error propagates correctly.
         let bad_seq = [
-            0x06, 0x00, 0x00, 0x05, 0xFF, 0xFF, 0x00, 0x00, // Invalid rcon/scon values
-            0x00, 0x00, 0x00, 0x00,
+            0x06, 0x00, 0x00, 0x05, 0xAA, 0x3F, 0x00, 0x00, // Valid prefix + seq
+            0x00, 0xFE, 0x00, 0x00, // Flags, Invalid Cmd ID (0xFE), Size
         ];
         assert!(matches!(
             deserialize_sdo_udp_payload(&bad_seq),
-            Err(PowerlinkError::InvalidEnumValue) // Error from SequenceLayerHeader::deserialize
+            Err(PowerlinkError::InvalidEnumValue)
         ));
 
-        // Malformed Command Header (buffer ok, but invalid command ID enum)
+        // Malformed Command Header (invalid command ID enum)
         let bad_cmd = [
             0x06, 0x00, 0x00, 0x05, 0xAA, 0x3F, 0x00, 0x00, // Valid prefix + seq
             0x01, 0xFF, 0x04, 0x00, // Invalid Cmd ID (0xFF)
