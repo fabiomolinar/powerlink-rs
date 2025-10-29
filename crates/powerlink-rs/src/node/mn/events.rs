@@ -1,16 +1,17 @@
+// crates/powerlink-rs/src/node/mn/events.rs
 use super::main::ManagingNode;
 use super::scheduler;
-use super::state::{AsyncRequest, CnInfo, CnState, CyclePhase};
+use super::state::{AsyncRequest, CnState, CyclePhase};
 use crate::Node;
 use crate::frame::{
     ASndFrame, DllMsEvent, PResFrame, PowerlinkFrame, ServiceId,
-    error::{DllError, NmtAction},
+    error::{DllError, ErrorEntry, ErrorEntryMode, NmtAction, StaticErrorBitField},
 };
 use crate::nmt::NmtStateMachine;
 use crate::nmt::{events::NmtEvent, states::NmtState};
 use crate::node::PdoHandler;
 use crate::types::NodeId;
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace, warn, error};
 
 /// Internal function to process a deserialized `PowerlinkFrame`.
 /// The MN primarily *consumes* PRes and ASnd frames.
@@ -147,7 +148,7 @@ fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
             if let Some(info) = node.node_info.get_mut(&node_id) {
                 if info.state == CnState::Unknown || info.state == CnState::Missing {
                     info.state = CnState::Identified;
-                    info!("_ [MN] Node {} identified.", node_id.0);
+                    info!("[MN] Node {} identified.", node_id.0);
                     scheduler::check_bootup_state(node);
                 }
             } else {
@@ -171,7 +172,8 @@ fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
                     "[MN] StatusResponse from Node {} processed. Updated EA flag to {}.",
                     node_id.0, info.ea_flag
                 );
-                // TODO: Process the actual error information in the StatusResponse payload.
+                // Process the actual error information in the StatusResponse payload.
+                process_status_response_payload(frame.source, &frame.payload);
             }
         }
         _ => {
@@ -182,6 +184,55 @@ fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
         }
     }
 }
+
+/// Parses and logs the contents of a StatusResponse payload.
+/// (Reference: EPSG DS 301, Section 7.3.3.3.1)
+fn process_status_response_payload(source_node: NodeId, payload: &[u8]) {
+    // The StatusResponse payload starts at offset 6 within the ASnd service slot.
+    if payload.len() < 6 {
+        warn!("[MN] Received StatusResponse from Node {} with invalid short payload ({} bytes).", source_node.0, payload.len());
+        return;
+    }
+    let status_payload = &payload[6..];
+
+    // 1. Parse Static Error Bit Field (first 8 bytes)
+    if status_payload.len() < 8 {
+        warn!("[MN] StatusResponse payload from Node {} is too short for Static Error Bit Field.", source_node.0);
+        return;
+    }
+    match StaticErrorBitField::deserialize(status_payload) {
+        Ok(field) => {
+            info!("[MN] StatusResponse from Node {}: ErrorRegister = {:#04x}, SpecificErrors = {:02X?}", source_node.0, field.error_register, field.specific_errors);
+        }
+        Err(e) => {
+            error!("[MN] Failed to parse StaticErrorBitField from Node {}: {:?}", source_node.0, e);
+            return;
+        }
+    }
+
+    // 2. Parse list of Error/Event History Entries (in 20-byte chunks)
+    let mut offset = 8;
+    while offset + 20 <= status_payload.len() {
+        let entry_slice = &status_payload[offset..offset + 20];
+        match ErrorEntry::deserialize(entry_slice) {
+            Ok(entry) => {
+                // The list is terminated by an entry with Mode = Terminator
+                if entry.entry_type.mode == ErrorEntryMode::Terminator {
+                    trace!("[MN] End of StatusResponse error entries for Node {}.", source_node.0);
+                    break;
+                }
+                warn!("[MN] StatusResponse from Node {}: Received Error/Event Entry: {:?}", source_node.0, entry);
+                // In a real application, this entry would be processed or stored.
+                offset += 20;
+            }
+            Err(e) => {
+                error!("[MN] Failed to parse ErrorEntry from Node {}: {:?}", source_node.0, e);
+                break; // Stop parsing on error
+            }
+        }
+    }
+}
+
 
 /// Checks the flags in a received PRes frame for async requests and error signals.
 fn handle_pres_frame(node: &mut ManagingNode, pres: &PResFrame) {
