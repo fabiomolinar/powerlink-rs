@@ -51,6 +51,8 @@ pub struct ManagingNode<'s> {
     pub(super) current_phase: CyclePhase,
     pub(super) current_polled_cn: Option<NodeId>,
     pub(super) async_request_queue: BinaryHeap<AsyncRequest>,
+    /// A high-priority queue for sending StatusRequests to CNs that need an ER flag.
+    pub(super) pending_er_requests: Vec<NodeId>,
     pub(super) pending_status_requests: Vec<NodeId>,
     pub(super) pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
     pub(super) mn_async_send_queue: Vec<PowerlinkFrame>,
@@ -133,6 +135,7 @@ impl<'s> ManagingNode<'s> {
             current_phase: CyclePhase::Idle,
             current_polled_cn: None,
             async_request_queue: BinaryHeap::new(),
+            pending_er_requests: Vec::new(),
             pending_status_requests: Vec::new(),
             pending_nmt_commands: Vec::new(),
             mn_async_send_queue: Vec::new(),
@@ -153,6 +156,18 @@ impl<'s> ManagingNode<'s> {
         info!("[MN] Queuing MN-initiated async frame: {:?}", frame);
         self.mn_async_send_queue.push(frame);
     }
+
+    /// Queues a request to send an SoA(StatusRequest) with the ER (Exception Reset)
+    /// flag set to `true` to a specific CN.
+    /// This allows an application to manually clear a CN's error signaling state.
+    pub fn queue_reset_cn_error_signaling(&mut self, node_id: NodeId) {
+        info!("[MN] Queuing Exception Reset for Node {}", node_id.0);
+        // Avoid adding duplicates
+        if !self.pending_er_requests.contains(&node_id) {
+            self.pending_er_requests.push(node_id);
+        }
+    }
+
 
     /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
     pub(super) fn advance_cycle_phase(&mut self, current_time_us: u64) -> NodeAction {

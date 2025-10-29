@@ -42,7 +42,7 @@ pub(super) fn advance_cycle_phase(node: &mut ManagingNode, current_time_us: u64)
     node.current_polled_cn = None;
     node.current_phase = CyclePhase::IsochronousDone;
 
-    let (req_service, target_node) = scheduler::determine_next_async_action(node);
+    let (req_service, target_node, set_er_flag) = scheduler::determine_next_async_action(node);
 
     if target_node.0 != C_ADR_MN_DEF_NODE_ID
         && req_service != crate::frame::RequestedServiceId::NoService
@@ -62,6 +62,6 @@ pub(super) fn advance_cycle_phase(node: &mut ManagingNode, current_time_us: u64)
         node.current_phase = CyclePhase::Idle;
     }
 
-    let frame = payload::build_soa_frame(node, req_service, target_node);
+    let frame = payload::build_soa_frame(node, req_service, target_node, set_er_flag);
     node.serialize_and_prepare_action(frame)
 }

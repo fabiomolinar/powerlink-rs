@@ -6,7 +6,6 @@ use crate::frame::{
     SocFrame,
 };
 use crate::nmt::events::NmtCommand;
-use crate::node::mn::state::CnState;
 use crate::node::Node;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
@@ -240,9 +239,10 @@ pub(super) fn build_tpdo_payload(
 
 /// Builds an SoA frame based on the scheduled action.
 pub(super) fn build_soa_frame(
-    node: &ManagingNode, // ERROR FIX: Changed to &self
+    node: &ManagingNode,
     req_service: RequestedServiceId,
     target_node: NodeId,
+    set_er_flag: bool,
 ) -> PowerlinkFrame {
     trace!(
         "[MN] Building SoA frame with service {:?} for Node {}",
@@ -251,23 +251,7 @@ pub(super) fn build_soa_frame(
     let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
 
     let mut flags = SoAFlags::default();
-    // Check if this SoA is a StatusRequest that needs the ER flag set.
-    // Spec 6.5.5: MN sends ER=1 to prepare CN for error signaling.
-    // A good time to do this is during the boot-up process.
-    if req_service == RequestedServiceId::StatusRequest {
-        if let Some(info) = node.node_info.get(&target_node) {
-            // Send ER=1 if the CN is in PreOp2 and we haven't confirmed
-            // its error signaling is initialized yet.
-            if info.state == CnState::PreOperational {
-                // Heuristic: if EA is false, we probably haven't completed the handshake yet.
-                // A more robust check might involve a separate "error_signaling_initialized" flag.
-                if !info.ea_flag {
-                    flags.er = true;
-                    info!("[MN] Setting ER=1 in SoA(StatusRequest) for Node {} during boot-up.", target_node.0);
-                }
-            }
-        }
-    }
+    flags.er = set_er_flag;
 
     PowerlinkFrame::SoA(SoAFrame::new(
         node.mac_address,
@@ -278,6 +262,7 @@ pub(super) fn build_soa_frame(
         epl_version,
     ))
 }
+
 
 /// Builds and serializes an SoA(IdentRequest) frame.
 pub(super) fn build_soa_ident_request(
