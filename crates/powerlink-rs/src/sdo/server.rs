@@ -8,12 +8,11 @@ use crate::od::ObjectValue;
 use crate::sdo::command::{
     CommandId, CommandLayerHeader, DefaultSdoHandler, ReadByIndexRequest, ReadByNameRequest,
     ReadMultipleParamRequest, SdoCommand, SdoCommandHandler, Segmentation, WriteByIndexRequest,
-    WriteByNameRequest,
+    WriteByNameRequest
 };
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::state::{SdoServerState, SdoTransferState};
 use alloc::boxed::Box;
-use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
 
@@ -830,7 +829,8 @@ impl SdoServer {
             Ok(req) => {
                 info!("Processing SDO ReadMultipleParamByIndex for {} entries", req.entries.len());
                 let mut payload = Vec::new();
-                for entry in req.entries {
+                // Iterate using a reference to avoid moving req.entries
+                for entry in &req.entries {
                     match od.read(entry.index, entry.sub_index) {
                         Some(value) => {
                             let data = value.serialize();
@@ -853,6 +853,7 @@ impl SdoServer {
                 }
                 // Prepend total number of entries
                 let mut final_payload = Vec::new();
+                 // Use req.entries.len() here, which is now valid
                 final_payload.extend_from_slice(&(req.entries.len() as u32).to_le_bytes()); // Number of entries as U32
                 final_payload.append(&mut payload);
 
@@ -1137,3 +1138,4 @@ impl Default for SdoServer {
         }
     }
 }
+
