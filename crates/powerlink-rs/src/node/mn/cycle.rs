@@ -3,7 +3,7 @@ use super::payload;
 use super::scheduler;
 use super::state::{CyclePhase, MnContext};
 use crate::frame::DllMsEvent;
-use crate::node::NodeAction;
+use crate::node::{NodeAction, serialize_frame_action};
 use crate::types::C_ADR_MN_DEF_NODE_ID;
 use log::debug;
 
@@ -34,7 +34,10 @@ pub(super) fn advance_cycle_phase(
         );
         let is_multiplexed = context.multiplex_assign.get(&node_id).copied().unwrap_or(0) > 0;
         let frame = payload::build_preq_frame(context, node_id, is_multiplexed);
-        return scheduler::serialize_and_prepare_action(context, frame);
+        return serialize_frame_action(frame, context).unwrap_or(
+            // TODO: handle error
+            NodeAction::NoAction
+        );
     }
 
     // No more isochronous nodes to poll, transition to the asynchronous phase.
@@ -68,5 +71,8 @@ pub(super) fn advance_cycle_phase(
     }
 
     let frame = payload::build_soa_frame(context, req_service, target_node, set_er_flag);
-    scheduler::serialize_and_prepare_action(context, frame)
+    serialize_frame_action(frame, context).unwrap_or(
+        // TODO: handle error properly
+        NodeAction::NoAction
+    )
 }

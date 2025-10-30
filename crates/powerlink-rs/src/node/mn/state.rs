@@ -3,7 +3,7 @@ use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, M
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
 use crate::nmt::events::NmtCommand;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
-use crate::node::{CoreNodeContext, PdoHandler}; // Import CoreNodeContext
+use crate::node::{CoreNodeContext, NodeContext, PdoHandler}; // Import CoreNodeContext
 use crate::od::ObjectDictionary;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
@@ -53,6 +53,12 @@ impl<'s> PdoHandler<'s> for MnContext<'s> {
 
     fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
         &mut self.dll_error_manager
+    }
+}
+
+impl<'s> NodeContext for MnContext<'s> {
+    fn is_cn(&self) -> bool {
+        false
     }
 }
 

@@ -12,7 +12,7 @@ use crate::frame::{
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::NodeAction;
+use crate::node::{serialize_frame_action, NodeAction};
 use crate::sdo::asnd;
 use crate::sdo::command::SdoCommand; // Added import
 use crate::sdo::sequence::SequenceLayerHeader; // Added import
@@ -406,7 +406,7 @@ pub(super) fn process_frame(
 
     // --- Serialize and return action ---
     if let Some(response_frame) = response_frame_opt {
-        match serialize_and_prepare_action(context, response_frame) {
+        match serialize_frame_action(response_frame, context) {
             Ok(action) => return action,
             Err(e) => {
                 error!("Failed to prepare response action: {:?}", e);
@@ -613,7 +613,7 @@ fn build_asnd_from_sdo_response(
         "Sending SDO response via ASnd to Node {}",
         source_node_id.0
     );
-    serialize_and_prepare_action(context, PowerlinkFrame::ASnd(asnd_frame))
+    serialize_frame_action(PowerlinkFrame::ASnd(asnd_frame), context)
 }
 
 /// Helper to build NodeAction::SendUdp from SdoResponseData.
@@ -651,56 +651,4 @@ pub(crate) fn build_udp_from_sdo_response(
     })
 }
 
-/// Helper to serialize a PowerlinkFrame (Ethernet) and prepare the NodeAction.
-/// Returns Result to propagate serialization errors.
-fn serialize_and_prepare_action(
-    _context: &CnContext,
-    frame: PowerlinkFrame,
-) -> Result<NodeAction, PowerlinkError> {
-    // Estimate max size needed (14 Eth + Max PL size ~1500)
-    let mut buf = vec![0u8; 1518];
-    // Serialize Eth header first
-    let eth_header = match &frame {
-        PowerlinkFrame::PRes(f) => &f.eth_header,
-        PowerlinkFrame::ASnd(f) => &f.eth_header,
-        // Add other frame types if CN might send them (unlikely for responses)
-        _ => {
-            error!(
-                "[CN] Attempted to serialize unexpected response frame type: {:?}",
-                frame
-            );
-            return Ok(NodeAction::NoAction); // Return NoAction on unexpected type
-        }
-    };
-    CodecHelpers::serialize_eth_header(eth_header, &mut buf);
 
-    // Then serialize PL part into the buffer starting after the Eth header
-    match frame.serialize(&mut buf[14..]) {
-        Ok(pl_size) => {
-            let total_size = 14 + pl_size;
-            if total_size < 60 {
-                // Ethernet minimum frame size (excluding preamble, SFD, FCS)
-                // Spec requires padding, but the raw socket likely handles this.
-                // We truncate to the *actual* data size.
-                buf.truncate(total_size);
-                trace!(
-                    "Frame size {} bytes (padding likely handled by OS/hardware).",
-                    total_size
-                );
-            } else {
-                buf.truncate(total_size);
-            }
-            info!(
-                "Sending response frame type: {:?} ({} bytes)",
-                frame,
-                buf.len()
-            );
-            trace!("Sending frame bytes ({}): {:02X?}", buf.len(), &buf);
-            Ok(NodeAction::SendFrame(buf))
-        }
-        Err(e) => {
-            error!("[CN] Failed to serialize response frame: {:?}", e);
-            Err(e) // Propagate serialization error
-        }
-    }
-}

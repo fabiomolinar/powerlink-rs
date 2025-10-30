@@ -12,7 +12,8 @@ use crate::frame::{
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::{states::NmtState, NmtStateMachine};
 use crate::node::mn::state::{CnInfo, CnState, CyclePhase};
-use crate::node::NodeAction;
+use crate::node::{NodeAction, serialize_frame_action};
+use crate::node::NodeContext;
 use crate::od::{Object, ObjectValue};
 use crate::sdo::asnd;
 use crate::sdo::command::SdoCommand; // Added import
@@ -408,13 +409,16 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
         context.initial_operational_actions_done = true;
         if (context.nmt_state_machine.startup_flags & (1 << 1)) != 0 {
             info!("[MN] Sending NMTStartNode (Broadcast).");
-            return serialize_and_prepare_action(
-                context,
+            return serialize_frame_action(                
                 payload::build_nmt_command_frame(
                     context,
                     NmtCommand::StartNode,
                     NodeId(C_ADR_BROADCAST_NODE_ID),
                 ),
+                context
+            ).unwrap_or(
+                // TODO: Handle error properly
+                NodeAction::NoAction
             );
         } else if let Some(&node_id) = context.mandatory_nodes.first() {
             info!("[MN] Queuing NMTStartNode (Unicast).");
@@ -435,14 +439,20 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                     command, target_node.0
                 );
                 context.current_phase = CyclePhase::Idle;
-                return serialize_and_prepare_action(
-                    context,
+                return serialize_frame_action(
                     payload::build_nmt_command_frame(context, command, target_node),
+                    context,
+                ).unwrap_or(
+                    // TODO: Handle error properly
+                    NodeAction::NoAction 
                 );
             } else if let Some(frame) = context.mn_async_send_queue.pop() {
                 info!("[MN] Sending queued generic async frame.");
                 context.current_phase = CyclePhase::Idle;
-                return serialize_and_prepare_action(context, frame);
+                return serialize_frame_action(frame, context).unwrap_or(
+                    // TODO: handler error properly
+                    NodeAction::NoAction
+                );
             } else if let Some((target_node_id, sdo_payload)) =
                 context.pending_sdo_client_requests.pop()
             {
@@ -463,7 +473,10 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                     ServiceId::Sdo,
                     sdo_payload,
                 );
-                return serialize_and_prepare_action(context, PowerlinkFrame::ASnd(asnd));
+                return serialize_frame_action(PowerlinkFrame::ASnd(asnd), context).unwrap_or(
+                    // TODO: handle error properly
+                    NodeAction::NoAction
+                );
             } else {
                 warn!("[MN] Was in AwaitingMnAsyncSend, but all send queues are empty.");
                 context.current_phase = CyclePhase::Idle;
@@ -550,13 +563,16 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                 _ => {
                     context.current_phase = CyclePhase::SoCSent;
                     context.next_isoch_node_idx = 0;
-                    serialize_and_prepare_action(
-                        context,
+                    serialize_frame_action(
                         payload::build_soc_frame(
                             context,
                             context.current_multiplex_cycle,
                             context.multiplex_cycle_len,
                         ),
+                        context
+                    ).unwrap_or(
+                        // TODO: handle error properly
+                        NodeAction::NoAction
                     )
                 }
             };
@@ -664,9 +680,12 @@ pub(crate) fn build_asnd_from_sdo_response(
         sdo_payload,
     );
     info!("[MN] Sending SDO response via ASnd to Node {}", source_node_id.0);
-    Ok(serialize_and_prepare_action(
-        context,
+    Ok(serialize_frame_action(
         PowerlinkFrame::ASnd(asnd_frame),
+        context
+    ). unwrap_or(
+        // TODO: handle error properly
+        NodeAction::NoAction
     ))
 }
 
@@ -705,34 +724,3 @@ pub(crate) fn build_udp_from_sdo_response(
     })
 }
 
-/// Helper to serialize a PowerlinkFrame and prepare the NodeAction.
-pub(super) fn serialize_and_prepare_action(
-    context: &MnContext,
-    frame: PowerlinkFrame,
-) -> NodeAction {
-    let mut buf = vec![0u8; 1500];
-    let eth_header = match &frame {
-        PowerlinkFrame::Soc(f) => &f.eth_header,
-        PowerlinkFrame::PReq(f) => &f.eth_header,
-        PowerlinkFrame::SoA(f) => &f.eth_header,
-        PowerlinkFrame::ASnd(f) => &f.eth_header,
-        // PRes is not sent by MN
-        PowerlinkFrame::PRes(_) => {
-            error!("[MN] Attempted to serialize a PRes frame, which is invalid for an MN.");
-            return NodeAction::NoAction;
-        }
-    };
-    CodecHelpers::serialize_eth_header(eth_header, &mut buf);
-    match frame.serialize(&mut buf[14..]) {
-        Ok(pl_size) => {
-            let total_size = 14 + pl_size;
-            buf.truncate(total_size);
-            trace!("[MN] Sending frame ({} bytes): {:02X?}", total_size, &buf);
-            NodeAction::SendFrame(buf)
-        }
-        Err(e) => {
-            error!("Failed to serialize response frame: {:?}", e);
-            NodeAction::NoAction
-        }
-    }
-}

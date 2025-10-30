@@ -86,7 +86,7 @@ impl<'s> ControlledNode<'s> {
 
     /// Allows the application to queue an SDO request payload to be sent.
     pub fn queue_sdo_request(&mut self, payload: Vec<u8>) {
-        self.context.core.sdo_client.queue_request(NodeId(C_ADR_MN_DEF_NODE_ID), payload);
+        self.context.core.queue_sdo_request(NodeId(C_ADR_MN_DEF_NODE_ID), payload);
     }
 
     /// Allows the application to queue an NMT command request to be sent to the MN.
