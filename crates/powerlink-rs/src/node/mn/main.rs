@@ -1,32 +1,37 @@
+// crates/powerlink-rs/src/node/mn/main.rs
 use super::cycle;
 use super::events;
-use super::payload;
-use super::state::{AsyncRequest, CnInfo, CnState, CyclePhase};
-use crate::frame::ASndFrame;
-use crate::sdo::asnd;
+// use super::payload; // No longer used directly by main.rs
+use super::scheduler; // Added
+use super::state::{
+    AsyncRequest, CnInfo, CnState, CyclePhase, MnContext,
+}; // Added MnContext
+   // use crate::frame::ASndFrame; // No longer used directly by main.rs
+   // use crate::sdo::asnd; // No longer used directly by main.rs
 use crate::sdo::server::{SdoClientInfo, SdoResponseData};
 use crate::sdo::SdoServer;
-use crate::types::{C_ADR_BROADCAST_NODE_ID, MessageType, NodeId};
+use crate::types::{C_ADR_BROADCAST_NODE_ID, NodeId}; // MessageType removed
 use crate::PowerlinkError;
-use crate::common::{NetTime, RelativeTime};
+// use crate::common::{NetTime, RelativeTime}; // Removed
 use crate::frame::basic::MacAddress;
-use crate::frame::codec::CodecHelpers;
+// use crate::frame::codec::CodecHelpers; // Removed
 use crate::frame::{
-    DllMsEvent, DllMsStateMachine, PowerlinkFrame, SocFrame, deserialize_frame,
+    deserialize_frame, DllMsEvent, DllMsStateMachine, PowerlinkFrame,
+    ServiceId, // Kept for SDO check
     error::{
         DllError, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler,
         MnErrorCounters,
     },
-    ServiceId,
+    // SocFrame removed
 };
 use crate::nmt::NmtStateMachine;
-use crate::nmt::events::{NmtCommand, NmtEvent};
+use crate::nmt::events::{NmtCommand, NmtEvent}; // NmtEvent removed, NmtCommand kept for struct
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{Node, NodeAction, PdoHandler};
-use crate::od::{Object, ObjectDictionary, ObjectValue};
+use crate::od::{Object, ObjectDictionary, ObjectValue}; // Kept for new()
 #[cfg(feature = "sdo-udp")]
-use crate::sdo::udp::serialize_sdo_udp_payload;
+// use crate::sdo::udp::serialize_sdo_udp_payload; // No longer used directly by main.rs
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -40,37 +45,9 @@ const OD_SUBIDX_MULTIPLEX_CYCLE_LEN: u8 = 7;
 const OD_IDX_MULTIPLEX_ASSIGN: u16 = 0x1F9B;
 
 /// Represents a complete POWERLINK Managing Node (MN).
+/// This struct is now a thin wrapper around the MnContext.
 pub struct ManagingNode<'s> {
-    pub od: ObjectDictionary<'s>,
-    pub(super) nmt_state_machine: MnNmtStateMachine,
-    pub(super) dll_state_machine: DllMsStateMachine,
-    pub(super) dll_error_manager: DllErrorManager<MnErrorCounters, LoggingErrorHandler>,
-    pub(super) mac_address: MacAddress,
-    sdo_server: SdoServer,
-    pub(super) cycle_time_us: u64,
-    pub(super) multiplex_cycle_len: u8,
-    pub(super) multiplex_assign: BTreeMap<NodeId, u8>,
-    pub(super) current_multiplex_cycle: u8,
-    pub(super) node_info: BTreeMap<NodeId, CnInfo>,
-    pub(super) mandatory_nodes: Vec<NodeId>,
-    pub(super) isochronous_nodes: Vec<NodeId>,
-    pub(super) async_only_nodes: Vec<NodeId>,
-    pub(super) next_isoch_node_idx: usize,
-    pub(super) current_phase: CyclePhase,
-    pub(super) current_polled_cn: Option<NodeId>,
-    pub(super) async_request_queue: BinaryHeap<AsyncRequest>,
-    /// A high-priority queue for sending StatusRequests to CNs that need an ER flag.
-    pub(super) pending_er_requests: Vec<NodeId>,
-    pub(super) pending_status_requests: Vec<NodeId>,
-    pub(super) pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
-    pub(super) mn_async_send_queue: Vec<PowerlinkFrame>,
-    pub(super) pending_sdo_client_requests: Vec<(NodeId, Vec<u8>)>,
-    pub(super) last_ident_poll_node_id: NodeId,
-    pub(super) last_status_poll_node_id: NodeId,
-    pub(super) next_tick_us: Option<u64>,
-    pub(super) pending_timeout_event: Option<DllMsEvent>,
-    pub(super) current_cycle_start_time_us: u64,
-    initial_operational_actions_done: bool,
+    pub(super) context: MnContext<'s>,
 }
 
 impl<'s> ManagingNode<'s> {
@@ -126,7 +103,7 @@ impl<'s> ManagingNode<'s> {
             multiplex_cycle_len
         );
 
-        let mut node = Self {
+        let mut context = MnContext {
             od,
             nmt_state_machine,
             dll_state_machine: DllMsStateMachine::new(),
@@ -157,15 +134,18 @@ impl<'s> ManagingNode<'s> {
             current_cycle_start_time_us: 0,
             initial_operational_actions_done: false,
         };
-        node.nmt_state_machine
-            .run_internal_initialisation(&mut node.od);
-        Ok(node)
+
+        context
+            .nmt_state_machine
+            .run_internal_initialisation(&mut context.od);
+
+        Ok(Self { context })
     }
 
     /// Queues a generic asynchronous frame to be sent by the MN.
     pub fn queue_mn_async_frame(&mut self, frame: PowerlinkFrame) {
         info!("[MN] Queuing MN-initiated async frame: {:?}", frame);
-        self.mn_async_send_queue.push(frame);
+        self.context.mn_async_send_queue.push(frame);
     }
 
     /// Queues an SDO request payload to be sent from the MN to a specific CN.
@@ -176,7 +156,8 @@ impl<'s> ManagingNode<'s> {
             target_node_id.0,
             sdo_payload.len()
         );
-        self.pending_sdo_client_requests
+        self.context
+            .pending_sdo_client_requests
             .push((target_node_id, sdo_payload));
     }
 
@@ -186,8 +167,8 @@ impl<'s> ManagingNode<'s> {
     pub fn queue_reset_cn_error_signaling(&mut self, node_id: NodeId) {
         info!("[MN] Queuing Exception Reset for Node {}", node_id.0);
         // Avoid adding duplicates
-        if !self.pending_er_requests.contains(&node_id) {
-            self.pending_er_requests.push(node_id);
+        if !self.context.pending_er_requests.contains(&node_id) {
+            self.context.pending_er_requests.push(node_id);
         }
     }
 
@@ -219,17 +200,21 @@ impl<'s> ManagingNode<'s> {
             source_ip,
             source_port,
         };
-        match self
-            .sdo_server
-            .handle_request(sdo_payload, client_info, &mut self.od, current_time_us)
-        {
-            Ok(response_data) => match self.build_udp_from_sdo_response(response_data) {
-                Ok(action) => action,
-                Err(e) => {
-                    error!("Failed to build SDO/UDP response: {:?}", e);
-                    NodeAction::NoAction
+        match self.context.sdo_server.handle_request(
+            sdo_payload,
+            client_info,
+            &mut self.context.od,
+            current_time_us,
+        ) {
+            Ok(response_data) => {
+                match scheduler::build_udp_from_sdo_response(&mut self.context, response_data) {
+                    Ok(action) => action,
+                    Err(e) => {
+                        error!("Failed to build SDO/UDP response: {:?}", e);
+                        NodeAction::NoAction
+                    }
                 }
-            },
+            }
             Err(e) => {
                 error!("SDO server error (UDP): {:?}", e);
                 NodeAction::NoAction
@@ -245,7 +230,7 @@ impl<'s> ManagingNode<'s> {
     ) -> NodeAction {
         // --- Handle SDO ASnd frames before generic processing ---
         if let PowerlinkFrame::ASnd(ref asnd_frame) = frame {
-            if asnd_frame.destination == self.nmt_state_machine.node_id
+            if asnd_frame.destination == self.context.nmt_state_machine.node_id
                 && asnd_frame.service_id == ServiceId::Sdo
             {
                 debug!("[MN] Received SDO/ASnd for processing.");
@@ -254,14 +239,17 @@ impl<'s> ManagingNode<'s> {
                     source_node_id: asnd_frame.source,
                     source_mac: asnd_frame.eth_header.source_mac,
                 };
-                match self.sdo_server.handle_request(
+                match self.context.sdo_server.handle_request(
                     sdo_payload,
                     client_info,
-                    &mut self.od,
+                    &mut self.context.od,
                     current_time_us,
                 ) {
                     Ok(response_data) => {
-                        return match self.build_asnd_from_sdo_response(response_data) {
+                        return match scheduler::build_asnd_from_sdo_response(
+                            &mut self.context,
+                            response_data,
+                        ) {
                             Ok(action) => action,
                             Err(e) => {
                                 error!("Failed to build SDO/ASnd response: {:?}", e);
@@ -278,158 +266,16 @@ impl<'s> ManagingNode<'s> {
         }
 
         // If not an SDO frame for us, proceed with general event handling.
-        events::process_frame(self, frame, current_time_us);
+        events::process_frame(&mut self.context, frame, current_time_us);
         // General event processing does not return an immediate action.
         NodeAction::NoAction
     }
 
     /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
+    // This function is now pub(super) and its logic is in cycle.rs
+    // It's still called by scheduler::tick, which is fine.
     pub(super) fn advance_cycle_phase(&mut self, current_time_us: u64) -> NodeAction {
-        cycle::advance_cycle_phase(self, current_time_us)
-    }
-
-    /// Helper to potentially schedule a DLL timeout event.
-    pub(super) fn schedule_timeout(&mut self, deadline_us: u64, event: DllMsEvent) {
-        let next_event_time = self
-            .next_tick_us
-            .map_or(deadline_us, |next| deadline_us.min(next));
-        if self.next_tick_us.is_none() || next_event_time < self.next_tick_us.unwrap() {
-            self.next_tick_us = Some(next_event_time);
-            if next_event_time == deadline_us {
-                self.pending_timeout_event = Some(event);
-                debug!("[MN] Scheduled {:?} timeout at {}us", event, deadline_us);
-            } else {
-                self.pending_timeout_event = None;
-            }
-        } else if next_event_time == deadline_us && self.pending_timeout_event.is_none() {
-            self.pending_timeout_event = Some(event);
-            debug!(
-                "[MN] Scheduled {:?} timeout coinciding with next event at {}us",
-                event, deadline_us
-            );
-        }
-    }
-
-    /// Gets a CN's MAC address from the Object Dictionary.
-    pub(super) fn get_cn_mac_address(&self, node_id: NodeId) -> Option<MacAddress> {
-        const OD_IDX_MAC_MAP: u16 = 0x1F84;
-        if let Some(Object::Array(entries)) = self.od.read_object(OD_IDX_MAC_MAP) {
-            if let Some(ObjectValue::Unsigned32(mac_val_u32)) = entries.get(node_id.0 as usize) {
-                let mac_bytes = mac_val_u32.to_le_bytes();
-                if mac_bytes[0..6].iter().any(|&b| b != 0) {
-                    return Some(MacAddress(mac_bytes[0..6].try_into().unwrap()));
-                }
-            }
-        }
-        None
-    }
-
-    /// Helper to build ASnd frame from SdoResponseData.
-    fn build_asnd_from_sdo_response(
-        &self,
-        response_data: SdoResponseData,
-    ) -> Result<NodeAction, PowerlinkError> {
-        let (source_node_id, source_mac) = match response_data.client_info {
-            SdoClientInfo::Asnd {
-                source_node_id,
-                source_mac,
-            } => (source_node_id, source_mac),
-            #[cfg(feature = "sdo-udp")]
-            SdoClientInfo::Udp { .. } => {
-                return Err(PowerlinkError::InternalError(
-                    "Attempted to build ASnd response for UDP client",
-                ))
-            }
-        };
-
-        let sdo_payload =
-            asnd::serialize_sdo_asnd_payload(response_data.seq_header, response_data.command)?;
-        let asnd_frame = ASndFrame::new(
-            self.mac_address,
-            source_mac,
-            source_node_id,
-            self.nmt_state_machine.node_id,
-            ServiceId::Sdo,
-            sdo_payload,
-        );
-        info!("[MN] Sending SDO response via ASnd to Node {}", source_node_id.0);
-        Ok(self.serialize_and_prepare_action(PowerlinkFrame::ASnd(asnd_frame)))
-    }
-
-    /// Helper to build NodeAction::SendUdp from SdoResponseData.
-    #[cfg(feature = "sdo-udp")]
-    fn build_udp_from_sdo_response(
-        &self,
-        response_data: SdoResponseData,
-    ) -> Result<NodeAction, PowerlinkError> {
-        let (source_ip, source_port) = match response_data.client_info {
-            SdoClientInfo::Udp {
-                source_ip,
-                source_port,
-            } => (source_ip, source_port),
-            SdoClientInfo::Asnd { .. } => {
-                return Err(PowerlinkError::InternalError(
-                    "Attempted to build UDP response for ASnd client",
-                ))
-            }
-        };
-
-        let mut udp_buffer = vec![0u8; 1500]; // MTU size
-        let udp_payload_len = serialize_sdo_udp_payload(
-            response_data.seq_header,
-            response_data.command,
-            &mut udp_buffer,
-        )?;
-        udp_buffer.truncate(udp_payload_len);
-        info!(
-            "[MN] Sending SDO response via UDP to {}:{}",
-            core::net::Ipv4Addr::from(source_ip),
-            source_port
-        );
-        Ok(NodeAction::SendUdp {
-            dest_ip: source_ip,
-            dest_port: source_port,
-            data: udp_buffer,
-        })
-    }
-
-    /// Helper to serialize a PowerlinkFrame and prepare the NodeAction.
-    pub(super) fn serialize_and_prepare_action(&self, frame: PowerlinkFrame) -> NodeAction {
-        let mut buf = vec![0u8; 1500];
-        let eth_header = match &frame {
-            PowerlinkFrame::Soc(f) => &f.eth_header,
-            PowerlinkFrame::PReq(f) => &f.eth_header,
-            PowerlinkFrame::SoA(f) => &f.eth_header,
-            PowerlinkFrame::ASnd(f) => &f.eth_header,
-            // PRes is not sent by MN
-            PowerlinkFrame::PRes(_) => {
-                error!("[MN] Attempted to serialize a PRes frame, which is invalid for an MN.");
-                return NodeAction::NoAction;
-            }
-        };
-        CodecHelpers::serialize_eth_header(eth_header, &mut buf);
-        match frame.serialize(&mut buf[14..]) {
-            Ok(pl_size) => {
-                let total_size = 14 + pl_size;
-                buf.truncate(total_size);
-                trace!("[MN] Sending frame ({} bytes): {:02X?}", total_size, &buf);
-                NodeAction::SendFrame(buf)
-            }
-            Err(e) => {
-                error!("Failed to serialize response frame: {:?}", e);
-                NodeAction::NoAction
-            }
-        }
-    }
-}
-
-impl<'s> PdoHandler<'s> for ManagingNode<'s> {
-    fn od(&mut self) -> &mut ObjectDictionary<'s> {
-        &mut self.od
-    }
-
-    fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
-        &mut self.dll_error_manager
+        cycle::advance_cycle_phase(&mut self.context, current_time_us)
     }
 }
 
@@ -438,10 +284,12 @@ impl<'s> Node for ManagingNode<'s> {
     fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
         if self.nmt_state() == NmtState::NmtNotActive
             && buffer.get(12..14) == Some(&crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes())
-            && buffer.get(6..12) != Some(&self.mac_address.0)
+            && buffer.get(6..12) != Some(&self.context.mac_address.0)
         {
             warn!("[MN] POWERLINK frame detected while in NotActive state from another MN.");
-            self.dll_error_manager.handle_error(DllError::MultipleMn);
+            self.context
+                .dll_error_manager
+                .handle_error(DllError::MultipleMn);
         }
 
         match deserialize_frame(buffer) {
@@ -449,7 +297,9 @@ impl<'s> Node for ManagingNode<'s> {
             Err(e) if e != PowerlinkError::InvalidEthernetFrame => {
                 // Log any POWERLINK-specific deserialization errors.
                 warn!("[MN] Error during frame deserialization: {:?}", e);
-                self.dll_error_manager.handle_error(DllError::InvalidFormat);
+                self.context
+                    .dll_error_manager
+                    .handle_error(DllError::InvalidFormat);
                 NodeAction::NoAction
             }
             _ => {
@@ -461,225 +311,27 @@ impl<'s> Node for ManagingNode<'s> {
 
     /// The MN's main scheduler tick.
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
-        // --- 0. SDO Server Tick (handles timeouts/retransmissions) ---
-        match self.sdo_server.tick(current_time_us, &self.od) {
-            Ok(Some(sdo_response_data)) => {
-                #[cfg(feature = "sdo-udp")]
-                let build_udp = || self.build_udp_from_sdo_response(sdo_response_data.clone());
-                #[cfg(not(feature = "sdo-udp"))]
-                let build_udp = || {
-                    Err::<NodeAction, PowerlinkError>(PowerlinkError::InternalError(
-                        "UDP feature disabled",
-                    ))
-                };
-
-                match sdo_response_data.client_info {
-                    SdoClientInfo::Asnd { .. } => {
-                        match self.build_asnd_from_sdo_response(sdo_response_data) {
-                            Ok(action) => return action,
-                            Err(e) => error!("[MN] Failed to build SDO Abort ASnd frame: {:?}", e),
-                        }
-                    }
-                    #[cfg(feature = "sdo-udp")]
-                    SdoClientInfo::Udp { .. } => match build_udp() {
-                        Ok(action) => return action,
-                        Err(e) => error!("[MN] Failed to build SDO Abort UDP frame: {:?}", e),
-                    },
-                }
-            }
-            Err(e) => error!("[MN] SDO Server tick error: {:?}", e),
-            _ => {}
-        }
-
-        // --- 1. Handle one-time actions ---
-        if self.nmt_state() == NmtState::NmtOperational && !self.initial_operational_actions_done {
-            self.initial_operational_actions_done = true;
-            if (self.nmt_state_machine.startup_flags & (1 << 1)) != 0 {
-                info!("[MN] Sending NMTStartNode (Broadcast).");
-                return self.serialize_and_prepare_action(payload::build_nmt_command_frame(
-                    self,
-                    NmtCommand::StartNode,
-                    NodeId(C_ADR_BROADCAST_NODE_ID),
-                ));
-            } else if let Some(&node_id) = self.mandatory_nodes.first() {
-                info!("[MN] Queuing NMTStartNode (Unicast).");
-                self.pending_nmt_commands
-                    .push((NmtCommand::StartNode, node_id));
-            }
-        } else if self.nmt_state() < NmtState::NmtOperational {
-            self.initial_operational_actions_done = false;
-        }
-
-        // --- 2. Handle immediate, non-time-based follow-up actions ---
-        match self.current_phase {
-            CyclePhase::AwaitingMnAsyncSend => {
-                if let Some((command, target_node)) = self.pending_nmt_commands.pop() {
-                    info!(
-                        "[MN] Sending queued NMT command {:?} for Node {}.",
-                        command, target_node.0
-                    );
-                    self.current_phase = CyclePhase::Idle;
-                    return self.serialize_and_prepare_action(payload::build_nmt_command_frame(
-                        self,
-                        command,
-                        target_node,
-                    ));
-                } else if let Some(frame) = self.mn_async_send_queue.pop() {
-                    info!("[MN] Sending queued generic async frame.");
-                    self.current_phase = CyclePhase::Idle;
-                    return self.serialize_and_prepare_action(frame);
-                } else if let Some((target_node_id, sdo_payload)) =
-                    self.pending_sdo_client_requests.pop()
-                {
-                    info!(
-                        "[MN] Sending queued SDO client request to Node {}.",
-                        target_node_id.0
-                    );
-                    self.current_phase = CyclePhase::Idle;
-                    let dest_mac = self.get_cn_mac_address(target_node_id).unwrap_or(
-                        // Fallback to multicast, though this indicates a configuration error.
-                        MacAddress(crate::types::C_DLL_MULTICAST_ASND),
-                    );
-                    let asnd = ASndFrame::new(
-                        self.mac_address,
-                        dest_mac,
-                        target_node_id,
-                        self.nmt_state_machine.node_id,
-                        ServiceId::Sdo,
-                        sdo_payload,
-                    );
-                    return self.serialize_and_prepare_action(PowerlinkFrame::ASnd(asnd));
-                } else {
-                    warn!("[MN] Was in AwaitingMnAsyncSend, but all send queues are empty.");
-                    self.current_phase = CyclePhase::Idle;
-                }
-            }
-            CyclePhase::SoCSent => {
-                return self.advance_cycle_phase(current_time_us);
-            }
-            _ => {}
-        }
-
-        // --- 3. Handle time-based actions ---
-        if self.nmt_state() == NmtState::NmtNotActive && self.next_tick_us.is_none() {
-            let timeout_us = self.nmt_state_machine.wait_not_active_timeout as u64;
-            self.next_tick_us = Some(current_time_us + timeout_us);
-            return NodeAction::NoAction;
-        }
-
-        let deadline = self.next_tick_us.unwrap_or(u64::MAX);
-        if current_time_us < deadline {
-            return NodeAction::NoAction;
-        }
-
-        let mut action = NodeAction::NoAction;
-        let mut schedule_next_cycle = true;
-
-        if let Some(timeout_event) = self.pending_timeout_event.take() {
-            let missed_node = self.current_polled_cn.unwrap_or(NodeId(0));
-            warn!(
-                "[MN] Timeout event {:?} for Node {}",
-                timeout_event, missed_node.0
-            );
-            let dummy_frame = PowerlinkFrame::Soc(SocFrame::new(
-                self.mac_address,
-                Default::default(),
-                NetTime {
-                    seconds: 0,
-                    nanoseconds: 0,
-                },
-                RelativeTime {
-                    seconds: 0,
-                    nanoseconds: 0,
-                },
-            ));
-            events::handle_dll_event(self, timeout_event, &dummy_frame);
-
-            if timeout_event == DllMsEvent::PresTimeout {
-                if let Some(info) = self.node_info.get_mut(&missed_node) {
-                    if info.state >= CnState::Identified && info.state != CnState::Stopped {
-                        info.state = CnState::Missing;
-                    }
-                }
-                action = self.advance_cycle_phase(current_time_us);
-                schedule_next_cycle = false;
-            } else if timeout_event == DllMsEvent::AsndTimeout {
-                self.current_phase = CyclePhase::Idle;
-            }
-        } else if self.nmt_state() == NmtState::NmtNotActive {
-            info!("[MN] NotActive timeout expired. Proceeding to boot.");
-            self.nmt_state_machine
-                .process_event(NmtEvent::Timeout, &mut self.od);
-        }
-
-        let nmt_state = self.nmt_state();
-        if action == NodeAction::NoAction && self.current_phase == CyclePhase::Idle {
-            self.current_cycle_start_time_us = current_time_us;
-            debug!(
-                "[MN] Tick: Cycle start at {}us (State: {:?})",
-                current_time_us, nmt_state
-            );
-
-            if nmt_state >= NmtState::NmtPreOperational1 {
-                self.dll_error_manager.on_cycle_complete();
-                if nmt_state >= NmtState::NmtPreOperational2 && self.multiplex_cycle_len > 0 {
-                    self.current_multiplex_cycle =
-                        (self.current_multiplex_cycle + 1) % self.multiplex_cycle_len;
-                }
-                action = match nmt_state {
-                    NmtState::NmtPreOperational1 => self.advance_cycle_phase(current_time_us),
-                    _ => {
-                        self.current_phase = CyclePhase::SoCSent;
-                        self.next_isoch_node_idx = 0;
-                        self.serialize_and_prepare_action(payload::build_soc_frame(
-                            self,
-                            self.current_multiplex_cycle,
-                            self.multiplex_cycle_len,
-                        ))
-                    }
-                };
-                schedule_next_cycle = false;
-            }
-        }
-
-        if schedule_next_cycle {
-            self.cycle_time_us = self.od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
-            if self.cycle_time_us > 0 && self.nmt_state() >= NmtState::NmtPreOperational1 {
-                let base_time = if self.current_cycle_start_time_us > 0
-                    && current_time_us < self.current_cycle_start_time_us + self.cycle_time_us
-                {
-                    self.current_cycle_start_time_us
-                } else {
-                    current_time_us
-                };
-                let next_cycle_start = (base_time / self.cycle_time_us + 1) * self.cycle_time_us;
-                if self.pending_timeout_event.is_none()
-                    || next_cycle_start <= self.next_tick_us.unwrap_or(u64::MAX)
-                {
-                    self.next_tick_us = Some(next_cycle_start);
-                    debug!("[MN] Scheduling next cycle start at {}us", next_cycle_start);
-                }
-            }
-        }
-        action
+        // Delegate almost everything to the scheduler
+        scheduler::tick(&mut self.context, current_time_us)
     }
 
     /// Returns the NMT state of the node.
     fn nmt_state(&self) -> NmtState {
-        self.nmt_state_machine.current_state()
+        self.context.nmt_state_machine.current_state()
     }
 
     /// Returns the absolute time of the next scheduled event.
     fn next_action_time(&self) -> Option<u64> {
         if matches!(
-            self.current_phase,
+            self.context.current_phase,
             CyclePhase::SoCSent | CyclePhase::AwaitingMnAsyncSend
         ) {
-            return Some(self.current_cycle_start_time_us);
+            return Some(self.context.current_cycle_start_time_us);
         }
-        if self.nmt_state() == NmtState::NmtNotActive && self.next_tick_us.is_none() {
+        if self.nmt_state() == NmtState::NmtNotActive && self.context.next_tick_us.is_none() {
             return Some(0);
         }
-        self.next_tick_us
+        self.context.next_tick_us
     }
 }
+

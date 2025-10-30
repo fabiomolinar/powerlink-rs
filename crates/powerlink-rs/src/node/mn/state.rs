@@ -1,5 +1,60 @@
+use crate::frame::basic::MacAddress;
+use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
+use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
+use crate::nmt::events::NmtCommand;
+use crate::nmt::mn_state_machine::MnNmtStateMachine;
+use crate::node::PdoHandler;
+use crate::od::ObjectDictionary;
+use crate::sdo::SdoServer;
 use crate::types::NodeId;
+use crate::ErrorHandler;
+use alloc::collections::{BTreeMap, BinaryHeap};
+use alloc::vec::Vec;
 use core::cmp::Ordering;
+
+/// Holds the complete state for a Managing Node.
+pub struct MnContext<'s> {
+    pub od: ObjectDictionary<'s>,
+    pub nmt_state_machine: MnNmtStateMachine,
+    pub dll_state_machine: DllMsStateMachine,
+    pub dll_error_manager: DllErrorManager<MnErrorCounters, LoggingErrorHandler>,
+    pub mac_address: MacAddress,
+    pub sdo_server: SdoServer,
+    pub cycle_time_us: u64,
+    pub multiplex_cycle_len: u8,
+    pub multiplex_assign: BTreeMap<NodeId, u8>,
+    pub current_multiplex_cycle: u8,
+    pub node_info: BTreeMap<NodeId, CnInfo>,
+    pub mandatory_nodes: Vec<NodeId>,
+    pub isochronous_nodes: Vec<NodeId>,
+    pub async_only_nodes: Vec<NodeId>,
+    pub next_isoch_node_idx: usize,
+    pub current_phase: CyclePhase,
+    pub current_polled_cn: Option<NodeId>,
+    pub async_request_queue: BinaryHeap<AsyncRequest>,
+    /// A high-priority queue for sending StatusRequests to CNs that need an ER flag.
+    pub pending_er_requests: Vec<NodeId>,
+    pub pending_status_requests: Vec<NodeId>,
+    pub pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
+    pub mn_async_send_queue: Vec<PowerlinkFrame>,
+    pub pending_sdo_client_requests: Vec<(NodeId, Vec<u8>)>,
+    pub last_ident_poll_node_id: NodeId,
+    pub last_status_poll_node_id: NodeId,
+    pub next_tick_us: Option<u64>,
+    pub pending_timeout_event: Option<DllMsEvent>,
+    pub current_cycle_start_time_us: u64,
+    pub initial_operational_actions_done: bool,
+}
+
+impl<'s> PdoHandler<'s> for MnContext<'s> {
+    fn od(&mut self) -> &mut ObjectDictionary<'s> {
+        &mut self.od
+    }
+
+    fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
+        &mut self.dll_error_manager
+    }
+}
 
 /// Internal state tracking for each configured CN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]

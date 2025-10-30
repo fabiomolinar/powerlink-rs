@@ -1,7 +1,6 @@
-use super::main::ManagingNode;
+// crates/powerlink-rs/src/node/mn/events.rs
 use super::scheduler;
-use super::state::{AsyncRequest, CnInfo, CnState, CyclePhase};
-use crate::Node;
+use super::state::{AsyncRequest, CnInfo, CnState, CyclePhase, MnContext};
 use crate::frame::{
     ASndFrame, DllMsEvent, PResFrame, PowerlinkFrame, ServiceId,
     error::{DllError, ErrorEntry, ErrorEntryMode, NmtAction, StaticErrorBitField},
@@ -16,65 +15,71 @@ use log::{debug, error, info, trace, warn};
 /// The MN primarily *consumes* PRes and ASnd frames.
 /// This function is now called by `ManagingNode::process_powerlink_frame`
 /// and does not handle SDO frames directly anymore.
-pub(super) fn process_frame(node: &mut ManagingNode, frame: PowerlinkFrame, current_time_us: u64) {
+pub(super) fn process_frame(
+    context: &mut MnContext,
+    frame: PowerlinkFrame,
+    current_time_us: u64,
+) {
     // 1. Update NMT state machine based on the frame type.
     if let Some(event) = frame.nmt_event() {
-        if node.nmt_state() != NmtState::NmtNotActive {
-            node.nmt_state_machine.process_event(event, &mut node.od);
+        if context.nmt_state_machine.current_state() != NmtState::NmtNotActive {
+            context
+                .nmt_state_machine
+                .process_event(event, &mut context.od);
         }
     }
 
     // 2. Pass event to DLL state machine and handle errors.
-    handle_dll_event(node, frame.dll_mn_event(), &frame);
+    handle_dll_event(context, frame.dll_mn_event(), &frame);
 
     // 3. Handle specific frames
     match frame {
         PowerlinkFrame::PRes(pres_frame) => {
             // Update CN state based on reported NMT state
-            update_cn_state(node, pres_frame.source, pres_frame.nmt_state);
+            update_cn_state(context, pres_frame.source, pres_frame.nmt_state);
 
             // Check if this PRes corresponds to the node we polled
-            if node.current_phase == CyclePhase::IsochronousPReq
-                && node.current_polled_cn == Some(pres_frame.source)
+            if context.current_phase == CyclePhase::IsochronousPReq
+                && context.current_polled_cn == Some(pres_frame.source)
             {
                 trace!(
                     "[MN] Received expected PRes from Node {}",
                     pres_frame.source.0
                 );
                 // Cancel pending PRes timeout
-                node.pending_timeout_event = None;
+                context.pending_timeout_event = None;
                 // Handle PDO consumption from PRes frames
-                node.consume_pdo_payload(
+                context.consume_pdo_payload(
                     pres_frame.source,
                     &pres_frame.payload,
                     pres_frame.pdo_version,
                     pres_frame.flags.rd,
                 );
                 // Handle async and error signaling flags in PRes
-                handle_pres_frame(node, &pres_frame);
+                handle_pres_frame(context, &pres_frame);
                 // PRes received, advance to the next action in the cycle.
-                let _action = node.advance_cycle_phase(current_time_us);
-                // TODO: The action needs to be returned to the main loop to be sent.
-                // This is a current limitation of the refactoring.
+                // The action is returned by `tick` in the scheduler, so we don't need to capture it here.
+                let _action =
+                    super::cycle::advance_cycle_phase(context, current_time_us);
             } else {
                 warn!(
                     "[MN] Received unexpected PRes from Node {}.",
                     pres_frame.source.0
                 );
-                handle_pres_frame(node, &pres_frame);
+                handle_pres_frame(context, &pres_frame);
             }
         }
         PowerlinkFrame::ASnd(asnd_frame) => {
-            if node.current_phase == CyclePhase::AsynchronousSoA {
+            if context.current_phase == CyclePhase::AsynchronousSoA {
                 trace!(
                     "[MN] Received ASnd from Node {} during Async phase.",
                     asnd_frame.source.0
                 );
-                node.pending_timeout_event = None;
-                handle_asnd_frame(node, &asnd_frame);
-                node.current_phase = CyclePhase::Idle;
+                context.pending_timeout_event = None;
+                handle_asnd_frame(context, &asnd_frame);
+                context.current_phase = CyclePhase::Idle;
             } else {
-                handle_asnd_frame(node, &asnd_frame);
+                handle_asnd_frame(context, &asnd_frame);
             }
         }
         _ => {
@@ -85,25 +90,25 @@ pub(super) fn process_frame(node: &mut ManagingNode, frame: PowerlinkFrame, curr
 
 /// Passes an event to the DLL state machine and processes any resulting errors.
 pub(super) fn handle_dll_event(
-    node: &mut ManagingNode,
+    context: &mut MnContext,
     event: DllMsEvent,
     frame_context: &PowerlinkFrame,
 ) {
     let reporting_node_id = match frame_context {
         PowerlinkFrame::PRes(f) => f.source,
         PowerlinkFrame::ASnd(f) => f.source,
-        _ => node.current_polled_cn.unwrap_or(NodeId(0)),
+        _ => context.current_polled_cn.unwrap_or(NodeId(0)),
     };
     let isochr_nodes_remaining =
-        scheduler::has_more_isochronous_nodes(node, node.current_multiplex_cycle);
-    let isochr = isochr_nodes_remaining || node.current_phase == CyclePhase::IsochronousPReq;
+        scheduler::has_more_isochronous_nodes(context, context.current_multiplex_cycle);
+    let isochr = isochr_nodes_remaining || context.current_phase == CyclePhase::IsochronousPReq;
 
-    if let Some(errors) = node.dll_state_machine.process_event(
+    if let Some(errors) = context.dll_state_machine.process_event(
         event,
-        node.nmt_state(),
+        context.nmt_state_machine.current_state(),
         matches!(event, DllMsEvent::Pres | DllMsEvent::Asnd),
-        !node.async_request_queue.is_empty(),
-        !node.mn_async_send_queue.is_empty(),
+        !context.async_request_queue.is_empty(),
+        !context.mn_async_send_queue.is_empty(),
         isochr,
         false,
         reporting_node_id,
@@ -116,24 +121,26 @@ pub(super) fn handle_dll_event(
                 },
                 _ => error,
             };
-            let (nmt_action, _) = node.dll_error_manager.handle_error(error_with_node);
+            let (nmt_action, _) = context.dll_error_manager.handle_error(error_with_node);
             match nmt_action {
                 NmtAction::ResetNode(node_id) => {
                     warn!(
                         "[MN] DLL Error threshold met for Node {}. Requesting Node Reset.",
                         node_id.0
                     );
-                    if let Some(info) = node.node_info.get_mut(&node_id) {
+                    if let Some(info) = context.node_info.get_mut(&node_id) {
                         info.state = CnState::Missing;
                     }
-                    node.pending_nmt_commands
+                    context
+                        .pending_nmt_commands
                         .push((crate::nmt::events::NmtCommand::ResetNode, node_id));
                 }
                 NmtAction::ResetCommunication => {
                     warn!("[MN] DLL Error threshold met. Requesting Communication Reset.");
-                    node.nmt_state_machine
-                        .process_event(NmtEvent::Error, &mut node.od);
-                    node.current_phase = CyclePhase::Idle;
+                    context
+                        .nmt_state_machine
+                        .process_event(NmtEvent::Error, &mut context.od);
+                    context.current_phase = CyclePhase::Idle;
                 }
                 NmtAction::None => {}
             }
@@ -142,15 +149,15 @@ pub(super) fn handle_dll_event(
 }
 
 /// Handles incoming ASnd frames, such as IdentResponse or StatusResponse.
-fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
+fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
     match frame.service_id {
         ServiceId::IdentResponse => {
             let node_id = frame.source;
-            if let Some(info) = node.node_info.get_mut(&node_id) {
+            if let Some(info) = context.node_info.get_mut(&node_id) {
                 if info.state == CnState::Unknown || info.state == CnState::Missing {
                     info.state = CnState::Identified;
                     info!("[MN] Node {} identified.", node_id.0);
-                    scheduler::check_bootup_state(node);
+                    scheduler::check_bootup_state(context);
                 }
             } else {
                 warn!(
@@ -162,7 +169,7 @@ fn handle_asnd_frame(node: &mut ManagingNode, frame: &ASndFrame) {
         ServiceId::StatusResponse => {
             let node_id = frame.source;
             trace!("[MN] Received StatusResponse from CN {}.", frame.source.0);
-            if let Some(info) = node.node_info.get_mut(&node_id) {
+            if let Some(info) = context.node_info.get_mut(&node_id) {
                 // The handshake is complete. Update the MN's EA flag to match the CN's EN flag.
                 // This new EA value will be sent in the next PReq.
                 info.ea_flag = info.en_flag;
@@ -254,18 +261,18 @@ fn process_status_response_payload(source_node: NodeId, payload: &[u8]) {
 }
 
 /// Checks the flags in a received PRes frame for async requests and error signals.
-fn handle_pres_frame(node: &mut ManagingNode, pres: &PResFrame) {
+fn handle_pres_frame(context: &mut MnContext, pres: &PResFrame) {
     // 1. Handle async requests flagged by RS.
     if pres.flags.rs.get() > 0 {
         debug!("[MN] Node {} requesting async transmission.", pres.source.0);
-        node.async_request_queue.push(AsyncRequest {
+        context.async_request_queue.push(AsyncRequest {
             node_id: pres.source,
             priority: pres.flags.pr as u8,
         });
     }
 
     // 2. Handle error signaling with EN/EA flags.
-    if let Some(info) = node.node_info.get_mut(&pres.source) {
+    if let Some(info) = context.node_info.get_mut(&pres.source) {
         // Store the received EN flag from the CN
         info.en_flag = pres.flags.en;
 
@@ -278,16 +285,16 @@ fn handle_pres_frame(node: &mut ManagingNode, pres: &PResFrame) {
             );
             // Add the node to a queue to be polled with a StatusRequest.
             // Avoid adding duplicates if a request is already pending.
-            if !node.pending_status_requests.contains(&pres.source) {
-                node.pending_status_requests.push(pres.source);
+            if !context.pending_status_requests.contains(&pres.source) {
+                context.pending_status_requests.push(pres.source);
             }
         }
     }
 }
 
 /// Updates the MN's internal state tracker for a CN based on its reported NMT state.
-fn update_cn_state(node: &mut ManagingNode, node_id: NodeId, reported_state: NmtState) {
-    if let Some(current_info) = node.node_info.get_mut(&node_id) {
+fn update_cn_state(context: &mut MnContext, node_id: NodeId, reported_state: NmtState) {
+    if let Some(current_info) = context.node_info.get_mut(&node_id) {
         let new_state = match reported_state {
             NmtState::NmtPreOperational1 => CnState::Identified,
             NmtState::NmtPreOperational2 | NmtState::NmtReadyToOperate => CnState::PreOperational,
@@ -301,7 +308,7 @@ fn update_cn_state(node: &mut ManagingNode, node_id: NodeId, reported_state: Nmt
                 node_id.0, current_info.state, new_state
             );
             current_info.state = new_state;
-            scheduler::check_bootup_state(node);
+            scheduler::check_bootup_state(context);
         }
     }
 }

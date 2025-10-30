@@ -1,13 +1,15 @@
 // crates/powerlink-rs/src/node/cn/state.rs
 
 use crate::frame::basic::MacAddress;
-use crate::frame::error::{CnErrorCounters, DllErrorManager, ErrorEntry, LoggingErrorHandler};
+use crate::frame::error::{CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler};
 use crate::frame::DllCsStateMachine;
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtCommand;
+use crate::node::PdoHandler;
 use crate::od::ObjectDictionary;
 use crate::sdo::SdoServer;
 use crate::types::NodeId;
+use crate::ErrorHandler;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
@@ -35,4 +37,15 @@ pub struct CnContext<'s> {
     pub ec_flag: bool,
     /// A flag that is set when a new error occurs, to trigger toggling the EN flag.
     pub error_status_changed: bool,
+}
+
+// Implement the PdoHandler trait for ControlledNode
+impl<'s> PdoHandler<'s> for CnContext<'s> {
+    fn od(&mut self) -> &mut ObjectDictionary<'s> {
+        &mut self.od
+    }
+
+    fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
+        &mut self.dll_error_manager
+    }
 }

@@ -1,4 +1,6 @@
-use super::main::ManagingNode;
+// crates/powerlink-rs/src/node/mn/payload.rs
+use super::scheduler;
+use super::state::MnContext;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
 use crate::frame::control::{SoAFlags, SocFlags};
@@ -7,10 +9,11 @@ use crate::frame::{
     ASndFrame, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame,
 };
 use crate::nmt::events::NmtCommand;
+use crate::nmt::NmtStateMachine; // Added for nmt_state()
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId}; // Added C_ADR_BROADCAST_NODE_ID
-use crate::{Node, PowerlinkError};
+use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -28,7 +31,7 @@ const OD_SUBIDX_ASYNC_SLOT_TIMEOUT: u8 = 2;
 
 /// Builds a SoC frame.
 pub(super) fn build_soc_frame(
-    node: &ManagingNode,
+    context: &MnContext,
     current_multiplex_cycle: u8,
     multiplex_cycle_len: u8,
 ) -> PowerlinkFrame {
@@ -53,7 +56,7 @@ pub(super) fn build_soc_frame(
     };
 
     PowerlinkFrame::Soc(SocFrame::new(
-        node.mac_address,
+        context.mac_address,
         soc_flags,
         net_time,
         relative_time,
@@ -62,12 +65,12 @@ pub(super) fn build_soc_frame(
 
 /// Builds a PReq frame for a specific CN.
 pub(super) fn build_preq_frame(
-    node: &ManagingNode, // ERROR FIX: Changed to &self
+    context: &MnContext,
     target_node_id: NodeId,
     is_multiplexed: bool,
 ) -> PowerlinkFrame {
     trace!("[MN] Building PReq for Node {}.", target_node_id.0);
-    let mac_addr = node.get_cn_mac_address(target_node_id);
+    let mac_addr = scheduler::get_cn_mac_address(context, target_node_id);
     let Some(dest_mac) = mac_addr else {
         error!(
             "[MN] Cannot build PReq: MAC address for Node {} not found.",
@@ -75,7 +78,7 @@ pub(super) fn build_preq_frame(
         );
         // Return a dummy frame that will fail serialization if used
         return PowerlinkFrame::Soc(SocFrame::new(
-            node.mac_address,
+            context.mac_address,
             Default::default(),
             NetTime {
                 seconds: 0,
@@ -92,21 +95,26 @@ pub(super) fn build_preq_frame(
     let mut pdo_channel = None;
     for i in 0..256 {
         let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE + i as u16;
-        if node.od.read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID) == Some(target_node_id.0) {
+        if context
+            .od
+            .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
+            == Some(target_node_id.0)
+        {
             pdo_channel = Some(i as u8);
             break;
         }
     }
 
     let payload_result = pdo_channel.map_or(Ok((Vec::new(), PDOVersion(0))), |channel| {
-        build_tpdo_payload(&node.od, channel)
+        build_tpdo_payload(&context.od, channel)
     });
 
     match payload_result {
         Ok((payload, pdo_version)) => {
-            let rd_flag = node.nmt_state() == crate::nmt::states::NmtState::NmtOperational;
+            let rd_flag =
+                context.nmt_state_machine.current_state() == crate::nmt::states::NmtState::NmtOperational;
             // Get the last known EA flag for this node
-            let ea_flag = node
+            let ea_flag = context
                 .node_info
                 .get(&target_node_id)
                 .map_or(false, |info| info.ea_flag);
@@ -118,7 +126,7 @@ pub(super) fn build_preq_frame(
             };
 
             PowerlinkFrame::PReq(PReqFrame::new(
-                node.mac_address,
+                context.mac_address,
                 dest_mac,
                 target_node_id,
                 flags,
@@ -133,7 +141,7 @@ pub(super) fn build_preq_frame(
             );
             // Return a dummy frame
             PowerlinkFrame::Soc(SocFrame::new(
-                node.mac_address,
+                context.mac_address,
                 Default::default(),
                 NetTime {
                     seconds: 0,
@@ -237,7 +245,7 @@ pub(super) fn build_tpdo_payload(
 
 /// Builds an SoA frame based on the scheduled action.
 pub(super) fn build_soa_frame(
-    node: &ManagingNode,
+    context: &MnContext,
     req_service: RequestedServiceId,
     target_node: NodeId,
     set_er_flag: bool,
@@ -246,14 +254,14 @@ pub(super) fn build_soa_frame(
         "[MN] Building SoA frame with service {:?} for Node {}",
         req_service, target_node.0
     );
-    let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
+    let epl_version = EPLVersion(context.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
 
     let mut flags = SoAFlags::default();
     flags.er = set_er_flag;
 
     PowerlinkFrame::SoA(SoAFrame::new(
-        node.mac_address,
-        node.nmt_state(),
+        context.mac_address,
+        context.nmt_state_machine.current_state(),
         flags,
         req_service,
         target_node,
@@ -263,22 +271,22 @@ pub(super) fn build_soa_frame(
 
 /// Builds and serializes an SoA(IdentRequest) frame.
 pub(super) fn build_soa_ident_request(
-    node: &ManagingNode,
+    context: &MnContext,
     target_node_id: NodeId,
 ) -> PowerlinkFrame {
     debug!(
         "[MN] Building SoA(IdentRequest) for Node {}",
         target_node_id.0
     );
-    let epl_version = EPLVersion(node.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
+    let epl_version = EPLVersion(context.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
     let req_service = if target_node_id.0 == 0 {
         RequestedServiceId::NoService
     } else {
         RequestedServiceId::IdentRequest
     };
     PowerlinkFrame::SoA(SoAFrame::new(
-        node.mac_address,
-        node.nmt_state(),
+        context.mac_address,
+        context.nmt_state_machine.current_state(),
         SoAFlags::default(),
         req_service,
         target_node_id,
@@ -288,7 +296,7 @@ pub(super) fn build_soa_ident_request(
 
 /// Builds an ASnd(NMT Command) frame.
 pub(super) fn build_nmt_command_frame(
-    node: &ManagingNode,
+    context: &MnContext,
     command: NmtCommand,
     target_node_id: NodeId,
 ) -> PowerlinkFrame {
@@ -300,14 +308,14 @@ pub(super) fn build_nmt_command_frame(
     let dest_mac = if is_broadcast {
         MacAddress(crate::types::C_DLL_MULTICAST_ASND)
     } else {
-        let Some(mac) = node.get_cn_mac_address(target_node_id) else {
+        let Some(mac) = scheduler::get_cn_mac_address(context, target_node_id) else {
             error!(
                 "[MN] Cannot build NMT Command: MAC for Node {} not found.",
                 target_node_id.0
             );
             // Return a dummy frame that will fail serialization
             return PowerlinkFrame::Soc(SocFrame::new(
-                node.mac_address,
+                context.mac_address,
                 Default::default(),
                 NetTime {
                     seconds: 0,
@@ -323,7 +331,7 @@ pub(super) fn build_nmt_command_frame(
     };
     let nmt_payload = vec![command as u8, 0u8];
     PowerlinkFrame::ASnd(ASndFrame::new(
-        node.mac_address,
+        context.mac_address,
         dest_mac,
         target_node_id,
         NodeId(C_ADR_MN_DEF_NODE_ID),

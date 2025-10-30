@@ -198,7 +198,7 @@ impl<'s> ControlledNode<'s> {
     /// Consumes the payload of a PReq frame based on RPDO mapping.
     fn consume_preq_payload(&mut self, preq: &PReqFrame) {
         // Node ID 0 is reserved for PReq source according to spec and OD usage
-        self.consume_pdo_payload(
+        self.context.consume_pdo_payload(
             NodeId(0),
             &preq.payload,
             preq.pdo_version,
@@ -208,23 +208,12 @@ impl<'s> ControlledNode<'s> {
 
     /// Consumes the payload of a PRes frame based on RPDO mapping.
     fn consume_pres_payload(&mut self, pres: &PResFrame) {
-        self.consume_pdo_payload(
+        self.context.consume_pdo_payload(
             pres.source, // Source Node ID of the PRes
             &pres.payload,
             pres.pdo_version,
             pres.flags.rd, // Pass the RD flag
         );
-    }
-}
-
-// Implement the PdoHandler trait for ControlledNode
-impl<'s> PdoHandler<'s> for ControlledNode<'s> {
-    fn od(&mut self) -> &mut ObjectDictionary<'s> {
-        &mut self.context.od
-    }
-
-    fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
-        &mut self.context.dll_error_manager
     }
 }
 
