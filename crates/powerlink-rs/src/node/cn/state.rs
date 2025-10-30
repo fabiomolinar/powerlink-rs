@@ -7,7 +7,7 @@ use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtCommand;
 use crate::node::PdoHandler;
 use crate::od::ObjectDictionary;
-use crate::sdo::SdoServer;
+use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
 use crate::ErrorHandler;
 use alloc::collections::VecDeque;
@@ -21,6 +21,7 @@ pub struct CnContext<'s> {
     pub dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
     pub mac_address: MacAddress,
     pub sdo_server: SdoServer,
+    pub sdo_client: SdoClient,
     /// Queue for NMT commands this CN wants the MN to execute.
     pub pending_nmt_requests: Vec<(NmtCommand, NodeId)>,
     /// Queue for detailed error/event entries to be reported in StatusResponse.

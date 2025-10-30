@@ -5,7 +5,7 @@ use crate::nmt::events::NmtCommand;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::node::PdoHandler;
 use crate::od::ObjectDictionary;
-use crate::sdo::SdoServer;
+use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
 use crate::ErrorHandler;
 use alloc::collections::{BTreeMap, BinaryHeap};
@@ -20,6 +20,7 @@ pub struct MnContext<'s> {
     pub dll_error_manager: DllErrorManager<MnErrorCounters, LoggingErrorHandler>,
     pub mac_address: MacAddress,
     pub sdo_server: SdoServer,
+    pub sdo_client: SdoClient,
     pub cycle_time_us: u64,
     pub multiplex_cycle_len: u8,
     pub multiplex_assign: BTreeMap<NodeId, u8>,

@@ -13,8 +13,8 @@ use crate::node::{Node, NodeAction, PdoHandler};
 use crate::od::ObjectDictionary;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::server::SdoClientInfo;
-use crate::sdo::SdoServer;
-use crate::types::NodeId;
+use crate::sdo::{SdoServer, SdoClient};
+use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
 use crate::PowerlinkError;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -58,6 +58,7 @@ impl<'s> ControlledNode<'s> {
                 dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
                 mac_address,
                 sdo_server: SdoServer::new(),
+                sdo_client: SdoClient::new(),
                 pending_nmt_requests: Vec::new(),
                 emergency_queue: VecDeque::with_capacity(10), // Default capacity for 10 errors
                 last_soc_reception_time_us: 0,
@@ -80,7 +81,7 @@ impl<'s> ControlledNode<'s> {
 
     /// Allows the application to queue an SDO request payload to be sent.
     pub fn queue_sdo_request(&mut self, payload: Vec<u8>) {
-        self.context.sdo_server.queue_request(payload);
+        self.context.sdo_client.queue_request(NodeId(C_ADR_MN_DEF_NODE_ID), payload);
     }
 
     /// Allows the application to queue an NMT command request to be sent to the MN.
@@ -179,8 +180,8 @@ impl<'s> ControlledNode<'s> {
             &mut self.context.od,
             current_time_us,
         ) {
-            Ok(response_data) => {
-                match events::build_udp_from_sdo_response(&self.context, response_data) {
+            Ok((seq_header, command)) => {
+                match events::build_udp_from_sdo_response(&self.context, client_info, seq_header, command) {
                     Ok(action) => action,
                     Err(e) => {
                         error!("Failed to build SDO/UDP response: {:?}", e);

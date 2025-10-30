@@ -14,7 +14,9 @@ use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::NodeAction;
 use crate::sdo::asnd;
-use crate::sdo::server::{SdoClientInfo, SdoResponseData};
+use crate::sdo::command::SdoCommand; // Added import
+use crate::sdo::sequence::SequenceLayerHeader; // Added import
+use crate::sdo::server::SdoClientInfo;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::udp::serialize_sdo_udp_payload;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
@@ -48,12 +50,14 @@ pub(super) fn process_frame(
 
             match context.sdo_server.handle_request(
                 sdo_payload,
-                client_info,
+                client_info, // Pass the client_info we just created
                 &mut context.od,
                 current_time_us,
             ) {
-                Ok(response_data) => {
-                    match build_asnd_from_sdo_response(context, response_data) {
+                // SdoResponseData is gone, we get the components back
+                Ok((seq_header, command)) => {
+                    // Pass all components to the build function
+                    match build_asnd_from_sdo_response(context, client_info, seq_header, command) {
                         Ok(action) => return action,
                         Err(e) => {
                             error!("Failed to build SDO/ASnd response: {:?}", e);
@@ -63,7 +67,8 @@ pub(super) fn process_frame(
                 }
                 Err(e) => {
                     error!("SDO server error (ASnd): {:?}", e);
-                    // Abort handled internally
+                    // Abort is often handled internally and returned as Ok(AbortCommand),
+                    // so an Err here is likely a sequence or buffer error.
                     return NodeAction::NoAction;
                 }
             };
@@ -353,14 +358,14 @@ pub(super) fn process_frame(
                                         )
                                     }),
                                 RequestedServiceId::UnspecifiedInvite => {
-                                    context.sdo_server.pop_pending_request().map(|sdo_payload| {
+                                    context.sdo_client.pop_pending_request().map(|sdo_payload| {
                                         PowerlinkFrame::ASnd(ASndFrame::new(
                                             context.mac_address,
                                             soa_frame.eth_header.source_mac,
                                             NodeId(C_ADR_MN_DEF_NODE_ID),
                                             context.nmt_state_machine.node_id,
                                             ServiceId::Sdo,
-                                            sdo_payload,
+                                            sdo_payload.1,
                                         ))
                                     })
                                 }
@@ -383,7 +388,7 @@ pub(super) fn process_frame(
                             context.nmt_state_machine.node_id,
                             current_nmt_state,
                             &context.od,
-                            &context.sdo_server,
+                            &context.sdo_client,
                             &context.pending_nmt_requests,
                             context.en_flag,
                         )),
@@ -417,22 +422,26 @@ pub(super) fn process_frame(
 pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> NodeAction {
     // --- SDO Server Tick (handles timeouts/retransmissions) ---
     match context.sdo_server.tick(current_time_us, &context.od) {
-        Ok(Some(sdo_response_data)) => {
+        // `tick` now returns the components directly
+        Ok(Some((client_info, seq_header, command))) => {
             // SDO server generated an abort frame, needs to be sent.
-            // Build the appropriate frame based on client_info stored in response_data.
+            // Build the appropriate frame based on client_info.
             #[cfg(feature = "sdo-udp")]
-            let build_udp = || build_udp_from_sdo_response(context, sdo_response_data.clone()); // Clone needed due to borrow rules
+            let build_udp = || {
+                // Pass components to build function
+                build_udp_from_sdo_response(context, client_info, seq_header.clone(), command.clone())
+            };
             #[cfg(not(feature = "sdo-udp"))]
-            // Fix the type annotation for the closure when UDP is disabled
             let build_udp = || {
                 Err::<NodeAction, PowerlinkError>(PowerlinkError::InternalError(
                     "UDP feature disabled",
                 ))
             };
 
-            match sdo_response_data.client_info {
+            match client_info {
                 SdoClientInfo::Asnd { .. } => {
-                    match build_asnd_from_sdo_response(context, sdo_response_data) {
+                    // Pass components to build function
+                    match build_asnd_from_sdo_response(context, client_info, seq_header, command) {
                         Ok(action) => return action,
                         Err(e) => error!("[CN] Failed to build SDO Abort ASnd frame: {:?}", e),
                     }
@@ -574,9 +583,11 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
 /// Helper to build ASnd frame from SdoResponseData.
 fn build_asnd_from_sdo_response(
     context: &CnContext,
-    response_data: SdoResponseData,
+    client_info: SdoClientInfo,
+    seq_header: SequenceLayerHeader,
+    command: SdoCommand,
 ) -> Result<NodeAction, PowerlinkError> {
-    let (source_node_id, source_mac) = match response_data.client_info {
+    let (source_node_id, source_mac) = match client_info {
         SdoClientInfo::Asnd {
             source_node_id,
             source_mac,
@@ -589,8 +600,7 @@ fn build_asnd_from_sdo_response(
         }
     };
 
-    let sdo_payload =
-        asnd::serialize_sdo_asnd_payload(response_data.seq_header, response_data.command)?;
+    let sdo_payload = asnd::serialize_sdo_asnd_payload(seq_header, command)?;
     let asnd_frame = ASndFrame::new(
         context.mac_address,
         source_mac,
@@ -610,9 +620,11 @@ fn build_asnd_from_sdo_response(
 #[cfg(feature = "sdo-udp")]
 pub(crate) fn build_udp_from_sdo_response(
     _context: &CnContext,
-    response_data: SdoResponseData,
+    client_info: SdoClientInfo,
+    seq_header: SequenceLayerHeader,
+    command: SdoCommand,
 ) -> Result<NodeAction, PowerlinkError> {
-    let (source_ip, source_port) = match response_data.client_info {
+    let (source_ip, source_port) = match client_info {
         SdoClientInfo::Udp {
             source_ip,
             source_port,
@@ -625,11 +637,7 @@ pub(crate) fn build_udp_from_sdo_response(
     };
 
     let mut udp_buffer = vec![0u8; 1500]; // MTU size
-    let udp_payload_len = serialize_sdo_udp_payload(
-        response_data.seq_header,
-        response_data.command,
-        &mut udp_buffer,
-    )?;
+    let udp_payload_len = serialize_sdo_udp_payload(seq_header, command, &mut udp_buffer)?;
     udp_buffer.truncate(udp_payload_len);
     info!(
         "Sending SDO response via UDP to {}:{}",

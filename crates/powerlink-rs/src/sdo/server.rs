@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/sdo/server.rs
-use crate::frame::PRFlag;
 use crate::frame::basic::MacAddress;
+use crate::frame::PRFlag;
 use crate::od::ObjectValue;
 use crate::sdo::command::{
     CommandId, CommandLayerHeader, DefaultSdoHandler, ReadByIndexRequest, ReadByNameRequest,
@@ -12,7 +12,7 @@ use crate::sdo::sequence_handler::SdoSequenceHandler;
 use crate::sdo::state::{SdoServerState, SdoTransferState};
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
-use crate::{PowerlinkError, od::ObjectDictionary, types::NodeId};
+use crate::{od::ObjectDictionary, PowerlinkError};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -22,7 +22,7 @@ use log::{debug, error, info, trace, warn};
 pub enum SdoClientInfo {
     /// SDO over ASnd (Layer 2)
     Asnd {
-        source_node_id: NodeId,
+        source_node_id: crate::types::NodeId,
         source_mac: MacAddress,
     },
     /// SDO over UDP/IP (Layer 3/4)
@@ -33,18 +33,9 @@ pub enum SdoClientInfo {
     },
 }
 
-/// Contains the necessary data for the caller to construct the SDO response frame.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SdoResponseData {
-    /// Information about the client to send the response back to.
-    pub client_info: SdoClientInfo,
-    /// The Sequence Layer header for the response.
-    pub seq_header: SequenceLayerHeader,
-    /// The Command Layer data (including payload) for the response.
-    pub command: SdoCommand,
-}
-
 /// Manages a single SDO server connection.
+/// This server stores the info of the *current* client
+/// to handle stateful, multi-frame transfers and timeouts.
 pub struct SdoServer {
     sequence_handler: SdoSequenceHandler,
     /// Optional handler for vendor-specific or complex commands.
@@ -80,12 +71,13 @@ impl SdoServer {
     }
 
     /// Handles time-based events for the SDO server, like retransmission timeouts.
-    /// Returns SdoResponseData if an abort frame needs to be sent.
+    /// Returns a full response tuple if an abort or retransmission frame
+    /// needs to be sent.
     pub fn tick(
         &mut self,
         current_time_us: u64,
         od: &ObjectDictionary,
-    ) -> Result<Option<SdoResponseData>, PowerlinkError> {
+    ) -> Result<Option<(SdoClientInfo, SequenceLayerHeader, SdoCommand)>, PowerlinkError> {
         let mut retransmit_command = None;
         let mut abort_params: Option<(u8, u32)> = None;
 
@@ -151,11 +143,7 @@ impl SdoServer {
             };
             // Need client info to construct SdoResponseData
             if let Some(client_info) = self.current_client_info {
-                return Ok(Some(SdoResponseData {
-                    client_info,
-                    seq_header: response_header,
-                    command,
-                }));
+                return Ok(Some((client_info, response_header, command)));
             } else {
                 // Should not happen if a transfer was active
                 return Err(PowerlinkError::InternalError(
@@ -174,11 +162,9 @@ impl SdoServer {
             };
             // Need client info to construct SdoResponseData
             if let Some(client_info) = self.current_client_info {
-                return Ok(Some(SdoResponseData {
-                    client_info,
-                    seq_header: response_header,
-                    command: abort_command,
-                }));
+                // Abort also clears current_client_info
+                self.current_client_info = None;
+                return Ok(Some((client_info, response_header, abort_command)));
             } else {
                 // Should not happen if a transfer was active
                 return Err(PowerlinkError::InternalError(
@@ -192,21 +178,22 @@ impl SdoServer {
 
     /// Processes an incoming SDO request payload (starting *directly* with the Sequence Layer header).
     ///
-    /// Returns `SdoResponseData` containing the sequence header, command, and client info
-    /// needed to construct the appropriate response frame (ASnd or UDP).
+    /// Returns a (SequenceLayerHeader, SdoCommand) tuple, which the caller is
+    /// responsible for packaging into a transport-specific response.
     pub fn handle_request(
         &mut self,
         request_sdo_payload: &[u8], // Starts with Sequence Layer Header
         client_info: SdoClientInfo, // Pass transport info
         od: &mut ObjectDictionary,
         current_time_us: u64,
-    ) -> Result<SdoResponseData, PowerlinkError> {
+    ) -> Result<(SequenceLayerHeader, SdoCommand), PowerlinkError> {
         if request_sdo_payload.len() < 4 {
             return Err(PowerlinkError::BufferTooShort); // Need at least sequence header
         }
         trace!("Handling SDO request payload: {:?}", request_sdo_payload);
 
-        // Store client info for potential use in server-initiated aborts (tick)
+        // Store client info for this connection.
+        // This is necessary for tick-based timeouts/aborts.
         self.current_client_info = Some(client_info);
 
         let sequence_header = SequenceLayerHeader::deserialize(&request_sdo_payload[0..4])?;
@@ -226,11 +213,7 @@ impl SdoServer {
                         send_sequence_number: self.sequence_handler.next_send_sequence(), // Resend with same seq number
                         send_con: SendConnState::ConnectionValidAckRequest,
                     };
-                    return Ok(SdoResponseData {
-                        client_info,
-                        seq_header: retransmit_header,
-                        command: last_command.clone(),
-                    });
+                    return Ok((retransmit_header, last_command.clone()));
                 }
             }
             // Ignore ErrorResponse if not in segmented upload or no segment stored
@@ -244,11 +227,7 @@ impl SdoServer {
                 data_size: None,
                 payload: Vec::new(),
             };
-            return Ok(SdoResponseData {
-                client_info,
-                seq_header: ack_header,
-                command: nil_command,
-            });
+            return Ok((ack_header, nil_command));
         }
 
         debug!("Parsed SDO sequence header: {:?}", sequence_header);
@@ -275,15 +254,15 @@ impl SdoServer {
                     *self.sequence_handler.state_mut() = SdoServerState::SegmentedUpload(state);
                 } else {
                     *self.sequence_handler.state_mut() = SdoServerState::Established;
+                    // Last segment, connection is now idle, clear client info
+                    if response_command.header.segmentation == Segmentation::Complete {
+                        self.current_client_info = None;
+                    }
                 }
 
                 response_header.receive_sequence_number =
                     self.sequence_handler.current_receive_sequence();
-                return Ok(SdoResponseData {
-                    client_info,
-                    seq_header: response_header,
-                    command: response_command,
-                });
+                return Ok((response_header, response_command));
             }
             // Just send back an ACK if Established and command payload is empty
             if self.sequence_handler.state() == &SdoServerState::Established {
@@ -298,11 +277,9 @@ impl SdoServer {
                 };
                 response_header.receive_sequence_number =
                     self.sequence_handler.current_receive_sequence();
-                return Ok(SdoResponseData {
-                    client_info,
-                    seq_header: response_header,
-                    command: response_command,
-                });
+                // This is a simple ACK, not part of a larger transfer, clear client info
+                self.current_client_info = None;
+                return Ok((response_header, response_command));
             }
             // If Opening and empty payload, something is wrong, fall through to error
             error!("Received empty command payload during Opening state.");
@@ -323,13 +300,20 @@ impl SdoServer {
 
                 response_header.receive_sequence_number =
                     self.sequence_handler.current_receive_sequence();
+                
+                // If this is the end of a transfer, clear client info
+                if response_command.header.segmentation == Segmentation::Expedited
+                    || response_command.header.segmentation == Segmentation::Complete
+                    || response_command.header.is_aborted
+                {
+                    self.current_client_info = None;
+                }
+                if response_command.header.is_aborted {
+                    response_header.send_con = SendConnState::NoConnection;
+                }
 
                 // Return the response data components
-                Ok(SdoResponseData {
-                    client_info,
-                    seq_header: response_header,
-                    command: response_command,
-                })
+                Ok((response_header, response_command))
             }
             Err(e) => {
                 // Failed to deserialize command - create an Abort response
@@ -341,11 +325,9 @@ impl SdoServer {
                     self.sequence_handler.current_receive_sequence();
                 // Abort implies connection closure at sequence layer for response
                 response_header.send_con = SendConnState::NoConnection;
-                Ok(SdoResponseData {
-                    client_info,
-                    seq_header: response_header,
-                    command: abort_command,
-                })
+                // Abort clears client info
+                self.current_client_info = None;
+                Ok((response_header, abort_command))
             }
         }
     }

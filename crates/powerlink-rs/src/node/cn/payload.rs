@@ -7,7 +7,7 @@ use crate::nmt::events::NmtCommand;
 use crate::nmt::states::NmtState;
 use crate::od::ObjectValue;
 use crate::pdo::{PDOVersion, PdoMappingEntry};
-use crate::sdo::SdoServer;
+use crate::sdo::{SdoClient, SdoServer};
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::types::{C_ADR_MN_DEF_NODE_ID};
@@ -104,7 +104,7 @@ pub(super) fn build_pres_response(
     node_id: NodeId,
     nmt_state: NmtState,
     od: &ObjectDictionary,
-    sdo_server: &SdoServer,
+    sdo_client: &SdoClient,
     pending_nmt_requests: &[(NmtCommand, NodeId)], // Add NMT request queue
     en_flag: bool,
 ) -> PowerlinkFrame {
@@ -132,7 +132,7 @@ pub(super) fn build_pres_response(
             crate::frame::PRFlag::PrioNmtRequest,
         )
     } else {
-        sdo_server.pending_request_count_and_priority()
+        sdo_client.pending_request_count_and_priority()
     };
 
     let flags = PResFlags {

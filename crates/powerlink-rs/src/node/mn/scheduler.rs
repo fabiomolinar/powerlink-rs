@@ -15,7 +15,9 @@ use crate::node::mn::state::{CnInfo, CnState, CyclePhase};
 use crate::node::NodeAction;
 use crate::od::{Object, ObjectValue};
 use crate::sdo::asnd;
-use crate::sdo::server::{SdoClientInfo, SdoResponseData};
+use crate::sdo::command::SdoCommand; // Added import
+use crate::sdo::sequence::SequenceLayerHeader; // Added import
+use crate::sdo::server::SdoClientInfo;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::udp::serialize_sdo_udp_payload;
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
@@ -361,9 +363,18 @@ pub(super) fn has_more_isochronous_nodes(
 pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     // --- 0. SDO Server Tick (handles timeouts/retransmissions) ---
     match context.sdo_server.tick(current_time_us, &context.od) {
-        Ok(Some(sdo_response_data)) => {
+        // `tick` now returns the components directly
+        Ok(Some((client_info, seq_header, command))) => {
             #[cfg(feature = "sdo-udp")]
-            let build_udp = || build_udp_from_sdo_response(context, sdo_response_data.clone());
+            let build_udp = || {
+                // Pass components to build function
+                build_udp_from_sdo_response(
+                    context,
+                    client_info, // No clone needed here
+                    seq_header.clone(),
+                    command.clone(),
+                )
+            };
             #[cfg(not(feature = "sdo-udp"))]
             let build_udp = || {
                 Err::<NodeAction, PowerlinkError>(PowerlinkError::InternalError(
@@ -371,9 +382,10 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                 ))
             };
 
-            match sdo_response_data.client_info {
+            match client_info {
                 SdoClientInfo::Asnd { .. } => {
-                    match build_asnd_from_sdo_response(context, sdo_response_data) {
+                    // Pass components to build function
+                    match build_asnd_from_sdo_response(context, client_info, seq_header, command) {
                         Ok(action) => return action,
                         Err(e) => error!("[MN] Failed to build SDO Abort ASnd frame: {:?}", e),
                     }
@@ -625,9 +637,11 @@ pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option
 /// Helper to build ASnd frame from SdoResponseData.
 pub(crate) fn build_asnd_from_sdo_response(
     context: &MnContext,
-    response_data: SdoResponseData,
+    client_info: SdoClientInfo,
+    seq_header: SequenceLayerHeader,
+    command: SdoCommand,
 ) -> Result<NodeAction, PowerlinkError> {
-    let (source_node_id, source_mac) = match response_data.client_info {
+    let (source_node_id, source_mac) = match client_info {
         SdoClientInfo::Asnd {
             source_node_id,
             source_mac,
@@ -640,8 +654,7 @@ pub(crate) fn build_asnd_from_sdo_response(
         }
     };
 
-    let sdo_payload =
-        asnd::serialize_sdo_asnd_payload(response_data.seq_header, response_data.command)?;
+    let sdo_payload = asnd::serialize_sdo_asnd_payload(seq_header, command)?;
     let asnd_frame = ASndFrame::new(
         context.mac_address,
         source_mac,
@@ -660,10 +673,12 @@ pub(crate) fn build_asnd_from_sdo_response(
 /// Helper to build NodeAction::SendUdp from SdoResponseData.
 #[cfg(feature = "sdo-udp")]
 pub(crate) fn build_udp_from_sdo_response(
-    context: &MnContext,
-    response_data: SdoResponseData,
+    _context: &MnContext, // Changed to _context as it's not used
+    client_info: SdoClientInfo,
+    seq_header: SequenceLayerHeader,
+    command: SdoCommand,
 ) -> Result<NodeAction, PowerlinkError> {
-    let (source_ip, source_port) = match response_data.client_info {
+    let (source_ip, source_port) = match client_info {
         SdoClientInfo::Udp {
             source_ip,
             source_port,
@@ -676,11 +691,7 @@ pub(crate) fn build_udp_from_sdo_response(
     };
 
     let mut udp_buffer = vec![0u8; 1500]; // MTU size
-    let udp_payload_len = serialize_sdo_udp_payload(
-        response_data.seq_header,
-        response_data.command,
-        &mut udp_buffer,
-    )?;
+    let udp_payload_len = serialize_sdo_udp_payload(seq_header, command, &mut udp_buffer)?;
     udp_buffer.truncate(udp_payload_len);
     info!(
         "[MN] Sending SDO response via UDP to {}:{}",
@@ -725,4 +736,3 @@ pub(super) fn serialize_and_prepare_action(
         }
     }
 }
-

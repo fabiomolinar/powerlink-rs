@@ -4,38 +4,35 @@ use super::events;
 // use super::payload; // No longer used directly by main.rs
 use super::scheduler; // Added
 use super::state::{
-    AsyncRequest, CnInfo, CnState, CyclePhase, MnContext,
+    CnInfo, CyclePhase, MnContext,
 }; // Added MnContext
    // use crate::frame::ASndFrame; // No longer used directly by main.rs
    // use crate::sdo::asnd; // No longer used directly by main.rs
-use crate::sdo::server::{SdoClientInfo, SdoResponseData};
+use crate::sdo::server::SdoClientInfo;
+use crate::sdo::SdoClient;
 use crate::sdo::SdoServer;
-use crate::types::{C_ADR_BROADCAST_NODE_ID, NodeId}; // MessageType removed
+use crate::types::NodeId; // MessageType removed
 use crate::PowerlinkError;
 // use crate::common::{NetTime, RelativeTime}; // Removed
 use crate::frame::basic::MacAddress;
 // use crate::frame::codec::CodecHelpers; // Removed
 use crate::frame::{
-    deserialize_frame, DllMsEvent, DllMsStateMachine, PowerlinkFrame,
+    deserialize_frame, DllMsStateMachine, PowerlinkFrame,
     ServiceId, // Kept for SDO check
     error::{
-        DllError, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler,
+        DllError, DllErrorManager, LoggingErrorHandler,
         MnErrorCounters,
     },
     // SocFrame removed
 };
 use crate::nmt::NmtStateMachine;
-use crate::nmt::events::{NmtCommand, NmtEvent}; // NmtEvent removed, NmtCommand kept for struct
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{Node, NodeAction, PdoHandler};
-use crate::od::{Object, ObjectDictionary, ObjectValue}; // Kept for new()
-#[cfg(feature = "sdo-udp")]
-// use crate::sdo::udp::serialize_sdo_udp_payload; // No longer used directly by main.rs
+use crate::node::{Node, NodeAction};
+use crate::od::{Object, ObjectDictionary, ObjectValue};
 use alloc::collections::{BTreeMap, BinaryHeap};
-use alloc::vec;
 use alloc::vec::Vec;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, warn};
 
 // Constants for OD access used in this file.
 const OD_IDX_NODE_ASSIGNMENT: u16 = 0x1F81;
@@ -110,6 +107,7 @@ impl<'s> ManagingNode<'s> {
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
             mac_address,
             sdo_server: SdoServer::new(),
+            sdo_client: SdoClient::new(),
             cycle_time_us,
             multiplex_cycle_len,
             multiplex_assign,
@@ -206,8 +204,8 @@ impl<'s> ManagingNode<'s> {
             &mut self.context.od,
             current_time_us,
         ) {
-            Ok(response_data) => {
-                match scheduler::build_udp_from_sdo_response(&mut self.context, response_data) {
+            Ok((seq_header, command)) => {
+                match scheduler::build_udp_from_sdo_response(&mut self.context, client_info, seq_header, command) {
                     Ok(action) => action,
                     Err(e) => {
                         error!("Failed to build SDO/UDP response: {:?}", e);
@@ -245,10 +243,12 @@ impl<'s> ManagingNode<'s> {
                     &mut self.context.od,
                     current_time_us,
                 ) {
-                    Ok(response_data) => {
+                    Ok((seq_header, command)) => {
                         return match scheduler::build_asnd_from_sdo_response(
                             &mut self.context,
-                            response_data,
+                            client_info,
+                            seq_header,
+                            command
                         ) {
                             Ok(action) => action,
                             Err(e) => {
