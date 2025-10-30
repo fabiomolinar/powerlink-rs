@@ -48,10 +48,10 @@ pub(super) fn process_frame(
                 source_mac: asnd_frame.eth_header.source_mac,
             };
 
-            match context.sdo_server.handle_request(
+            match context.core.sdo_server.handle_request(
                 sdo_payload,
                 client_info, // Pass the client_info we just created
-                &mut context.od,
+                &mut context.core.od,
                 current_time_us,
             ) {
                 // SdoResponseData is gone, we get the components back
@@ -86,10 +86,10 @@ pub(super) fn process_frame(
         context.soc_timeout_check_active = true;
         if context.dll_error_manager.on_cycle_complete() {
             info!("[CN] All DLL errors cleared, resetting Generic Error bit.");
-            let current_err_reg = context.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+            let current_err_reg = context.core.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
             let new_err_reg = current_err_reg & !0b1;
             context
-                .od
+                .core.od
                 .write_internal(
                     OD_IDX_ERROR_REGISTER,
                     0,
@@ -100,9 +100,9 @@ pub(super) fn process_frame(
             context.error_status_changed = true;
         }
 
-        let cycle_time_opt = context.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64);
+        let cycle_time_opt = context.core.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64);
         let tolerance_opt = context
-            .od
+            .core.od
             .read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)
             .map(|v| v as u64);
 
@@ -216,7 +216,7 @@ pub(super) fn process_frame(
     if let Some(event) = nmt_event {
         context
             .nmt_state_machine
-            .process_event(event, &mut context.od);
+            .process_event(event, &mut context.core.od);
     }
 
     let dll_event = frame.dll_cn_event();
@@ -229,10 +229,10 @@ pub(super) fn process_frame(
             let (nmt_action, signaled) = context.dll_error_manager.handle_error(error);
             if signaled {
                 context.error_status_changed = true;
-                let current_err_reg = context.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                let current_err_reg = context.core.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
                 let new_err_reg = current_err_reg | 0b1;
                 context
-                    .od
+                    .core.od
                     .write_internal(
                         OD_IDX_ERROR_REGISTER,
                         0,
@@ -274,7 +274,7 @@ pub(super) fn process_frame(
                 info!("DLL error triggered NMT action: {:?}", nmt_action);
                 context
                     .nmt_state_machine
-                    .process_event(NmtEvent::Error, &mut context.od);
+                    .process_event(NmtEvent::Error, &mut context.core.od);
                 context.soc_timeout_check_active = false;
                 return NodeAction::NoAction; // Skip response if reset
             }
@@ -328,17 +328,17 @@ pub(super) fn process_frame(
                             match soa_frame.req_service_id {
                                 RequestedServiceId::IdentRequest => Some(
                                     payload::build_ident_response(
-                                        context.mac_address,
+                                        context.core.mac_address,
                                         context.nmt_state_machine.node_id,
-                                        &context.od,
+                                        &context.core.od,
                                         soa_frame,
                                     ),
                                 ),
                                 RequestedServiceId::StatusRequest => Some(
                                     payload::build_status_response(
-                                        context.mac_address,
+                                        context.core.mac_address,
                                         context.nmt_state_machine.node_id,
-                                        &mut context.od,
+                                        &mut context.core.od,
                                         context.en_flag,
                                         context.ec_flag,
                                         &mut context.emergency_queue,
@@ -350,7 +350,7 @@ pub(super) fn process_frame(
                                     .pop()
                                     .map(|(cmd, tgt)| {
                                         payload::build_nmt_request(
-                                            context.mac_address,
+                                            context.core.mac_address,
                                             context.nmt_state_machine.node_id,
                                             cmd,
                                             tgt,
@@ -358,9 +358,9 @@ pub(super) fn process_frame(
                                         )
                                     }),
                                 RequestedServiceId::UnspecifiedInvite => {
-                                    context.sdo_client.pop_pending_request().map(|sdo_payload| {
+                                    context.core.sdo_client.pop_pending_request().map(|sdo_payload| {
                                         PowerlinkFrame::ASnd(ASndFrame::new(
-                                            context.mac_address,
+                                            context.core.mac_address,
                                             soa_frame.eth_header.source_mac,
                                             NodeId(C_ADR_MN_DEF_NODE_ID),
                                             context.nmt_state_machine.node_id,
@@ -384,11 +384,11 @@ pub(super) fn process_frame(
                         NmtState::NmtPreOperational2
                         | NmtState::NmtReadyToOperate
                         | NmtState::NmtOperational => Some(payload::build_pres_response(
-                            context.mac_address,
+                            context.core.mac_address,
                             context.nmt_state_machine.node_id,
                             current_nmt_state,
-                            &context.od,
-                            &context.sdo_client,
+                            &context.core.od,
+                            &context.core.sdo_client,
                             &context.pending_nmt_requests,
                             context.en_flag,
                         )),
@@ -421,7 +421,7 @@ pub(super) fn process_frame(
 /// Processes a timeout or other periodic check.
 pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> NodeAction {
     // --- SDO Server Tick (handles timeouts/retransmissions) ---
-    match context.sdo_server.tick(current_time_us, &context.od) {
+    match context.core.sdo_server.tick(current_time_us, &context.core.od) {
         // `tick` now returns the components directly
         Ok(Some((client_info, seq_header, command))) => {
             // SDO server generated an abort frame, needs to be sent.
@@ -501,7 +501,7 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
             warn!("BasicEthernet timeout expired. Transitioning state.");
             context
                 .nmt_state_machine
-                .process_event(NmtEvent::Timeout, &mut context.od);
+                .process_event(NmtEvent::Timeout, &mut context.core.od);
             context.soc_timeout_check_active = false;
         }
         return NodeAction::NoAction; // No further action this tick
@@ -521,10 +521,10 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                 if signaled {
                     context.error_status_changed = true;
                     // Update Error Register (0x1001)
-                    let current_err_reg = context.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                    let current_err_reg = context.core.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
                     let new_err_reg = current_err_reg | 0b1; // Set Generic Error
                     context
-                        .od
+                        .core.od
                         .write_internal(
                             OD_IDX_ERROR_REGISTER,
                             0,
@@ -536,7 +536,7 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                 if nmt_action != NmtAction::None {
                     context
                         .nmt_state_machine
-                        .process_event(NmtEvent::Error, &mut context.od);
+                        .process_event(NmtEvent::Error, &mut context.core.od);
                     context.soc_timeout_check_active = false;
                     return NodeAction::NoAction; // Stop processing after NMT reset
                 }
@@ -544,9 +544,9 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
         }
         // Reschedule next check if still active
         if context.soc_timeout_check_active {
-            let cycle_time_opt = context.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64);
+            let cycle_time_opt = context.core.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64);
             let tolerance_opt = context
-                .od
+                .core.od
                 .read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)
                 .map(|v| v as u64);
 
@@ -602,7 +602,7 @@ fn build_asnd_from_sdo_response(
 
     let sdo_payload = asnd::serialize_sdo_asnd_payload(seq_header, command)?;
     let asnd_frame = ASndFrame::new(
-        context.mac_address,
+        context.core.mac_address,
         source_mac,
         source_node_id,
         context.nmt_state_machine.node_id,

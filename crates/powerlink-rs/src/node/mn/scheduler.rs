@@ -129,7 +129,7 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             // NMT_MT3
             context
                 .nmt_state_machine
-                .process_event(NmtEvent::AllCnsIdentified, &mut context.od);
+                .process_event(NmtEvent::AllCnsIdentified, &mut context.core.od);
         }
     } else if current_mn_state == NmtState::NmtPreOperational2 {
         // Check if all mandatory nodes are PreOperational or further (ReadyToOp reported via PRes/Status)
@@ -153,7 +153,7 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
                 // NMT_MT4
                 context
                     .nmt_state_machine
-                    .process_event(NmtEvent::ConfigurationCompleteCnsReady, &mut context.od);
+                    .process_event(NmtEvent::ConfigurationCompleteCnsReady, &mut context.core.od);
             } else {
                 debug!(
                     "[MN] All mandatory nodes PreOperational/ReadyToOp, but waiting for application trigger to enter ReadyToOp."
@@ -179,7 +179,7 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
                 // NMT_MT5 - Use AllMandatoryCnsOperational event as the trigger
                 context
                     .nmt_state_machine
-                    .process_event(NmtEvent::AllMandatoryCnsOperational, &mut context.od);
+                    .process_event(NmtEvent::AllMandatoryCnsOperational, &mut context.core.od);
             } else {
                 debug!(
                     "[MN] All mandatory nodes Operational, but waiting for application trigger to enter Operational."
@@ -362,7 +362,7 @@ pub(super) fn has_more_isochronous_nodes(
 /// This function was moved from `main.rs`.
 pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     // --- 0. SDO Server Tick (handles timeouts/retransmissions) ---
-    match context.sdo_server.tick(current_time_us, &context.od) {
+    match context.core.sdo_server.tick(current_time_us, &context.core.od) {
         // `tick` now returns the components directly
         Ok(Some((client_info, seq_header, command))) => {
             #[cfg(feature = "sdo-udp")]
@@ -456,7 +456,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                     MacAddress(crate::types::C_DLL_MULTICAST_ASND),
                 );
                 let asnd = ASndFrame::new(
-                    context.mac_address,
+                    context.core.mac_address,
                     dest_mac,
                     target_node_id,
                     context.nmt_state_machine.node_id,
@@ -497,7 +497,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             timeout_event, missed_node.0
         );
         let dummy_frame = PowerlinkFrame::Soc(SocFrame::new(
-            context.mac_address,
+            context.core.mac_address,
             Default::default(),
             NetTime {
                 seconds: 0,
@@ -525,7 +525,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
         info!("[MN] NotActive timeout expired. Proceeding to boot.");
         context
             .nmt_state_machine
-            .process_event(NmtEvent::Timeout, &mut context.od);
+            .process_event(NmtEvent::Timeout, &mut context.core.od);
     }
 
     if action == NodeAction::NoAction && context.current_phase == CyclePhase::Idle {
@@ -565,7 +565,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
     }
 
     if schedule_next_cycle {
-        context.cycle_time_us = context.od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
+        context.cycle_time_us = context.core.od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
         if context.cycle_time_us > 0 && current_nmt_state >= NmtState::NmtPreOperational1 {
             let base_time = if context.current_cycle_start_time_us > 0
                 && current_time_us < context.current_cycle_start_time_us + context.cycle_time_us
@@ -614,7 +614,7 @@ pub(super) fn schedule_timeout(context: &mut MnContext, deadline_us: u64, event:
 
 /// Gets a CN's MAC address from the Object Dictionary.
 pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option<MacAddress> {
-    if let Some(Object::Array(entries)) = context.od.read_object(OD_IDX_MAC_MAP) {
+    if let Some(Object::Array(entries)) = context.core.od.read_object(OD_IDX_MAC_MAP) {
         // Corrected: Read OD_IDX_MAC_MAP (0x1F84) which stores MACs as OctetString
         if let Some(ObjectValue::OctetString(mac_bytes)) = entries.get(node_id.0 as usize) {
             if mac_bytes.len() >= 6 && mac_bytes[0..6].iter().any(|&b| b != 0) {
@@ -656,7 +656,7 @@ pub(crate) fn build_asnd_from_sdo_response(
 
     let sdo_payload = asnd::serialize_sdo_asnd_payload(seq_header, command)?;
     let asnd_frame = ASndFrame::new(
-        context.mac_address,
+        context.core.mac_address,
         source_mac,
         source_node_id,
         context.nmt_state_machine.node_id,

@@ -1,35 +1,21 @@
-// crates/powerlink-rs/src/node/mn/main.rs
 use super::cycle;
 use super::events;
-// use super::payload; // No longer used directly by main.rs
-use super::scheduler; // Added
-use super::state::{
-    CnInfo, CyclePhase, MnContext,
-}; // Added MnContext
-   // use crate::frame::ASndFrame; // No longer used directly by main.rs
-   // use crate::sdo::asnd; // No longer used directly by main.rs
-use crate::sdo::server::SdoClientInfo;
-use crate::sdo::SdoClient;
-use crate::sdo::SdoServer;
-use crate::types::NodeId; // MessageType removed
-use crate::PowerlinkError;
-// use crate::common::{NetTime, RelativeTime}; // Removed
+use super::scheduler;
+use super::state::{CnInfo, CyclePhase, MnContext};
 use crate::frame::basic::MacAddress;
-// use crate::frame::codec::CodecHelpers; // Removed
 use crate::frame::{
-    deserialize_frame, DllMsStateMachine, PowerlinkFrame,
-    ServiceId, // Kept for SDO check
-    error::{
-        DllError, DllErrorManager, LoggingErrorHandler,
-        MnErrorCounters,
-    },
-    // SocFrame removed
+    deserialize_frame, DllMsStateMachine, PowerlinkFrame, ServiceId,
+    error::{DllError, DllErrorManager, LoggingErrorHandler, MnErrorCounters},
 };
-use crate::nmt::NmtStateMachine;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
+use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{Node, NodeAction};
+use crate::node::{CoreNodeContext, Node, NodeAction}; // Import CoreNodeContext
 use crate::od::{Object, ObjectDictionary, ObjectValue};
+use crate::sdo::server::SdoClientInfo;
+use crate::sdo::{SdoClient, SdoServer};
+use crate::types::NodeId;
+use crate::PowerlinkError;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
 use log::{debug, error, info, warn};
@@ -91,6 +77,15 @@ impl<'s> ManagingNode<'s> {
                 }
             }
         }
+
+        // --- Instantiate CoreNodeContext ---
+        let core_context = CoreNodeContext {
+            od,
+            mac_address,
+            sdo_server: SdoServer::new(),
+            sdo_client: SdoClient::new(),
+        };
+
         info!(
             "MN configured to manage {} nodes ({} mandatory, {} isochronous, {} async-only). Multiplex Cycle Length: {}",
             node_info.len(),
@@ -101,13 +96,10 @@ impl<'s> ManagingNode<'s> {
         );
 
         let mut context = MnContext {
-            od,
+            core: core_context, // Use the new core context
             nmt_state_machine,
             dll_state_machine: DllMsStateMachine::new(),
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
-            mac_address,
-            sdo_server: SdoServer::new(),
-            sdo_client: SdoClient::new(),
             cycle_time_us,
             multiplex_cycle_len,
             multiplex_assign,
@@ -135,7 +127,7 @@ impl<'s> ManagingNode<'s> {
 
         context
             .nmt_state_machine
-            .run_internal_initialisation(&mut context.od);
+            .run_internal_initialisation(&mut context.core.od);
 
         Ok(Self { context })
     }
@@ -198,10 +190,10 @@ impl<'s> ManagingNode<'s> {
             source_ip,
             source_port,
         };
-        match self.context.sdo_server.handle_request(
+        match self.context.core.sdo_server.handle_request(
             sdo_payload,
             client_info,
-            &mut self.context.od,
+            &mut self.context.core.od,
             current_time_us,
         ) {
             Ok((seq_header, command)) => {
@@ -237,10 +229,10 @@ impl<'s> ManagingNode<'s> {
                     source_node_id: asnd_frame.source,
                     source_mac: asnd_frame.eth_header.source_mac,
                 };
-                match self.context.sdo_server.handle_request(
+                match self.context.core.sdo_server.handle_request(
                     sdo_payload,
                     client_info,
-                    &mut self.context.od,
+                    &mut self.context.core.od,
                     current_time_us,
                 ) {
                     Ok((seq_header, command)) => {
@@ -284,7 +276,7 @@ impl<'s> Node for ManagingNode<'s> {
     fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
         if self.nmt_state() == NmtState::NmtNotActive
             && buffer.get(12..14) == Some(&crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes())
-            && buffer.get(6..12) != Some(&self.context.mac_address.0)
+            && buffer.get(6..12) != Some(&self.context.core.mac_address.0)
         {
             warn!("[MN] POWERLINK frame detected while in NotActive state from another MN.");
             self.context

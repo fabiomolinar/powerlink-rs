@@ -1,5 +1,3 @@
-// crates/powerlink-rs/src/node/mod.rs
-
 pub mod cn;
 pub mod mn;
 pub mod pdo_handler;
@@ -10,8 +8,19 @@ pub use pdo_handler::PdoHandler;
 
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
+use crate::frame::basic::MacAddress;
 use crate::nmt::states::NmtState;
+use crate::od::ObjectDictionary;
+use crate::sdo::{SdoClient, SdoServer};
 use alloc::vec::Vec;
+
+/// Holds state and components common to all POWERLINK node types (MN and CN).
+pub struct CoreNodeContext<'s> {
+    pub od: ObjectDictionary<'s>,
+    pub mac_address: MacAddress,
+    pub sdo_server: SdoServer,
+    pub sdo_client: SdoClient,
+}
 
 /// Represents the possible actions a POWERLINK node might need to perform
 /// in response to an event or a tick.

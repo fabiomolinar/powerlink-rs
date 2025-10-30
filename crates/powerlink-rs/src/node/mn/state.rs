@@ -3,7 +3,7 @@ use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, M
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
 use crate::nmt::events::NmtCommand;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
-use crate::node::PdoHandler;
+use crate::node::{CoreNodeContext, PdoHandler}; // Import CoreNodeContext
 use crate::od::ObjectDictionary;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
@@ -14,14 +14,13 @@ use core::cmp::Ordering;
 
 /// Holds the complete state for a Managing Node.
 pub struct MnContext<'s> {
-    pub od: ObjectDictionary<'s>,
+    pub core: CoreNodeContext<'s>, // Use CoreNodeContext for shared state
     pub nmt_state_machine: MnNmtStateMachine,
     pub dll_state_machine: DllMsStateMachine,
+    // dll_error_manager is separated due to its generic parameters
     pub dll_error_manager: DllErrorManager<MnErrorCounters, LoggingErrorHandler>,
-    pub mac_address: MacAddress,
-    pub sdo_server: SdoServer,
-    pub sdo_client: SdoClient,
     pub cycle_time_us: u64,
+    // ... rest of the fields remain the same ...
     pub multiplex_cycle_len: u8,
     pub multiplex_assign: BTreeMap<NodeId, u8>,
     pub current_multiplex_cycle: u8,
@@ -49,7 +48,7 @@ pub struct MnContext<'s> {
 
 impl<'s> PdoHandler<'s> for MnContext<'s> {
     fn od(&mut self) -> &mut ObjectDictionary<'s> {
-        &mut self.od
+        &mut self.core.od
     }
 
     fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {

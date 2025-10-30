@@ -9,7 +9,7 @@ use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{Node, NodeAction, PdoHandler};
+use crate::node::{CoreNodeContext, Node, NodeAction, PdoHandler}; // Import CoreNodeContext
 use crate::od::ObjectDictionary;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::server::SdoClientInfo;
@@ -50,15 +50,20 @@ impl<'s> ControlledNode<'s> {
         // read critical parameters from the fully configured OD.
         let nmt_state_machine = CnNmtStateMachine::from_od(&od)?;
 
+        // --- Instantiate CoreNodeContext ---
+        let core_context = CoreNodeContext {
+            od,
+            mac_address,
+            sdo_server: SdoServer::new(),
+            sdo_client: SdoClient::new(),
+        };
+
         let mut node = Self {
             context: CnContext {
-                od,
+                core: core_context, // Use the new core context
                 nmt_state_machine,
                 dll_state_machine: Default::default(),
                 dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
-                mac_address,
-                sdo_server: SdoServer::new(),
-                sdo_client: SdoClient::new(),
                 pending_nmt_requests: Vec::new(),
                 emergency_queue: VecDeque::with_capacity(10), // Default capacity for 10 errors
                 last_soc_reception_time_us: 0,
@@ -74,14 +79,14 @@ impl<'s> ControlledNode<'s> {
         // Run the initial state transitions to get to NmtNotActive.
         node.context
             .nmt_state_machine
-            .run_internal_initialisation(&mut node.context.od);
+            .run_internal_initialisation(&mut node.context.core.od); // Access OD through core
 
         Ok(node)
     }
 
     /// Allows the application to queue an SDO request payload to be sent.
     pub fn queue_sdo_request(&mut self, payload: Vec<u8>) {
-        self.context.sdo_client.queue_request(NodeId(C_ADR_MN_DEF_NODE_ID), payload);
+        self.context.core.sdo_client.queue_request(NodeId(C_ADR_MN_DEF_NODE_ID), payload);
     }
 
     /// Allows the application to queue an NMT command request to be sent to the MN.
@@ -118,9 +123,10 @@ impl<'s> ControlledNode<'s> {
                     self.context.error_status_changed = true;
                     // Update Error Register (0x1001), Set Bit 0: Generic Error
                     let current_err_reg =
-                        self.context.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                        self.context.core.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
                     let new_err_reg = current_err_reg | 0b1;
                     self.context
+                        .core
                         .od
                         .write_internal(
                             OD_IDX_ERROR_REGISTER,
@@ -134,7 +140,7 @@ impl<'s> ControlledNode<'s> {
                 if nmt_action != NmtAction::None {
                     self.context
                         .nmt_state_machine
-                        .process_event(NmtEvent::Error, &mut self.context.od);
+                        .process_event(NmtEvent::Error, &mut self.context.core.od);
                 }
                 NodeAction::NoAction
             }
@@ -174,10 +180,10 @@ impl<'s> ControlledNode<'s> {
             source_ip,
             source_port,
         };
-        match self.context.sdo_server.handle_request(
+        match self.context.core.sdo_server.handle_request(
             sdo_payload,
             client_info,
-            &mut self.context.od,
+            &mut self.context.core.od,
             current_time_us,
         ) {
             Ok((seq_header, command)) => {
@@ -234,7 +240,7 @@ impl<'s> Node for ControlledNode<'s> {
                 // Trigger the NMT transition
                 self.context
                     .nmt_state_machine
-                    .process_event(NmtEvent::PowerlinkFrameReceived, &mut self.context.od);
+                    .process_event(NmtEvent::PowerlinkFrameReceived, &mut self.context.core.od);
                 // Fall through to process the frame that triggered the transition
             }
             return self.process_ethernet_frame(buffer, current_time_us);
@@ -492,7 +498,7 @@ mod tests {
         assert_eq!(node.nmt_state(), NmtState::NmtNotActive);
         // Verify OD state was updated
         assert_eq!(
-            node.context.od.read_u8(0x1F8C, 0),
+            node.context.core.od.read_u8(0x1F8C, 0),
             Some(NmtState::NmtNotActive as u8)
         );
     }
@@ -507,34 +513,34 @@ mod tests {
         // NMT_CT2: Receive SoA or SoC
         node.context
             .nmt_state_machine
-            .process_event(NmtEvent::SocSoAReceived, &mut node.context.od);
+            .process_event(NmtEvent::SocSoAReceived, &mut node.context.core.od);
         assert_eq!(node.nmt_state(), NmtState::NmtPreOperational1);
 
         // NMT_CT4: Receive SoC
         node.context
             .nmt_state_machine
-            .process_event(NmtEvent::SocReceived, &mut node.context.od);
+            .process_event(NmtEvent::SocReceived, &mut node.context.core.od);
         assert_eq!(node.nmt_state(), NmtState::NmtPreOperational2);
 
         // NMT_CT5: Receive EnableReadyToOperate (state doesn't change yet)
         node.context
             .nmt_state_machine
-            .process_event(NmtEvent::EnableReadyToOperate, &mut node.context.od);
+            .process_event(NmtEvent::EnableReadyToOperate, &mut node.context.core.od);
         assert_eq!(node.nmt_state(), NmtState::NmtPreOperational2);
 
         // NMT_CT6: Application signals completion
         node.context
             .nmt_state_machine
-            .process_event(NmtEvent::CnConfigurationComplete, &mut node.context.od);
+            .process_event(NmtEvent::CnConfigurationComplete, &mut node.context.core.od);
         assert_eq!(node.nmt_state(), NmtState::NmtReadyToOperate);
 
         // NMT_CT7: Receive StartNode
         node.context
             .nmt_state_machine
-            .process_event(NmtEvent::StartNode, &mut node.context.od);
+            .process_event(NmtEvent::StartNode, &mut node.context.core.od);
         assert_eq!(node.nmt_state(), NmtState::NmtOperational);
         assert_eq!(
-            node.context.od.read_u8(0x1F8C, 0),
+            node.context.core.od.read_u8(0x1F8C, 0),
             Some(NmtState::NmtOperational as u8)
         );
     }
@@ -545,15 +551,15 @@ mod tests {
         let mut node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
         // Manually set state to Operational for test
         node.context.nmt_state_machine.current_state = NmtState::NmtOperational;
-        node.context.nmt_state_machine.update_od_state(&mut node.context.od);
+        node.context.nmt_state_machine.update_od_state(&mut node.context.core.od);
 
         // NMT_CT11: Trigger internal error
         node.context
             .nmt_state_machine
-            .process_event(NmtEvent::Error, &mut node.context.od);
+            .process_event(NmtEvent::Error, &mut node.context.core.od);
         assert_eq!(node.nmt_state(), NmtState::NmtPreOperational1);
         assert_eq!(
-            node.context.od.read_u8(0x1F8C, 0),
+            node.context.core.od.read_u8(0x1F8C, 0),
             Some(NmtState::NmtPreOperational1 as u8)
         );
     }
@@ -564,25 +570,25 @@ mod tests {
         let mut node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
         // Manually set state to Operational
         node.context.nmt_state_machine.current_state = NmtState::NmtOperational;
-        node.context.nmt_state_machine.update_od_state(&mut node.context.od);
+        node.context.nmt_state_machine.update_od_state(&mut node.context.core.od);
 
         // NMT_CT8: Receive StopNode
         node.context
             .nmt_state_machine
-            .process_event(NmtEvent::StopNode, &mut node.context.od);
+            .process_event(NmtEvent::StopNode, &mut node.context.core.od);
         assert_eq!(node.nmt_state(), NmtState::NmtCsStopped);
         assert_eq!(
-            node.context.od.read_u8(0x1F8C, 0),
+            node.context.core.od.read_u8(0x1F8C, 0),
             Some(NmtState::NmtCsStopped as u8)
         );
 
         // NMT_CT10: Receive EnterPreOperational2
         node.context
             .nmt_state_machine
-            .process_event(NmtEvent::EnterPreOperational2, &mut node.context.od);
+            .process_event(NmtEvent::EnterPreOperational2, &mut node.context.core.od);
         assert_eq!(node.nmt_state(), NmtState::NmtPreOperational2);
         assert_eq!(
-            node.context.od.read_u8(0x1F8C, 0),
+            node.context.core.od.read_u8(0x1F8C, 0),
             Some(NmtState::NmtPreOperational2 as u8)
         );
     }

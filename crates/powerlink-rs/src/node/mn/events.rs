@@ -25,7 +25,7 @@ pub(super) fn process_frame(
         if context.nmt_state_machine.current_state() != NmtState::NmtNotActive {
             context
                 .nmt_state_machine
-                .process_event(event, &mut context.od);
+                .process_event(event, &mut context.core.od);
         }
     }
 
@@ -139,7 +139,7 @@ pub(super) fn handle_dll_event(
                     warn!("[MN] DLL Error threshold met. Requesting Communication Reset.");
                     context
                         .nmt_state_machine
-                        .process_event(NmtEvent::Error, &mut context.od);
+                        .process_event(NmtEvent::Error, &mut context.core.od);
                     context.current_phase = CyclePhase::Idle;
                 }
                 NmtAction::None => {}

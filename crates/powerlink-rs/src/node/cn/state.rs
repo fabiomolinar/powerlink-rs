@@ -5,7 +5,7 @@ use crate::frame::error::{CnErrorCounters, DllErrorManager, ErrorCounters, Error
 use crate::frame::DllCsStateMachine;
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtCommand;
-use crate::node::PdoHandler;
+use crate::node::{CoreNodeContext, PdoHandler}; // Import CoreNodeContext
 use crate::od::ObjectDictionary;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
@@ -15,13 +15,11 @@ use alloc::vec::Vec;
 
 /// Holds the complete state for a Controlled Node.
 pub struct CnContext<'s> {
-    pub od: ObjectDictionary<'s>,
+    pub core: CoreNodeContext<'s>, // Use CoreNodeContext for shared state
     pub nmt_state_machine: CnNmtStateMachine,
     pub dll_state_machine: DllCsStateMachine,
-    pub dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
-    pub mac_address: MacAddress,
-    pub sdo_server: SdoServer,
-    pub sdo_client: SdoClient,
+    // dll_error_manager is separated due to its generic parameters
+    pub dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>, 
     /// Queue for NMT commands this CN wants the MN to execute.
     pub pending_nmt_requests: Vec<(NmtCommand, NodeId)>,
     /// Queue for detailed error/event entries to be reported in StatusResponse.
@@ -43,7 +41,7 @@ pub struct CnContext<'s> {
 // Implement the PdoHandler trait for ControlledNode
 impl<'s> PdoHandler<'s> for CnContext<'s> {
     fn od(&mut self) -> &mut ObjectDictionary<'s> {
-        &mut self.od
+        &mut self.core.od
     }
 
     fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {

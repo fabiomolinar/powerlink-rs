@@ -24,7 +24,7 @@ pub(super) fn advance_cycle_phase(
         context.current_polled_cn = Some(node_id);
         context.current_phase = CyclePhase::IsochronousPReq;
         let timeout_ns = context
-            .od
+            .core.od
             .read_u32(OD_IDX_MN_PRES_TIMEOUT_LIST, node_id.0)
             .unwrap_or(25000) as u64;
         scheduler::schedule_timeout(
@@ -53,7 +53,7 @@ pub(super) fn advance_cycle_phase(
     {
         context.current_phase = CyclePhase::AsynchronousSoA;
         let timeout_ns = context
-            .od
+            .core.od
             .read_u32(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_SLOT_TIMEOUT)
             .unwrap_or(100_000) as u64;
         scheduler::schedule_timeout(

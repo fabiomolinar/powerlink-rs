@@ -56,7 +56,7 @@ pub(super) fn build_soc_frame(
     };
 
     PowerlinkFrame::Soc(SocFrame::new(
-        context.mac_address,
+        context.core.mac_address,
         soc_flags,
         net_time,
         relative_time,
@@ -78,7 +78,7 @@ pub(super) fn build_preq_frame(
         );
         // Return a dummy frame that will fail serialization if used
         return PowerlinkFrame::Soc(SocFrame::new(
-            context.mac_address,
+            context.core.mac_address,
             Default::default(),
             NetTime {
                 seconds: 0,
@@ -96,7 +96,7 @@ pub(super) fn build_preq_frame(
     for i in 0..256 {
         let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE + i as u16;
         if context
-            .od
+            .core.od
             .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
             == Some(target_node_id.0)
         {
@@ -106,7 +106,7 @@ pub(super) fn build_preq_frame(
     }
 
     let payload_result = pdo_channel.map_or(Ok((Vec::new(), PDOVersion(0))), |channel| {
-        build_tpdo_payload(&context.od, channel)
+        build_tpdo_payload(&context.core.od, channel)
     });
 
     match payload_result {
@@ -126,7 +126,7 @@ pub(super) fn build_preq_frame(
             };
 
             PowerlinkFrame::PReq(PReqFrame::new(
-                context.mac_address,
+                context.core.mac_address,
                 dest_mac,
                 target_node_id,
                 flags,
@@ -141,7 +141,7 @@ pub(super) fn build_preq_frame(
             );
             // Return a dummy frame
             PowerlinkFrame::Soc(SocFrame::new(
-                context.mac_address,
+                context.core.mac_address,
                 Default::default(),
                 NetTime {
                     seconds: 0,
@@ -254,13 +254,13 @@ pub(super) fn build_soa_frame(
         "[MN] Building SoA frame with service {:?} for Node {}",
         req_service, target_node.0
     );
-    let epl_version = EPLVersion(context.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
+    let epl_version = EPLVersion(context.core.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
 
     let mut flags = SoAFlags::default();
     flags.er = set_er_flag;
 
     PowerlinkFrame::SoA(SoAFrame::new(
-        context.mac_address,
+        context.core.mac_address,
         context.nmt_state_machine.current_state(),
         flags,
         req_service,
@@ -278,14 +278,14 @@ pub(super) fn build_soa_ident_request(
         "[MN] Building SoA(IdentRequest) for Node {}",
         target_node_id.0
     );
-    let epl_version = EPLVersion(context.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
+    let epl_version = EPLVersion(context.core.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
     let req_service = if target_node_id.0 == 0 {
         RequestedServiceId::NoService
     } else {
         RequestedServiceId::IdentRequest
     };
     PowerlinkFrame::SoA(SoAFrame::new(
-        context.mac_address,
+        context.core.mac_address,
         context.nmt_state_machine.current_state(),
         SoAFlags::default(),
         req_service,
@@ -315,7 +315,7 @@ pub(super) fn build_nmt_command_frame(
             );
             // Return a dummy frame that will fail serialization
             return PowerlinkFrame::Soc(SocFrame::new(
-                context.mac_address,
+                context.core.mac_address,
                 Default::default(),
                 NetTime {
                     seconds: 0,
@@ -331,7 +331,7 @@ pub(super) fn build_nmt_command_frame(
     };
     let nmt_payload = vec![command as u8, 0u8];
     PowerlinkFrame::ASnd(ASndFrame::new(
-        context.mac_address,
+        context.core.mac_address,
         dest_mac,
         target_node_id,
         NodeId(C_ADR_MN_DEF_NODE_ID),
