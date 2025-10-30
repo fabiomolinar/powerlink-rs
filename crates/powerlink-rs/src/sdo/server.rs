@@ -8,6 +8,7 @@ use crate::sdo::command::{
     WriteByNameRequest,
 };
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
+use crate::sdo::sequence_handler::SdoSequenceHandler;
 use crate::sdo::state::{SdoServerState, SdoTransferState};
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
@@ -45,9 +46,7 @@ pub struct SdoResponseData {
 
 /// Manages a single SDO server connection.
 pub struct SdoServer {
-    state: SdoServerState,
-    pub(super) send_sequence_number: u8,
-    pub(super) last_received_sequence_number: u8,
+    sequence_handler: SdoSequenceHandler,
     pub(super) pending_client_requests: Vec<Vec<u8>>, // TODO: Refactor this for transport abstraction too?
     /// Optional handler for vendor-specific or complex commands.
     handler: Box<dyn SdoCommandHandler>,
@@ -105,7 +104,7 @@ impl SdoServer {
 
     /// Returns the absolute timestamp of the next SDO timeout, if any.
     pub fn next_action_time(&self) -> Option<u64> {
-        match &self.state {
+        match self.sequence_handler.state() {
             SdoServerState::SegmentedUpload(state) => state.deadline_us,
             SdoServerState::SegmentedDownload(state) => state.deadline_us,
             _ => None,
@@ -122,7 +121,7 @@ impl SdoServer {
         let mut retransmit_command = None;
         let mut abort_params: Option<(u8, u32)> = None;
 
-        match &mut self.state {
+        match self.sequence_handler.state_mut() {
             SdoServerState::SegmentedUpload(state) => {
                 if let Some(deadline) = state.deadline_us {
                     if current_time_us >= deadline {
@@ -177,9 +176,9 @@ impl SdoServer {
         // Handle retransmission or abort triggered by timeout
         if let Some(command) = retransmit_command {
             let response_header = SequenceLayerHeader {
-                receive_sequence_number: self.last_received_sequence_number,
+                receive_sequence_number: self.sequence_handler.current_receive_sequence(),
                 receive_con: ReceiveConnState::ConnectionValid,
-                send_sequence_number: self.send_sequence_number, // Use the same sequence number
+                send_sequence_number: self.sequence_handler.next_send_sequence(), // Use the same sequence number
                 send_con: SendConnState::ConnectionValidAckRequest, // Request ACK again
             };
             // Need client info to construct SdoResponseData
@@ -200,9 +199,9 @@ impl SdoServer {
         if let Some((tid, code)) = abort_params {
             let abort_command = self.abort(tid, code);
             let response_header = SequenceLayerHeader {
-                receive_sequence_number: self.last_received_sequence_number,
+                receive_sequence_number: self.sequence_handler.current_receive_sequence(),
                 receive_con: ReceiveConnState::ConnectionValid,
-                send_sequence_number: self.send_sequence_number,
+                send_sequence_number: self.sequence_handler.next_send_sequence(),
                 send_con: SendConnState::NoConnection, // Closing connection
             };
             // Need client info to construct SdoResponseData
@@ -247,7 +246,7 @@ impl SdoServer {
 
         // --- Handle client retransmission request before sequence number processing ---
         if sequence_header.receive_con == ReceiveConnState::ErrorResponse {
-            if let SdoServerState::SegmentedUpload(state) = &self.state {
+            if let SdoServerState::SegmentedUpload(state) = self.sequence_handler.state() {
                 if let Some(last_command) = &state.last_sent_segment {
                     warn!(
                         "[SDO] Server: Client requested retransmission for TID {}. Resending last segment.",
@@ -256,7 +255,7 @@ impl SdoServer {
                     let retransmit_header = SequenceLayerHeader {
                         receive_sequence_number: sequence_header.send_sequence_number, // Ack the request
                         receive_con: ReceiveConnState::ConnectionValid,
-                        send_sequence_number: self.send_sequence_number, // Resend with same seq number
+                        send_sequence_number: self.sequence_handler.next_send_sequence(), // Resend with same seq number
                         send_con: SendConnState::ConnectionValidAckRequest,
                     };
                     return Ok(SdoResponseData {
@@ -269,7 +268,9 @@ impl SdoServer {
             // Ignore ErrorResponse if not in segmented upload or no segment stored
             warn!("[SDO] Server: Received ErrorResponse in unexpected state or missing segment.");
             // Send a basic ACK without processing command
-            let ack_header = self.process_sequence_layer(sequence_header)?;
+            let ack_header = self
+                .sequence_handler
+                .process_sequence_layer(sequence_header)?;
             let nil_command = SdoCommand {
                 header: Default::default(),
                 data_size: None,
@@ -283,19 +284,24 @@ impl SdoServer {
         }
 
         debug!("Parsed SDO sequence header: {:?}", sequence_header);
-        let mut response_header = self.process_sequence_layer(sequence_header)?;
+        let mut response_header = self
+            .sequence_handler
+            .process_sequence_layer(sequence_header)?;
 
         // Handle ACK-only or NIL command frames (no command payload)
         if command_payload.is_empty()
-            && (self.state == SdoServerState::Opening
+            && (*self.sequence_handler.state() == SdoServerState::Opening
                 || sequence_header.send_con == SendConnState::ConnectionValid)
         {
             debug!("Received ACK or NIL command.");
-            if let SdoServerState::SegmentedUpload(state) = core::mem::take(&mut self.state) {
+            if let SdoServerState::SegmentedUpload(state) =
+                core::mem::take(self.sequence_handler.state_mut())
+            {
                 // Client ACK received, continue segmented upload.
                 debug!("Client ACK received, continuing segmented upload.");
                 let response_command = self.handle_segmented_upload(state, od, current_time_us);
-                response_header.receive_sequence_number = self.last_received_sequence_number;
+                response_header.receive_sequence_number =
+                    self.sequence_handler.current_receive_sequence();
                 return Ok(SdoResponseData {
                     client_info,
                     seq_header: response_header,
@@ -303,7 +309,7 @@ impl SdoServer {
                 });
             }
             // Just send back an ACK if Established and command payload is empty
-            if self.state == SdoServerState::Established {
+            if self.sequence_handler.state() == &SdoServerState::Established {
                 let response_command = SdoCommand {
                     header: CommandLayerHeader {
                         transaction_id: 0, // Transaction ID might not be known here
@@ -313,7 +319,8 @@ impl SdoServer {
                     data_size: None,
                     payload: Vec::new(),
                 };
-                response_header.receive_sequence_number = self.last_received_sequence_number;
+                response_header.receive_sequence_number =
+                    self.sequence_handler.current_receive_sequence();
                 return Ok(SdoResponseData {
                     client_info,
                     seq_header: response_header,
@@ -337,7 +344,8 @@ impl SdoServer {
                 let response_command = self.process_command_layer(sdo_command, od, current_time_us);
                 debug!("Generated SDO response command: {:?}", response_command);
 
-                response_header.receive_sequence_number = self.last_received_sequence_number;
+                response_header.receive_sequence_number =
+                    self.sequence_handler.current_receive_sequence();
 
                 // Return the response data components
                 Ok(SdoResponseData {
@@ -352,7 +360,8 @@ impl SdoServer {
                 // Try to get transaction ID from the raw payload if possible (best effort)
                 let tid = command_payload.first().map_or(0, |flags| flags & 0x0F);
                 let abort_command = self.abort(tid, 0x0504_0001); // Invalid command specifier
-                response_header.receive_sequence_number = self.last_received_sequence_number;
+                response_header.receive_sequence_number =
+                    self.sequence_handler.current_receive_sequence();
                 // Abort implies connection closure at sequence layer for response
                 response_header.send_con = SendConnState::NoConnection;
                 Ok(SdoResponseData {
@@ -374,7 +383,7 @@ impl SdoServer {
         current_time_us: u64,
     ) -> SdoCommand {
         // Temporarily take ownership of the state to avoid borrow checker issues.
-        let current_state = core::mem::take(&mut self.state);
+        let current_state = core::mem::take(self.sequence_handler.state_mut());
 
         // If we are in a segmented upload, any new valid command from the client
         // just serves as an ACK to trigger the next segment.
@@ -397,7 +406,7 @@ impl SdoServer {
                         command.header.transaction_id,
                         state.transaction_id
                     );
-                    self.state = SdoServerState::SegmentedUpload(state); // Put state back before aborting
+                    *self.sequence_handler.state_mut() = SdoServerState::SegmentedUpload(state); // Put state back before aborting
                     return self.abort(command.header.transaction_id, 0x0504_0003); // Invalid sequence
                 }
             } else if command.header.is_aborted {
@@ -406,7 +415,7 @@ impl SdoServer {
                     command.header.transaction_id
                 );
                 // Client aborted, just transition back to Established
-                self.state = SdoServerState::Established;
+                *self.sequence_handler.state_mut() = SdoServerState::Established;
                 // Don't send another abort back
                 return SdoCommand {
                     header: Default::default(),
@@ -418,12 +427,12 @@ impl SdoServer {
                     "Mismatched transaction ID during segmented upload. Expected {}, got {}",
                     state.transaction_id, command.header.transaction_id
                 );
-                self.state = SdoServerState::SegmentedUpload(state); // Put state back
+                *self.sequence_handler.state_mut() = SdoServerState::SegmentedUpload(state); // Put state back
                 return self.abort(command.header.transaction_id, 0x0800_0000); // General error
             }
         } else {
             // Not in segmented upload, put state back and process command normally
-            self.state = current_state;
+            *self.sequence_handler.state_mut() = current_state;
         }
 
         // Handle client abort received in Established or other states
@@ -432,7 +441,7 @@ impl SdoServer {
                 "Client aborted SDO transfer (TID {}).",
                 command.header.transaction_id
             );
-            self.state = SdoServerState::Established; // Ensure state is reset
+            *self.sequence_handler.state_mut() = SdoServerState::Established; // Ensure state is reset
             // Don't send another abort back
             return SdoCommand {
                 header: Default::default(),
@@ -593,7 +602,7 @@ impl SdoServer {
             info!("Segmented upload complete (TID {}).", state.transaction_id);
             response_header.segmentation = Segmentation::Complete;
             // Transition back *after* sending last segment (important!)
-            self.state = SdoServerState::Established;
+            *self.sequence_handler.state_mut() = SdoServerState::Established;
             // No timeout needed for the last segment
             state.deadline_us = None;
             state.last_sent_segment = None;
@@ -603,7 +612,7 @@ impl SdoServer {
             state.deadline_us = Some(current_time_us + timeout_ms * 1000);
             state.retransmissions_left = od.read_u32(OD_IDX_SDO_RETRIES, 0).unwrap_or(2);
             // Store state *before* creating the command to be stored in last_sent_segment
-            self.state = SdoServerState::SegmentedUpload(state); // Store updated state
+            *self.sequence_handler.state_mut() = SdoServerState::SegmentedUpload(state); // Store updated state
         }
 
         response_header.segment_size = chunk.len() as u16;
@@ -615,7 +624,7 @@ impl SdoServer {
         };
 
         // Store the command for potential retransmission *only if* not the last segment
-        if let SdoServerState::SegmentedUpload(ref mut s) = self.state {
+        if let SdoServerState::SegmentedUpload(s) = self.sequence_handler.state_mut() {
             if s.offset < s.total_size {
                 s.last_sent_segment = Some(command.clone());
             }
@@ -668,17 +677,18 @@ impl SdoServer {
                             return self.abort(command.header.transaction_id, 0x0607_0010); // Type mismatch/length error
                         }
                         let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
-                        self.state = SdoServerState::SegmentedDownload(SdoTransferState {
-                            transaction_id: command.header.transaction_id,
-                            total_size,
-                            data_buffer: req.data.to_vec(), // Store first segment's data
-                            offset: req.data.len(),         // Track bytes received
-                            index: req.index,
-                            sub_index: req.sub_index,
-                            deadline_us: Some(current_time_us + timeout_ms * 1000),
-                            retransmissions_left: 0, // Not applicable for server download
-                            last_sent_segment: None, // Not applicable for server download
-                        });
+                        *self.sequence_handler.state_mut() =
+                            SdoServerState::SegmentedDownload(SdoTransferState {
+                                transaction_id: command.header.transaction_id,
+                                total_size,
+                                data_buffer: req.data.to_vec(), // Store first segment's data
+                                offset: req.data.len(),         // Track bytes received
+                                index: req.index,
+                                sub_index: req.sub_index,
+                                deadline_us: Some(current_time_us + timeout_ms * 1000),
+                                retransmissions_left: 0, // Not applicable for server download
+                                last_sent_segment: None, // Not applicable for server download
+                            });
                         SdoCommand {
                             header: response_header, // Send ACK response
                             data_size: None,
@@ -694,7 +704,7 @@ impl SdoServer {
             Segmentation::Segment | Segmentation::Complete => {
                 // Take the state to avoid mutable borrow issues when calling write_to_od/abort
                 if let SdoServerState::SegmentedDownload(mut transfer_state) =
-                    core::mem::take(&mut self.state)
+                    core::mem::take(self.sequence_handler.state_mut())
                 {
                     if transfer_state.transaction_id != command.header.transaction_id {
                         error!(
@@ -702,7 +712,8 @@ impl SdoServer {
                             transfer_state.transaction_id, command.header.transaction_id
                         );
                         // Put state back before aborting
-                        self.state = SdoServerState::SegmentedDownload(transfer_state);
+                        *self.sequence_handler.state_mut() =
+                            SdoServerState::SegmentedDownload(transfer_state);
                         return self.abort(command.header.transaction_id, 0x0800_0000); // General error
                     }
                     // Check for overflow before extending
@@ -713,7 +724,7 @@ impl SdoServer {
                             transfer_state.offset + command.payload.len()
                         );
                         // Abort and reset state
-                        self.state = SdoServerState::Established;
+                        *self.sequence_handler.state_mut() = SdoServerState::Established;
                         return self.abort(command.header.transaction_id, 0x0607_0010); // Length too high
                     }
                     transfer_state
@@ -738,7 +749,7 @@ impl SdoServer {
                                 transfer_state.offset
                             );
                             // Abort and reset state
-                            self.state = SdoServerState::Established;
+                            *self.sequence_handler.state_mut() = SdoServerState::Established;
                             // Use length too low/high based on comparison
                             let abort_code = if transfer_state.offset < transfer_state.total_size {
                                 0x0607_0013
@@ -752,7 +763,7 @@ impl SdoServer {
                         let data_buffer = transfer_state.data_buffer; // Move buffer
                         let result = self.write_to_od(index, sub_index, &data_buffer, od);
                         // Transition back to Established *after* write attempt
-                        self.state = SdoServerState::Established;
+                        *self.sequence_handler.state_mut() = SdoServerState::Established;
                         match result {
                             Ok(_) => SdoCommand {
                                 header: response_header, // Send final ACK
@@ -768,7 +779,8 @@ impl SdoServer {
                         let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
                         transfer_state.deadline_us = Some(current_time_us + timeout_ms * 1000);
                         // Put state back
-                        self.state = SdoServerState::SegmentedDownload(transfer_state);
+                        *self.sequence_handler.state_mut() =
+                            SdoServerState::SegmentedDownload(transfer_state);
                         SdoCommand {
                             header: response_header, // Send ACK for segment
                             data_size: None,
@@ -778,10 +790,11 @@ impl SdoServer {
                 } else {
                     error!(
                         "Received unexpected SDO segment frame (TID {}). Current state: {:?}",
-                        command.header.transaction_id, self.state
+                        command.header.transaction_id,
+                        self.sequence_handler.state()
                     );
                     // Abort, reset state just in case
-                    self.state = SdoServerState::Established;
+                    *self.sequence_handler.state_mut() = SdoServerState::Established;
                     self.abort(command.header.transaction_id, 0x0504_0003) // Invalid sequence
                 }
             }
@@ -789,7 +802,6 @@ impl SdoServer {
     }
 
     // --- Other command handlers (handle_read_by_name, etc.) remain the same conceptually ---
-    // ... (ensure they correctly call self.abort or return SdoCommand) ...
     fn handle_read_by_name(
         &mut self,
         command: SdoCommand,
@@ -1092,7 +1104,7 @@ impl SdoServer {
             transaction_id, abort_code
         );
         // Reset state on abort
-        self.state = SdoServerState::Established; // Go back to Established, not Closed
+        self.sequence_handler.reset(); // Go back to Established, not Closed
         self.current_client_info = None; // Clear client info on abort
         SdoCommand {
             header: CommandLayerHeader {
@@ -1108,172 +1120,25 @@ impl SdoServer {
         }
     }
 
-    /// Updates the server state based on the incoming sequence layer header
-    /// and determines the appropriate response header.
-    fn process_sequence_layer(
-        &mut self,
-        request: SequenceLayerHeader,
-    ) -> Result<SequenceLayerHeader, PowerlinkError> {
-        debug!("Processing sequence layer in state {:?}", self.state);
-        let mut response = SequenceLayerHeader::default(); // Start with default response
-
-        match &mut self.state {
-            SdoServerState::Closed => {
-                if request.send_con == SendConnState::Initialization {
-                    self.state = SdoServerState::Opening;
-                    // Initialize sequence numbers based on client's first message
-                    self.send_sequence_number = 0; // Server starts sending with 0 after init ACK
-                    self.last_received_sequence_number = request.send_sequence_number;
-                    info!(
-                        "SDO connection initializing (Client Seq: {}).",
-                        request.send_sequence_number
-                    );
-                    response.receive_con = ReceiveConnState::Initialization;
-                    response.receive_sequence_number = self.last_received_sequence_number;
-                    response.send_con = SendConnState::Initialization;
-                    response.send_sequence_number = self.send_sequence_number; // Send 0
-                } else {
-                    warn!("Ignoring non-init request on closed SDO connection.");
-                    // Send NoConnection response without changing state or seq numbers
-                    response.receive_con = ReceiveConnState::NoConnection;
-                    response.send_con = SendConnState::NoConnection;
-                    response.receive_sequence_number = request.send_sequence_number; // Echo back client seq
-                    response.send_sequence_number = self.send_sequence_number; // Our (irrelevant) seq
-                    // We return Ok, but the command layer processing will likely fail or do nothing
-                }
-            }
-            SdoServerState::Opening => {
-                // Client confirms connection with ConnectionValid and ACKs our Initialization seq num (0)
-                if request.send_con == SendConnState::ConnectionValid
-                    && request.receive_sequence_number == self.send_sequence_number
-                {
-                    self.state = SdoServerState::Established;
-                    self.last_received_sequence_number = request.send_sequence_number;
-                    // Server now increments its send sequence number for the first real command response
-                    self.send_sequence_number = self.send_sequence_number.wrapping_add(1) % 64;
-                    info!(
-                        "SDO connection established (Client Seq: {}). Ready for commands.",
-                        request.send_sequence_number
-                    );
-                    response.receive_con = ReceiveConnState::ConnectionValid;
-                    response.receive_sequence_number = self.last_received_sequence_number;
-                    response.send_con = SendConnState::ConnectionValid;
-                    response.send_sequence_number = self.send_sequence_number;
-                } else {
-                    error!(
-                        "Invalid sequence state during SDO opening. Client State: {:?}, Client Seq: {}, Client ACK: {}, Expected ACK: {}",
-                        request.send_con,
-                        request.send_sequence_number,
-                        request.receive_sequence_number,
-                        self.send_sequence_number
-                    );
-                    self.state = SdoServerState::Closed; // Reset state on error
-                    return Err(PowerlinkError::SdoSequenceError(
-                        "Invalid sequence state during SDO opening.",
-                    ));
-                }
-            }
-            SdoServerState::Established
-            | SdoServerState::SegmentedDownload(_)
-            | SdoServerState::SegmentedUpload(_) => {
-                // --- Sequence Number Check ---
-                // Expected sequence number from the client
-                let expected_seq = self.last_received_sequence_number.wrapping_add(1) % 64;
-
-                // Handle retransmission request from client is handled in `handle_request`
-                // Handle duplicate frame from client
-                if request.send_sequence_number == self.last_received_sequence_number {
-                    debug!(
-                        "Duplicate SDO frame received (Seq: {}). Ignoring command, sending ACK.",
-                        request.send_sequence_number
-                    );
-                    // Just send ACK, don't process command layer again
-                    response.receive_con = ReceiveConnState::ConnectionValid;
-                    response.receive_sequence_number = self.last_received_sequence_number;
-                    response.send_con = SendConnState::ConnectionValid;
-                    // Use the *same* send sequence number as the previous response
-                    response.send_sequence_number = self.send_sequence_number;
-                // Return immediately, skipping command processing
-                // Let the command layer handle the empty payload.
-                }
-                // Handle out-of-order/lost frame from client
-                else if request.send_sequence_number != expected_seq {
-                    error!(
-                        "SDO sequence number mismatch. Expected {}, got {}. Requesting retransmission from client.",
-                        expected_seq, request.send_sequence_number
-                    );
-                    // Request retransmission from the client starting after the last good one.
-                    // Do not update server state or sequence numbers on error
-                    // Send ErrorResponse
-                    response.receive_con = ReceiveConnState::ErrorResponse;
-                    response.receive_sequence_number = self.last_received_sequence_number;
-                    response.send_con = SendConnState::ConnectionValid;
-                    response.send_sequence_number = self.send_sequence_number; // Resend our last frame's number
-                    return Err(PowerlinkError::SdoSequenceError(
-                        "SDO sequence number mismatch.",
-                    )); // Signal error upstream
-                }
-                // --- Sequence OK ---
-                else {
-                    self.last_received_sequence_number = request.send_sequence_number;
-                    // Acknowledgment received for an upload segment, so clear the timeout.
-                    if let SdoServerState::SegmentedUpload(ref mut state) = self.state {
-                        // Check if client ack matches the segment we sent
-                        if request.receive_sequence_number == self.send_sequence_number {
-                            state.deadline_us = None;
-                            state.last_sent_segment = None; // Clear stored segment after ACK
-                            state.retransmissions_left = 0; // Reset retry count
-                        } else {
-                            // Client ACKed something else, maybe an old frame? Ignore this ACK regarding timeout.
-                            warn!(
-                                "Received ACK ({}) for wrong segment during upload (expected {}).",
-                                request.receive_sequence_number, self.send_sequence_number
-                            );
-                        }
-                    }
-
-                    // Increment send sequence number *only* if this wasn't a duplicate frame
-                    // (The duplicate case above keeps the old send_sequence_number)
-                    self.send_sequence_number = self.send_sequence_number.wrapping_add(1) % 64;
-
-                    // Default response for valid sequence
-                    response.receive_con = ReceiveConnState::ConnectionValid;
-                    response.receive_sequence_number = self.last_received_sequence_number;
-                    response.send_con = SendConnState::ConnectionValid; // Default, might be overridden by command layer
-                    // If we are about to start a segmented upload, request ACK
-                    if let SdoServerState::SegmentedUpload(ref state) = self.state {
-                        if state.offset == 0 {
-                            // First segment is about to be sent
-                            response.send_con = SendConnState::ConnectionValidAckRequest;
-                        }
-                    }
-                    response.send_sequence_number = self.send_sequence_number;
-                }
-            }
-        }
-        Ok(response) // Return the calculated response header
-    }
-
     /// Gets the next sequence number the server will use for sending.
     pub fn next_send_sequence(&self) -> u8 {
-        self.send_sequence_number
+        self.sequence_handler.next_send_sequence()
     }
 
     /// Gets the last sequence number the server correctly received.
     pub fn current_receive_sequence(&self) -> u8 {
-        self.last_received_sequence_number
+        self.sequence_handler.current_receive_sequence()
     }
 }
 
 impl Default for SdoServer {
     fn default() -> Self {
         Self {
-            state: SdoServerState::Closed,
-            send_sequence_number: 0,
-            last_received_sequence_number: 63, // Set to 63 (equiv to -1) so first received seq (0) is valid
+            sequence_handler: SdoSequenceHandler::new(),
             pending_client_requests: Vec::new(),
             handler: Box::new(DefaultSdoHandler),
             current_client_info: None,
         }
     }
 }
+

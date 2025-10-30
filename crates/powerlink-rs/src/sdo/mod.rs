@@ -1,6 +1,7 @@
 pub mod command;
 pub mod embedded;
 pub mod sequence;
+pub mod sequence_handler;
 pub mod server;
 pub mod state;
 #[cfg(feature = "sdo-udp")]
