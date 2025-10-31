@@ -10,7 +10,7 @@ use crate::frame::{
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{CoreNodeContext, Node, NodeAction}; // Import CoreNodeContext
+use crate::node::{CoreNodeContext, Node, NodeAction, build_udp_from_sdo_response, build_asnd_from_sdo_response}; // Import CoreNodeContext
 use crate::od::{Object, ObjectDictionary, ObjectValue};
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::{SdoClient, SdoServer};
@@ -162,56 +162,6 @@ impl<'s> ManagingNode<'s> {
         }
     }
 
-    /// Processes an SDO request received over UDP.
-    #[cfg(feature = "sdo-udp")]
-    fn process_udp_packet(
-        &mut self,
-        data: &[u8],
-        source_ip: crate::types::IpAddress,
-        source_port: u16,
-        current_time_us: u64,
-    ) -> NodeAction {
-        debug!(
-            "Received UDP SDO request from {}:{} ({} bytes)",
-            core::net::Ipv4Addr::from(source_ip),
-            source_port,
-            data.len()
-        );
-
-        let sdo_payload = match data {
-            [0x06, _, _, 0x05, rest @ ..] => rest,
-            _ => {
-                error!("Invalid or malformed SDO/UDP payload prefix from UDP.");
-                return NodeAction::NoAction;
-            }
-        };
-
-        let client_info = SdoClientInfo::Udp {
-            source_ip,
-            source_port,
-        };
-        match self.context.core.sdo_server.handle_request(
-            sdo_payload,
-            client_info,
-            &mut self.context.core.od,
-            current_time_us,
-        ) {
-            Ok((seq_header, command)) => {
-                match scheduler::build_udp_from_sdo_response(&mut self.context, client_info, seq_header, command) {
-                    Ok(action) => action,
-                    Err(e) => {
-                        error!("Failed to build SDO/UDP response: {:?}", e);
-                        NodeAction::NoAction
-                    }
-                }
-            }
-            Err(e) => {
-                error!("SDO server error (UDP): {:?}", e);
-                NodeAction::NoAction
-            }
-        }
-    }
-
     /// Internal function to process a deserialized `PowerlinkFrame`.
     fn process_powerlink_frame(
         &mut self,
@@ -236,7 +186,7 @@ impl<'s> ManagingNode<'s> {
                     current_time_us,
                 ) {
                     Ok((seq_header, command)) => {
-                        return match scheduler::build_asnd_from_sdo_response(
+                        return match build_asnd_from_sdo_response(
                             &mut self.context,
                             client_info,
                             seq_header,

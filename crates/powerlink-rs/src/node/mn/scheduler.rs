@@ -12,7 +12,7 @@ use crate::frame::{
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::{states::NmtState, NmtStateMachine};
 use crate::node::mn::state::{CnInfo, CnState, CyclePhase};
-use crate::node::{NodeAction, serialize_frame_action};
+use crate::node::{NodeAction, serialize_frame_action, build_udp_from_sdo_response, build_asnd_from_sdo_response};
 use crate::node::NodeContext;
 use crate::od::{Object, ObjectValue};
 use crate::sdo::asnd;
@@ -648,79 +648,5 @@ pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option
         }
     }
     None
-}
-
-/// Helper to build ASnd frame from SdoResponseData.
-pub(crate) fn build_asnd_from_sdo_response(
-    context: &MnContext,
-    client_info: SdoClientInfo,
-    seq_header: SequenceLayerHeader,
-    command: SdoCommand,
-) -> Result<NodeAction, PowerlinkError> {
-    let (source_node_id, source_mac) = match client_info {
-        SdoClientInfo::Asnd {
-            source_node_id,
-            source_mac,
-        } => (source_node_id, source_mac),
-        #[cfg(feature = "sdo-udp")]
-        SdoClientInfo::Udp { .. } => {
-            return Err(PowerlinkError::InternalError(
-                "Attempted to build ASnd response for UDP client",
-            ))
-        }
-    };
-
-    let sdo_payload = asnd::serialize_sdo_asnd_payload(seq_header, command)?;
-    let asnd_frame = ASndFrame::new(
-        context.core.mac_address,
-        source_mac,
-        source_node_id,
-        context.nmt_state_machine.node_id,
-        ServiceId::Sdo,
-        sdo_payload,
-    );
-    info!("[MN] Sending SDO response via ASnd to Node {}", source_node_id.0);
-    Ok(serialize_frame_action(
-        PowerlinkFrame::ASnd(asnd_frame),
-        context
-    ). unwrap_or(
-        // TODO: handle error properly
-        NodeAction::NoAction
-    ))
-}
-
-/// Helper to build NodeAction::SendUdp from SdoResponseData.
-#[cfg(feature = "sdo-udp")]
-pub(crate) fn build_udp_from_sdo_response(
-    _context: &MnContext, // Changed to _context as it's not used
-    client_info: SdoClientInfo,
-    seq_header: SequenceLayerHeader,
-    command: SdoCommand,
-) -> Result<NodeAction, PowerlinkError> {
-    let (source_ip, source_port) = match client_info {
-        SdoClientInfo::Udp {
-            source_ip,
-            source_port,
-        } => (source_ip, source_port),
-        SdoClientInfo::Asnd { .. } => {
-            return Err(PowerlinkError::InternalError(
-                "Attempted to build UDP response for ASnd client",
-            ))
-        }
-    };
-
-    let mut udp_buffer = vec![0u8; 1500]; // MTU size
-    let udp_payload_len = serialize_sdo_udp_payload(seq_header, command, &mut udp_buffer)?;
-    udp_buffer.truncate(udp_payload_len);
-    info!(
-        "[MN] Sending SDO response via UDP to {}:{}",
-        core::net::Ipv4Addr::from(source_ip),
-        source_port
-    );
-    Ok(NodeAction::SendUdp {
-        dest_ip: source_ip,
-        dest_port: source_port,
-        data: udp_buffer,
-    })
 }
 

@@ -148,60 +148,6 @@ impl<'s> ControlledNode<'s> {
         }
     }
 
-    /// Processes an SDO request received over UDP.
-    #[cfg(feature = "sdo-udp")]
-    fn process_udp_packet(
-        &mut self,
-        data: &[u8],
-        source_ip: crate::types::IpAddress,
-        source_port: u16,
-        current_time_us: u64,
-    ) -> NodeAction {
-        debug!(
-            "Received UDP SDO request from {}:{} ({} bytes)",
-            core::net::Ipv4Addr::from(source_ip),
-            source_port,
-            data.len()
-        );
-
-        // Validate UDP SDO prefix (from EPSG DS 301, Table 47) and get the SDO payload slice.
-        // The SDO payload starts *after* the 4-byte POWERLINK UDP prefix.
-        let sdo_payload = match data {
-            // Check for prefix: MessageType(ASnd), Reserved(2), ServiceID(Sdo)
-            [0x06, _, _, 0x05, rest @ ..] => rest,
-            _ => {
-                error!("Invalid or malformed SDO/UDP payload prefix.");
-                // We cannot send an SDO abort because the frame is fundamentally broken.
-                return NodeAction::NoAction;
-            }
-        };
-
-        let client_info = SdoClientInfo::Udp {
-            source_ip,
-            source_port,
-        };
-        match self.context.core.sdo_server.handle_request(
-            sdo_payload,
-            client_info,
-            &mut self.context.core.od,
-            current_time_us,
-        ) {
-            Ok((seq_header, command)) => {
-                match events::build_udp_from_sdo_response(&self.context, client_info, seq_header, command) {
-                    Ok(action) => action,
-                    Err(e) => {
-                        error!("Failed to build SDO/UDP response: {:?}", e);
-                        NodeAction::NoAction
-                    }
-                }
-            }
-            Err(e) => {
-                error!("SDO server error (UDP): {:?}", e);
-                NodeAction::NoAction
-            }
-        }
-    }
-
     /// Consumes the payload of a PReq frame based on RPDO mapping.
     fn consume_preq_payload(&mut self, preq: &PReqFrame) {
         // Node ID 0 is reserved for PReq source according to spec and OD usage
