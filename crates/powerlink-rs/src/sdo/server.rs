@@ -7,6 +7,7 @@ use crate::sdo::command::{
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::sequence_handler::SdoSequenceHandler;
 use crate::sdo::state::{SdoServerState, SdoTransferState};
+use crate::sdo::transport::SdoResponseData;
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
 use crate::{PowerlinkError, od::ObjectDictionary};
@@ -73,7 +74,7 @@ impl SdoServer {
         &mut self,
         current_time_us: u64,
         od: &ObjectDictionary,
-    ) -> Result<Option<(SdoClientInfo, SequenceLayerHeader, SdoCommand)>, PowerlinkError> {
+    ) -> Result<Option<SdoResponseData>, PowerlinkError> {
         let mut retransmit_command = None;
         let mut abort_params: Option<(u8, u32)> = None;
 
@@ -139,7 +140,11 @@ impl SdoServer {
             };
             // Need client info to construct SdoResponseData
             if let Some(client_info) = self.current_client_info {
-                return Ok(Some((client_info, response_header, command)));
+                return Ok(Some(SdoResponseData {
+                    client_info,
+                    seq_header: response_header,
+                    command,
+                }));
             } else {
                 // Should not happen if a transfer was active
                 return Err(PowerlinkError::InternalError(
@@ -160,7 +165,11 @@ impl SdoServer {
             if let Some(client_info) = self.current_client_info {
                 // Abort also clears current_client_info
                 self.current_client_info = None;
-                return Ok(Some((client_info, response_header, abort_command)));
+                return Ok(Some(SdoResponseData {
+                    client_info,
+                    seq_header: response_header,
+                    command: abort_command,
+                }));
             } else {
                 // Should not happen if a transfer was active
                 return Err(PowerlinkError::InternalError(
@@ -174,7 +183,7 @@ impl SdoServer {
 
     /// Processes an incoming SDO request payload (starting *directly* with the Sequence Layer header).
     ///
-    /// Returns a (SequenceLayerHeader, SdoCommand) tuple, which the caller is
+    /// Returns an `SdoResponseData` struct, which the caller is
     /// responsible for packaging into a transport-specific response.
     pub fn handle_request(
         &mut self,
@@ -182,7 +191,7 @@ impl SdoServer {
         client_info: SdoClientInfo, // Pass transport info
         od: &mut ObjectDictionary,
         current_time_us: u64,
-    ) -> Result<(SequenceLayerHeader, SdoCommand), PowerlinkError> {
+    ) -> Result<SdoResponseData, PowerlinkError> {
         if request_sdo_payload.len() < 4 {
             return Err(PowerlinkError::BufferTooShort); // Need at least sequence header
         }
@@ -209,7 +218,11 @@ impl SdoServer {
                         send_sequence_number: self.sequence_handler.next_send_sequence(), // Resend with same seq number
                         send_con: SendConnState::ConnectionValidAckRequest,
                     };
-                    return Ok((retransmit_header, last_command.clone()));
+                    return Ok(SdoResponseData {
+                        client_info,
+                        seq_header: retransmit_header,
+                        command: last_command.clone(),
+                    });
                 }
             }
             // Ignore ErrorResponse if not in segmented upload or no segment stored
@@ -223,7 +236,11 @@ impl SdoServer {
                 data_size: None,
                 payload: Vec::new(),
             };
-            return Ok((ack_header, nil_command));
+            return Ok(SdoResponseData {
+                client_info,
+                seq_header: ack_header,
+                command: nil_command,
+            });
         }
 
         debug!("Parsed SDO sequence header: {:?}", sequence_header);
@@ -258,7 +275,11 @@ impl SdoServer {
 
                 response_header.receive_sequence_number =
                     self.sequence_handler.current_receive_sequence();
-                return Ok((response_header, response_command));
+                return Ok(SdoResponseData {
+                    client_info,
+                    seq_header: response_header,
+                    command: response_command,
+                });
             }
             // Just send back an ACK if Established and command payload is empty
             if self.sequence_handler.state() == &SdoServerState::Established {
@@ -275,7 +296,11 @@ impl SdoServer {
                     self.sequence_handler.current_receive_sequence();
                 // This is a simple ACK, not part of a larger transfer, clear client info
                 self.current_client_info = None;
-                return Ok((response_header, response_command));
+                return Ok(SdoResponseData {
+                    client_info,
+                    seq_header: response_header,
+                    command: response_command,
+                });
             }
             // If Opening and empty payload, something is wrong, fall through to error
             error!("Received empty command payload during Opening state.");
@@ -309,7 +334,11 @@ impl SdoServer {
                 }
 
                 // Return the response data components
-                Ok((response_header, response_command))
+                Ok(SdoResponseData {
+                    client_info,
+                    seq_header: response_header,
+                    command: response_command,
+                })
             }
             Err(e) => {
                 // Failed to deserialize command - create an Abort response
@@ -323,7 +352,11 @@ impl SdoServer {
                 response_header.send_con = SendConnState::NoConnection;
                 // Abort clears client info
                 self.current_client_info = None;
-                Ok((response_header, abort_command))
+                Ok(SdoResponseData {
+                    client_info,
+                    seq_header: response_header,
+                    command: abort_command,
+                })
             }
         }
     }
