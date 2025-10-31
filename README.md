@@ -35,7 +35,7 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
 
 ## Testing
 
-Some integration tests requiring access to the network layer. `#[ignore]` is used with these tests as they require root privileges, so these are ignored by default. They can still be ran, for example with Linux, by using `sudo` and using the full path to the cargo executable (example: `sudo -E /home/<user_name>/.cargo/bin/cargo test --package powerlink-io-linux --test loopback_test -- test_cn_responds_to_preq_on_loopback --exact --show-output --ignored`).
+Some integration tests requiring access to the network layer. `#[ignore]` is used with these tests as they require root privileges, so these are ignored by default. They can still be ran, for example with Linux, by using `sudo` and using the full path to the cargo executable (example: `sudo -E /home/<user_name>/.cargo/bin/cargo test --package powerlink-rs-linux --test loopback_test -- test_cn_responds_to_preq_on_loopback --exact --show-output --ignored`).
 
 ## Roadmap
 
@@ -43,22 +43,22 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
   - Focus: Implementing the lowest-level structures and serialization/deserialization logic.
   - Key Features (DS-301): Definition of basic types (Node ID, data sizes), frame construction/parsing (Ethernet II, POWERLINK basic frame format), and handling of fundamental control frames (SoC, SoA) and data frames (PReq, PRes).
   - Success Metric: The crate can accurately generate and parse raw byte arrays corresponding to basic POWERLINK frames.
-  - Status: **First draft finished**.
+  - Status: **Completed**.
 - Phase 2: Object Dictionary and Basic Network Management (NMT):
   - Focus: Core configuration logic and device identification.
   - Key Features (DS-301): Implementation of the Object Dictionary (OD) structure (Index and Sub-Index usage), defining mandatory NMT objects (e.g., identity object 1018h, NMT features 1F82h, EPL version 1F83h), and implementing the fundamental NMT State Machines (Common, MN, and CN states, e.g., NMT_CS_NOT_ACTIVE to NMT_CS_OPERATIONAL).
   - Success Metric: The device can maintain internal NMT state correctly and respond to simulated NMT state commands.
-  - Status: **First draft finished**.
+  - Status: **Completed**.
 - Phase 3: Service Data Object (SDO) Communication:
   - Focus: Reliable, asynchronous configuration and diagnostic access over ASnd frames.
   - Key Features (DS-301): Implementation of the SDO Command Layer Protocol (e.g., Read/Write by Index requests), the SDO Sequence Layer (for reliability), and integration for transfer via the mandatory ASnd frame (Method 2, signaled by NMT_FeatureFlags_U32 Bit 2).
   - Success Metric: Successful simulated read/write transactions (SDO client and server) to the mock Object Dictionary.
-  - Status: **First draft finished**.
+  - Status: **Completed**.
 - Phase 4: Platform Abstraction and Initial I/O Layer:
   - Focus: Enabling cross-platform usage and testing.
   - Key Features: Define the core Rust Trait for low-level I/O (send_raw_frame, receive_raw_frame). Implement the initial platform-specific driver modules for Linux/Windows (using sockets/raw interfaces). Optionally, support the use of SDO via UDP/IP (Method 1, signaled by NMT_FeatureFlags_U32 Bit 1).
   - Success Metric: The core protocol logic can run and exchange actual Ethernet frames on a standard operating system using a loopback or virtual network environment.
-  - Status: **First draft finished**.
+  - Status: **Completed**.
 - Phase 5: Real-Time Data Handling (PDO):
   - Focus: Implementing the core real-time communication mechanism.
   - Key Features (DS-301): Implementation of PDO Mapping structures (Transmit PDOs 1800h-1AFFh, Receive PDOs 1400h-16FFh), and the logic to insert/extract process data into/from PReq and PRes frames based on the cycle timing.
@@ -72,7 +72,7 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
     - **CN Response Logic**: Ensure `ControlledNode` reacts correctly to MN frames (SoC, PReq, SoA) according to its NMT/DLL state.
     - **DLL Error Handling Integration**: Ensure DLL error counters correctly trigger the specified NMT state changes.
   - Success Metric: A simulated MN/CN pair can successfully transition to the NMT_CS_OPERATIONAL state and maintain a stable POWERLINK cycle.
-  - Status: **In development**.
+  - Status: **In development**. Core MN scheduling and CN response logic is implemented and undergoing refinement.
 - Phase 7: Integration Testing and Validation:
   - Focus: Creating robust integration tests for the full MN/CN communication cycle.
   - Key Features:
@@ -81,7 +81,7 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
     - Test NMT command handling (e.g., `StopNode`, `ResetNode`).
     - Test DLL error handling scenarios (e.g., PRes timeouts).
   - Success Metric: All integration tests pass, demonstrating a stable and conformant basic network operation.
-  - Status: **Not started**.
+  - Status: **In development**. Initial Docker-based integration tests for the boot-up sequence and SDO communication are in place.
 - Future (post DS-301):
   - Microcontroller Support: Implement a `no_std` I/O module targeting a specific embedded MAC/PHY driver using the traits defined in Phase 4.
   - Configuration Files: Implement parsers for the `XML` Device Description (`XDD`) and `XML` Device Configuration (`XDC`) files (defined by EPSG DS-311).
