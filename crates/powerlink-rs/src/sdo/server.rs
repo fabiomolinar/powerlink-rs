@@ -1,7 +1,4 @@
-// crates/powerlink-rs/src/sdo/server.rs
-use crate::frame::PRFlag;
 use crate::frame::basic::MacAddress;
-use crate::od::ObjectValue;
 use crate::sdo::command::{
     CommandId, CommandLayerHeader, DefaultSdoHandler, ReadByIndexRequest, ReadByNameRequest,
     ReadMultipleParamRequest, SdoCommand, SdoCommandHandler, Segmentation, WriteByIndexRequest,
@@ -46,7 +43,6 @@ pub struct SdoServer {
 
 const MAX_EXPEDITED_PAYLOAD: usize = 1452; // Max SDO payload within ASnd or UDP
 const OD_IDX_SDO_TIMEOUT: u16 = 0x1300;
-const OD_IDX_SDO_RETRIES: u16 = 0x1302;
 
 impl SdoServer {
     pub fn new() -> Self {

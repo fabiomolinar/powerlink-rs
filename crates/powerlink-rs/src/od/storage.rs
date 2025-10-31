@@ -45,7 +45,6 @@ mod tests {
     use crate::hal::ObjectDictionaryStorage;
     use crate::od::{AccessType, Category, Object, ObjectEntry, ObjectValue};
     use alloc::collections::BTreeMap;
-    use alloc::vec;
 
     struct MockStorage {
         saved_data: BTreeMap<(u16, u8), ObjectValue>,

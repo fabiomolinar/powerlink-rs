@@ -13,10 +13,10 @@ use crate::nmt::NmtStateMachine; // Added for nmt_state()
 use crate::nmt::events::NmtCommand;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
-use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId}; // Added C_ADR_BROADCAST_NODE_ID
+use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId};
 use alloc::vec;
 use alloc::vec::Vec;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, trace, warn};
 
 // Constants for OD access
 const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
@@ -24,10 +24,7 @@ const OD_IDX_TPDO_MAPP_PARAM_BASE: u16 = 0x1A00;
 const OD_SUBIDX_PDO_COMM_NODEID: u8 = 1;
 const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
 const OD_IDX_MN_PREQ_PAYLOAD_LIMIT_LIST: u16 = 0x1F8B;
-const OD_IDX_EPL_VERSION: u16 = 0x1F83; // Added for reading EPL version
-// ERROR FIX: Added missing constants
-const OD_IDX_MN_CYCLE_TIMING_REC: u16 = 0x1F98;
-const OD_SUBIDX_ASYNC_SLOT_TIMEOUT: u8 = 2;
+const OD_IDX_EPL_VERSION: u16 = 0x1F83;
 
 /// Builds a SoC frame.
 pub(super) fn build_soc_frame(
@@ -272,37 +269,6 @@ pub(super) fn build_soa_frame(
         flags,
         req_service,
         target_node,
-        epl_version,
-    ))
-}
-
-/// Builds and serializes an SoA(IdentRequest) frame.
-pub(super) fn build_soa_ident_request(
-    context: &MnContext,
-    target_node_id: NodeId,
-) -> PowerlinkFrame {
-    debug!(
-        "[MN] Building SoA(IdentRequest) for Node {}",
-        target_node_id.0
-    );
-    let epl_version = EPLVersion(
-        context
-            .core
-            .od
-            .read_u8(OD_IDX_EPL_VERSION, 0)
-            .unwrap_or(0x15),
-    );
-    let req_service = if target_node_id.0 == 0 {
-        RequestedServiceId::NoService
-    } else {
-        RequestedServiceId::IdentRequest
-    };
-    PowerlinkFrame::SoA(SoAFrame::new(
-        context.core.mac_address,
-        context.nmt_state_machine.current_state(),
-        SoAFlags::default(),
-        req_service,
-        target_node_id,
         epl_version,
     ))
 }

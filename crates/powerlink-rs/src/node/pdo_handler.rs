@@ -95,7 +95,7 @@ pub trait PdoHandler<'s> {
 
         // Find the correct mapping for this source node by searching RPDO Comm Params (0x14xx)
         let mut mapping_index_opt = None;
-        let mut expected_version = 0u8; // Store expected version if found
+        
 
         for i in 0..256 {
             // Check all possible RPDO channels
@@ -113,7 +113,7 @@ pub trait PdoHandler<'s> {
 
                 if matches_source {
                     // Found the correct communication parameter object
-                    expected_version = self
+                    let expected_version = self
                         .od()
                         .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_VERSION)
                         .unwrap_or(0); // Default to 0 if not found

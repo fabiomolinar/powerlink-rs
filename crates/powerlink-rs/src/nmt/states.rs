@@ -51,7 +51,7 @@ pub enum NmtState {
 
 impl NmtState {
     /// Parses a u8 into an NmtState with node-specific context.
-    pub fn from_u8_with_context(value: u8, node_type: NodeType) -> Result<Self, PowerlinkError> {
+    pub fn from_u8_with_context(value: u8, _node_type: NodeType) -> Result<Self, PowerlinkError> {
         match value {
             // Handle potentially ambiguous values based on context
             // Note: In DS301 App 3.6, all shared states have the same numeric value

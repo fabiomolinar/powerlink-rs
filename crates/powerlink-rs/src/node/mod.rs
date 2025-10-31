@@ -190,61 +190,6 @@ fn build_asnd_from_sdo_response<'s>(
     )
 }
 
-/// Processes an SDO request received over UDP.
-#[cfg(feature = "sdo-udp")]
-fn process_udp_packet<'s>(
-    context: &mut impl NodeContext<'s>,
-    data: &[u8],
-    source_ip: crate::types::IpAddress,
-    source_port: u16,
-    current_time_us: u64,
-) -> NodeAction {
-    use log::debug;
-
-    debug!(
-        "Received UDP SDO request from {}:{} ({} bytes)",
-        core::net::Ipv4Addr::from(source_ip),
-        source_port,
-        data.len()
-    );
-
-    // Validate UDP SDO prefix (from EPSG DS 301, Table 47) and get the SDO payload slice.
-    // The SDO payload starts *after* the 4-byte POWERLINK UDP prefix.
-    let sdo_payload = match data {
-        // Check for prefix: MessageType(ASnd), Reserved(2), ServiceID(Sdo)
-        [0x06, _, _, 0x05, rest @ ..] => rest,
-        _ => {
-            error!("Invalid or malformed SDO/UDP payload prefix.");
-            // We cannot send an SDO abort because the frame is fundamentally broken.
-            return NodeAction::NoAction;
-        }
-    };
-
-    let client_info = SdoClientInfo::Udp {
-        source_ip,
-        source_port,
-    };
-    let core = context.core_mut();
-    match core
-        .sdo_server
-        .handle_request(sdo_payload, client_info, &mut core.od, current_time_us)
-    {
-        Ok((seq_header, command)) => {
-            match build_udp_from_sdo_response(client_info, seq_header, command) {
-                Ok(action) => action,
-                Err(e) => {
-                    error!("Failed to build SDO/UDP response: {:?}", e);
-                    NodeAction::NoAction
-                }
-            }
-        }
-        Err(e) => {
-            error!("SDO server error (UDP): {:?}", e);
-            NodeAction::NoAction
-        }
-    }
-}
-
 /// Helper to build NodeAction::SendUdp from SdoResponseData.
 #[cfg(feature = "sdo-udp")]
 pub fn build_udp_from_sdo_response(

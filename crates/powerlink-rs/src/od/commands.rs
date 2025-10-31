@@ -1,7 +1,6 @@
 // crates/powerlink-rs/src/od/commands.rs
-use super::{AccessType, Object, ObjectDictionary, ObjectValue};
+use super::{AccessType, Object, ObjectDictionary};
 use crate::PowerlinkError;
-use crate::hal::ObjectDictionaryStorage;
 use alloc::collections::BTreeMap;
 use log::{error, trace};
 
@@ -92,8 +91,7 @@ pub fn restore_defaults(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::od::{Category, ObjectEntry};
-    use alloc::string::ToString;
+    use crate::{od::{Category, ObjectEntry, ObjectValue}, ObjectDictionaryStorage};
     use alloc::vec;
 
     struct MockStorage {

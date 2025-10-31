@@ -1,13 +1,10 @@
-// crates/powerlink-rs/src/node/mn/state.rs
 use crate::ErrorHandler;
-use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
 use crate::nmt::events::NmtCommand;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
-use crate::node::{CoreNodeContext, NodeContext, PdoHandler}; // Import CoreNodeContext
+use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
 use crate::od::ObjectDictionary;
-use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;

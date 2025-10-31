@@ -1,4 +1,3 @@
-use super::cycle;
 use super::events;
 use super::scheduler;
 use super::state::{CnInfo, CyclePhase, MnContext};
@@ -12,8 +11,7 @@ use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{
-    CoreNodeContext, Node, NodeAction, build_asnd_from_sdo_response, build_udp_from_sdo_response,
-}; // Import CoreNodeContext
+    CoreNodeContext, Node, NodeAction, build_asnd_from_sdo_response};
 use crate::od::{Object, ObjectDictionary, ObjectValue};
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::{SdoClient, SdoServer};
@@ -213,13 +211,6 @@ impl<'s> ManagingNode<'s> {
         events::process_frame(&mut self.context, frame, current_time_us);
         // General event processing does not return an immediate action.
         NodeAction::NoAction
-    }
-
-    /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
-    // This function is now pub(super) and its logic is in cycle.rs
-    // It's still called by scheduler::tick, which is fine.
-    pub(super) fn advance_cycle_phase(&mut self, current_time_us: u64) -> NodeAction {
-        cycle::advance_cycle_phase(&mut self.context, current_time_us)
     }
 }
 

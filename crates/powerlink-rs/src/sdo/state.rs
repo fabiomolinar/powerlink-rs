@@ -3,7 +3,7 @@ use crate::od::ObjectDictionary;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::{PowerlinkError, od::ObjectValue};
 use alloc::vec::Vec;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 
 // Constants moved from server.rs
 const MAX_EXPEDITED_PAYLOAD: usize = 1452;

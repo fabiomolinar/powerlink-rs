@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/sdo/command/base.rs
 use crate::PowerlinkError;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::convert::TryFrom;
 

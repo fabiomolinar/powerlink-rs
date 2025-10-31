@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/node/mn/events.rs
 use super::scheduler;
-use super::state::{AsyncRequest, CnInfo, CnState, CyclePhase, MnContext};
+use super::state::{AsyncRequest, CnState, CyclePhase, MnContext};
 use crate::frame::{
     ASndFrame, DllMsEvent, PResFrame, PowerlinkFrame, ServiceId,
     error::{DllError, ErrorEntry, ErrorEntryMode, NmtAction, StaticErrorBitField},

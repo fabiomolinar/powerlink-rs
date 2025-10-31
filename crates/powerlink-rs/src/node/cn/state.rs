@@ -1,7 +1,6 @@
 // crates/powerlink-rs/src/node/cn/state.rs
 use crate::ErrorHandler;
 use crate::frame::DllCsStateMachine;
-use crate::frame::basic::MacAddress;
 use crate::frame::error::{
     CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler,
 };
@@ -9,7 +8,6 @@ use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtCommand;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler}; // Import CoreNodeContext
 use crate::od::ObjectDictionary;
-use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;

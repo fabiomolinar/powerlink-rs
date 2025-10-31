@@ -3,22 +3,20 @@ use super::state::CnContext;
 use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{
-    CnErrorCounters, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler,
+    CnErrorCounters, DllErrorManager, LoggingErrorHandler,
 };
-use crate::frame::{DllError, NmtAction, PReqFrame, PResFrame, deserialize_frame};
+use crate::frame::{DllError, NmtAction, deserialize_frame};
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{CoreNodeContext, Node, NodeAction, PdoHandler}; // Import CoreNodeContext
+use crate::node::{CoreNodeContext, Node, NodeAction};
 use crate::od::ObjectDictionary;
-#[cfg(feature = "sdo-udp")]
-use crate::sdo::server::SdoClientInfo;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use log::{debug, error, info, trace, warn};
+use log::{error, info, trace, warn};
 
 const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
 
@@ -154,27 +152,7 @@ impl<'s> ControlledNode<'s> {
             _ => NodeAction::NoAction, // Ignore other EtherTypes silently
         }
     }
-
-    /// Consumes the payload of a PReq frame based on RPDO mapping.
-    fn consume_preq_payload(&mut self, preq: &PReqFrame) {
-        // Node ID 0 is reserved for PReq source according to spec and OD usage
-        self.context.consume_pdo_payload(
-            NodeId(0),
-            &preq.payload,
-            preq.pdo_version,
-            preq.flags.rd, // Pass the RD flag
-        );
-    }
-
-    /// Consumes the payload of a PRes frame based on RPDO mapping.
-    fn consume_pres_payload(&mut self, pres: &PResFrame) {
-        self.context.consume_pdo_payload(
-            pres.source, // Source Node ID of the PRes
-            &pres.payload,
-            pres.pdo_version,
-            pres.flags.rd, // Pass the RD flag
-        );
-    }
+    
 }
 
 impl<'s> Node for ControlledNode<'s> {
@@ -410,13 +388,6 @@ mod tests {
         od
     }
 
-    // Helper for creating a CN state machine for tests
-    fn get_test_nmt() -> CnNmtStateMachine {
-        let node_id = NodeId::try_from(42).unwrap();
-        let feature_flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND;
-        CnNmtStateMachine::new(node_id, feature_flags, 5_000_000)
-    }
-
     #[test]
     fn test_from_od_reads_parameters() {
         let od = get_test_od();
@@ -443,9 +414,9 @@ mod tests {
 
     #[test]
     fn test_internal_boot_sequence() {
-        let mut od = get_test_od(); // Use the corrected OD
+        let od = get_test_od(); // Use the corrected OD
         // Create the node, which runs init() and validate() internally
-        let mut node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
+        let node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
         // The constructor already runs run_internal_initialisation.
         assert_eq!(node.nmt_state(), NmtState::NmtNotActive);
         // Verify OD state was updated
@@ -457,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_full_boot_up_happy_path() {
-        let mut od = get_test_od();
+        let od = get_test_od();
         // Create node, runs init, validate, internal_init -> NmtNotActive
         let mut node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
         assert_eq!(node.nmt_state(), NmtState::NmtNotActive);
@@ -499,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_error_handling_transition() {
-        let mut od = get_test_od();
+        let od = get_test_od();
         let mut node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
         // Manually set state to Operational for test
         node.context.nmt_state_machine.current_state = NmtState::NmtOperational;
@@ -520,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_stop_and_restart_node() {
-        let mut od = get_test_od();
+        let od = get_test_od();
         let mut node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
         // Manually set state to Operational
         node.context.nmt_state_machine.current_state = NmtState::NmtOperational;
