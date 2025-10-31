@@ -53,4 +53,13 @@ impl<'s> NodeContext for CnContext<'s> {
     fn is_cn(&self) -> bool {
         true
     }
+    fn core(&self) -> &CoreNodeContext {
+        &self.core
+    }
+    fn core_mut(&mut self) -> &mut CoreNodeContext {
+        &mut self.core
+    }
+    fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine {
+        &self.nmt_state_machine
+    }
 }

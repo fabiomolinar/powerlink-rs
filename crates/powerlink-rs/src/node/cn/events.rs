@@ -429,7 +429,7 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
             #[cfg(feature = "sdo-udp")]
             let build_udp = || {
                 // Pass components to build function
-                build_udp_from_sdo_response(context, client_info, seq_header.clone(), command.clone())
+                build_udp_from_sdo_response(client_info, seq_header.clone(), command.clone())
             };
             #[cfg(not(feature = "sdo-udp"))]
             let build_udp = || {

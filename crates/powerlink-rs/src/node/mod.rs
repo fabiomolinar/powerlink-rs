@@ -8,15 +8,19 @@ pub use mn::ManagingNode;
 pub use pdo_handler::PdoHandler;
 
 use crate::frame::codec::CodecHelpers;
-use crate::frame::PowerlinkFrame;
+use crate::frame::{ASndFrame, PowerlinkFrame, ServiceId};
+use crate::sdo::command::SdoCommand;
+use crate::sdo::sequence::SequenceLayerHeader;
+use crate::sdo::server::SdoClientInfo;
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
 use crate::frame::basic::MacAddress;
 use crate::nmt::states::NmtState;
 use crate::od::ObjectDictionary;
-use crate::sdo::{SdoClient, SdoServer};
+use crate::sdo::{asnd, SdoClient, SdoServer};
 use crate::{NodeId, PowerlinkError};
 use alloc::vec::Vec;
+use alloc::vec;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::udp::serialize_sdo_udp_payload;
 
@@ -78,6 +82,9 @@ pub trait NodeContext {
     fn is_mn(&self) -> bool {
         !self.is_cn()
     }
+    fn core(&self) -> &CoreNodeContext;
+    fn core_mut(&mut self) -> &mut CoreNodeContext;
+    fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine;
 }
 
 /// Helper to serialize a PowerlinkFrame (Ethernet) and prepare the NodeAction.
@@ -147,7 +154,7 @@ pub(super) fn serialize_frame_action(
 
 /// Helper to build ASnd frame from SdoResponseData.
 fn build_asnd_from_sdo_response(
-    context: &NodeContext,
+    context: &impl NodeContext,
     client_info: SdoClientInfo,
     seq_header: SequenceLayerHeader,
     command: SdoCommand,
@@ -167,10 +174,10 @@ fn build_asnd_from_sdo_response(
 
     let sdo_payload = asnd::serialize_sdo_asnd_payload(seq_header, command)?;
     let asnd_frame = ASndFrame::new(
-        context.core.mac_address,
+        context.core().mac_address,
         source_mac,
         source_node_id,
-        context.nmt_state_machine.node_id,
+        context.nmt_state_machine().node_id(),
         ServiceId::Sdo,
         sdo_payload,
     );
@@ -187,12 +194,14 @@ fn build_asnd_from_sdo_response(
 /// Processes an SDO request received over UDP.
 #[cfg(feature = "sdo-udp")]
 fn process_udp_packet(
-    &mut impl context: NodeContext,
+    context: &mut impl NodeContext,
     data: &[u8],
     source_ip: crate::types::IpAddress,
     source_port: u16,
     current_time_us: u64,
 ) -> NodeAction {
+    use log::debug;
+
     debug!(
         "Received UDP SDO request from {}:{} ({} bytes)",
         core::net::Ipv4Addr::from(source_ip),
@@ -216,10 +225,10 @@ fn process_udp_packet(
         source_ip,
         source_port,
     };
-    match context.core.sdo_server.handle_request(
+    match context.core().sdo_server.handle_request(
         sdo_payload,
         client_info,
-        &mut context.core.od,
+        &mut context.core().od,
         current_time_us,
     ) {
         Ok((seq_header, command)) => {
@@ -271,4 +280,3 @@ fn build_udp_from_sdo_response(
         data: udp_buffer,
     })
 }
-

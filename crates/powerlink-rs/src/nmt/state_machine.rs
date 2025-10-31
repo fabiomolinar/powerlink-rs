@@ -2,11 +2,15 @@ use super::events::NmtEvent;
 use super::states::NmtState;
 use crate::frame::DllError;
 use crate::od::{ObjectDictionary, ObjectValue};
+use crate::NodeId;
 use alloc::vec::Vec;
 use log::info;
 
 /// A trait defining the common behavior for all NMT state machines (MN and CN).
 pub trait NmtStateMachine {
+    /// Returns the Node ID associated with this NMT state machine.
+    fn node_id(&self) -> NodeId;
+
     /// Returns the current NMT state.
     fn current_state(&self) -> NmtState;
 

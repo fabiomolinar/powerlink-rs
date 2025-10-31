@@ -69,6 +69,10 @@ impl CnNmtStateMachine {
 }
 
 impl NmtStateMachine for CnNmtStateMachine {
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+
     fn current_state(&self) -> NmtState {
         self.current_state
     }

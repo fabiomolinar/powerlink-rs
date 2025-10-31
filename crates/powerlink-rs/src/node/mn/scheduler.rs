@@ -370,7 +370,6 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             let build_udp = || {
                 // Pass components to build function
                 build_udp_from_sdo_response(
-                    context,
                     client_info, // No clone needed here
                     seq_header.clone(),
                     command.clone(),
