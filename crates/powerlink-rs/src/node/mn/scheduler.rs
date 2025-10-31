@@ -640,13 +640,6 @@ pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option
             if mac_bytes.len() >= 6 && mac_bytes[0..6].iter().any(|&b| b != 0) {
                 return Some(MacAddress(mac_bytes[0..6].try_into().unwrap()));
             }
-        } else if let Some(ObjectValue::Unsigned32(mac_val_u32)) = entries.get(node_id.0 as usize) {
-            // Fallback for old (incorrect) implementation that used U32
-            warn!("Reading MAC address from U32, OD 0x1F84 should use OctetString.");
-            let mac_bytes = mac_val_u32.to_le_bytes();
-            if mac_bytes[0..6].iter().any(|&b| b != 0) {
-                return Some(MacAddress(mac_bytes[0..6].try_into().unwrap()));
-            }
         }
     }
     None
