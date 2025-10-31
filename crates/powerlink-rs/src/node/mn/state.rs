@@ -5,6 +5,9 @@ use crate::nmt::events::NmtCommand;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
 use crate::od::ObjectDictionary;
+use crate::sdo::transport::AsndTransport;
+#[cfg(feature = "sdo-udp")]
+use crate::sdo::transport::UdpTransport;
 use crate::types::NodeId;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
@@ -17,6 +20,11 @@ pub struct MnContext<'s> {
     pub dll_state_machine: DllMsStateMachine,
     // dll_error_manager is separated due to its generic parameters
     pub dll_error_manager: DllErrorManager<MnErrorCounters, LoggingErrorHandler>,
+    /// SDO transport handler for ASnd.
+    pub asnd_transport: AsndTransport,
+    /// SDO transport handler for UDP.
+    #[cfg(feature = "sdo-udp")]
+    pub udp_transport: UdpTransport,
     pub cycle_time_us: u64,
     // ... rest of the fields remain the same ...
     pub multiplex_cycle_len: u8,

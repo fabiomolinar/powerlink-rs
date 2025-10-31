@@ -10,15 +10,11 @@ pub use pdo_handler::PdoHandler;
 
 use crate::frame::basic::MacAddress;
 use crate::frame::codec::CodecHelpers;
-use crate::frame::{ASndFrame, PowerlinkFrame, ServiceId};
+use crate::frame::PowerlinkFrame;
 use crate::nmt::states::NmtState;
 use crate::od::ObjectDictionary;
-use crate::sdo::command::SdoCommand;
-use crate::sdo::sequence::SequenceLayerHeader;
-use crate::sdo::server::SdoClientInfo;
-#[cfg(feature = "sdo-udp")]
-use crate::sdo::udp::serialize_sdo_udp_payload;
-use crate::sdo::{SdoClient, SdoServer, asnd};
+use crate::sdo::SdoClient;
+use crate::sdo::SdoServer;
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
 use crate::{NodeId, PowerlinkError};
@@ -90,9 +86,9 @@ pub trait NodeContext<'s> {
 
 /// Helper to serialize a PowerlinkFrame (Ethernet) and prepare the NodeAction.
 /// This function is now shared by both CN and MN logic.
-pub(super) fn serialize_frame_action<'s>(
+pub(super) fn serialize_frame_action<'a>(
     frame: PowerlinkFrame,
-    context: &impl NodeContext<'s>,
+    context: &impl NodeContext<'a>,
 ) -> Result<NodeAction, PowerlinkError> {
     let mut buf = vec![0u8; 1518];
     let eth_header;
@@ -147,79 +143,4 @@ pub(super) fn serialize_frame_action<'s>(
             Err(e)
         }
     }
-}
-
-/// Helper to build ASnd frame from SdoResponseData.
-fn build_asnd_from_sdo_response<'s>(
-    context: &impl NodeContext<'s>,
-    client_info: SdoClientInfo,
-    seq_header: SequenceLayerHeader,
-    command: SdoCommand,
-) -> Result<NodeAction, PowerlinkError> {
-    let (source_node_id, source_mac) = match client_info {
-        SdoClientInfo::Asnd {
-            source_node_id,
-            source_mac,
-        } => (source_node_id, source_mac),
-        #[cfg(feature = "sdo-udp")]
-        SdoClientInfo::Udp { .. } => {
-            return Err(PowerlinkError::InternalError(
-                "Attempted to build ASnd response for UDP client",
-            ));
-        }
-    };
-
-    let sdo_payload = asnd::serialize_sdo_asnd_payload(seq_header, command)?;
-    let asnd_frame = ASndFrame::new(
-        context.core().mac_address,
-        source_mac,
-        source_node_id,
-        context.nmt_state_machine().node_id(),
-        ServiceId::Sdo,
-        sdo_payload,
-    );
-    info!(
-        "[MN] Sending SDO response via ASnd to Node {}",
-        source_node_id.0
-    );
-    Ok(
-        serialize_frame_action(PowerlinkFrame::ASnd(asnd_frame), context).unwrap_or(
-            // TODO: handle error properly
-            NodeAction::NoAction,
-        ),
-    )
-}
-
-/// Helper to build NodeAction::SendUdp from SdoResponseData.
-#[cfg(feature = "sdo-udp")]
-pub fn build_udp_from_sdo_response(
-    client_info: SdoClientInfo,
-    seq_header: SequenceLayerHeader,
-    command: SdoCommand,
-) -> Result<NodeAction, PowerlinkError> {
-    let (source_ip, source_port) = match client_info {
-        SdoClientInfo::Udp {
-            source_ip,
-            source_port,
-        } => (source_ip, source_port),
-        SdoClientInfo::Asnd { .. } => {
-            return Err(PowerlinkError::InternalError(
-                "Attempted to build UDP response for ASnd client",
-            ));
-        }
-    };
-
-    let mut udp_buffer = vec![0u8; 1500]; // MTU size
-    let udp_payload_len = serialize_sdo_udp_payload(seq_header, command, &mut udp_buffer)?;
-    udp_buffer.truncate(udp_payload_len);
-    info!(
-        "Sending SDO response via UDP to {}:{}",
-        core::net::Ipv4Addr::from(source_ip),
-        source_port
-    );
-    Ok(NodeAction::SendUdp {
-        dest_ip: source_ip,
-        dest_port: source_port,
-        data: udp_buffer,
-    })
 }

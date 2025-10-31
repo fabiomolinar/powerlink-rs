@@ -1,19 +1,20 @@
 use super::events;
 use super::state::CnContext;
-use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
-use crate::frame::error::{
-    CnErrorCounters, DllErrorManager, LoggingErrorHandler,
-};
-use crate::frame::{DllError, NmtAction, deserialize_frame};
+use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler};
+use crate::frame::{deserialize_frame, DllError, NmtAction};
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction};
 use crate::od::ObjectDictionary;
+use crate::sdo::transport::AsndTransport;
+#[cfg(feature = "sdo-udp")]
+use crate::sdo::transport::UdpTransport;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use crate::PowerlinkError;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use log::{error, info, trace, warn};
@@ -65,6 +66,9 @@ impl<'s> ControlledNode<'s> {
                     CnErrorCounters::new(),
                     LoggingErrorHandler,
                 ),
+                asnd_transport: AsndTransport,
+                #[cfg(feature = "sdo-udp")]
+                udp_transport: UdpTransport,
                 pending_nmt_requests: Vec::new(),
                 emergency_queue: VecDeque::with_capacity(10), // Default capacity for 10 errors
                 last_soc_reception_time_us: 0,
@@ -152,7 +156,6 @@ impl<'s> ControlledNode<'s> {
             _ => NodeAction::NoAction, // Ignore other EtherTypes silently
         }
     }
-    
 }
 
 impl<'s> Node for ControlledNode<'s> {

@@ -1,21 +1,25 @@
 use super::events;
 use super::scheduler;
 use super::state::{CnInfo, CyclePhase, MnContext};
-use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::{
-    DllMsStateMachine, PowerlinkFrame, ServiceId, deserialize_frame,
+    deserialize_frame,
     error::{DllError, DllErrorManager, LoggingErrorHandler, MnErrorCounters},
+    DllMsStateMachine, PowerlinkFrame, ServiceId,
 };
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{
-    CoreNodeContext, Node, NodeAction, build_asnd_from_sdo_response};
+use crate::node::{CoreNodeContext, Node, NodeAction};
 use crate::od::{Object, ObjectDictionary, ObjectValue};
 use crate::sdo::server::SdoClientInfo;
+use crate::sdo::transport::AsndTransport;
+#[cfg(feature = "sdo-udp")]
+use crate::sdo::transport::UdpTransport;
+use crate::sdo::SdoTransport;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
+use crate::PowerlinkError;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
 use log::{debug, error, info, warn};
@@ -100,6 +104,9 @@ impl<'s> ManagingNode<'s> {
             nmt_state_machine,
             dll_state_machine: DllMsStateMachine::new(),
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
+            asnd_transport: AsndTransport,
+            #[cfg(feature = "sdo-udp")]
+            udp_transport: UdpTransport,
             cycle_time_us,
             multiplex_cycle_len,
             multiplex_assign,
@@ -185,13 +192,12 @@ impl<'s> ManagingNode<'s> {
                     &mut self.context.core.od,
                     current_time_us,
                 ) {
-                    Ok((seq_header, command)) => {
-                        return match build_asnd_from_sdo_response(
-                            &mut self.context,
-                            client_info,
-                            seq_header,
-                            command,
-                        ) {
+                    Ok(response_data) => {
+                        return match self
+                            .context
+                            .asnd_transport
+                            .build_response(response_data, &self.context)
+                        {
                             Ok(action) => action,
                             Err(e) => {
                                 error!("Failed to build SDO/ASnd response: {:?}", e);

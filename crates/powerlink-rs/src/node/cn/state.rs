@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/cn/state.rs
 use crate::ErrorHandler;
 use crate::frame::DllCsStateMachine;
 use crate::frame::error::{
@@ -8,6 +7,9 @@ use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtCommand;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler}; // Import CoreNodeContext
 use crate::od::ObjectDictionary;
+use crate::sdo::transport::{AsndTransport, SdoTransport};
+#[cfg(feature = "sdo-udp")]
+use crate::sdo::transport::UdpTransport;
 use crate::types::NodeId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -19,6 +21,11 @@ pub struct CnContext<'s> {
     pub dll_state_machine: DllCsStateMachine,
     // dll_error_manager is separated due to its generic parameters
     pub dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
+    /// SDO transport handler for ASnd.
+    pub asnd_transport: AsndTransport,
+    /// SDO transport handler for UDP.
+    #[cfg(feature = "sdo-udp")]
+    pub udp_transport: UdpTransport,
     /// Queue for NMT commands this CN wants the MN to execute.
     pub pending_nmt_requests: Vec<(NmtCommand, NodeId)>,
     /// Queue for detailed error/event entries to be reported in StatusResponse.

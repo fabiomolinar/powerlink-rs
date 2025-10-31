@@ -8,13 +8,12 @@ use crate::frame::{
     ASndFrame, DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId, SocFrame,
 };
 use crate::nmt::events::{NmtCommand, NmtEvent};
-use crate::nmt::{NmtStateMachine, states::NmtState};
+use crate::nmt::{states::NmtState, NmtStateMachine};
 use crate::node::mn::state::{CnInfo, CnState, CyclePhase};
-use crate::node::{
-    NodeAction, build_asnd_from_sdo_response, build_udp_from_sdo_response, serialize_frame_action,
-};
+use crate::node::{serialize_frame_action, NodeAction};
 use crate::od::{Object, ObjectValue};
 use crate::sdo::server::SdoClientInfo;
+use crate::sdo::transport::SdoTransport;
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
 use log::{debug, error, info, trace, warn};
 
@@ -302,7 +301,10 @@ pub(super) fn get_next_isochronous_node_to_poll(
                 // Found a valid node to poll in this cycle
                 trace!(
                     "[MN] Polling Node {} (State: {:?}, MuxCycle: {}) in mux cycle {}",
-                    node_id.0, state, assigned_cycle, current_multiplex_cycle
+                    node_id.0,
+                    state,
+                    assigned_cycle,
+                    current_multiplex_cycle
                 );
                 return Some(node_id);
             } else {
@@ -314,7 +316,9 @@ pub(super) fn get_next_isochronous_node_to_poll(
         } else {
             trace!(
                 "[MN] Skipping Node {} (assigned mux cycle {}) in current mux cycle {}.",
-                node_id.0, assigned_cycle, current_multiplex_cycle
+                node_id.0,
+                assigned_cycle,
+                current_multiplex_cycle
             );
         }
         // If the node is not in a pollable state or not for this cycle, the loop continues
@@ -356,37 +360,20 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
         .sdo_server
         .tick(current_time_us, &context.core.od)
     {
-        // `tick` now returns the components directly
-        Ok(Some((client_info, seq_header, command))) => {
-            #[cfg(feature = "sdo-udp")]
-            let build_udp = || {
-                // Pass components to build function
-                build_udp_from_sdo_response(
-                    client_info, // No clone needed here
-                    seq_header.clone(),
-                    command.clone(),
-                )
-            };
-            #[cfg(not(feature = "sdo-udp"))]
-            let build_udp = || {
-                Err::<NodeAction, PowerlinkError>(PowerlinkError::InternalError(
-                    "UDP feature disabled",
-                ))
+        Ok(Some(response_data)) => {
+            let build_result = match response_data.client_info {
+                SdoClientInfo::Asnd { .. } => context
+                    .asnd_transport
+                    .build_response(response_data, context),
+                #[cfg(feature = "sdo-udp")]
+                SdoClientInfo::Udp { .. } => context
+                    .udp_transport
+                    .build_response(response_data, context),
             };
 
-            match client_info {
-                SdoClientInfo::Asnd { .. } => {
-                    // Pass components to build function
-                    match build_asnd_from_sdo_response(context, client_info, seq_header, command) {
-                        Ok(action) => return action,
-                        Err(e) => error!("[MN] Failed to build SDO Abort ASnd frame: {:?}", e),
-                    }
-                }
-                #[cfg(feature = "sdo-udp")]
-                SdoClientInfo::Udp { .. } => match build_udp() {
-                    Ok(action) => return action,
-                    Err(e) => error!("[MN] Failed to build SDO Abort UDP frame: {:?}", e),
-                },
+            match build_result {
+                Ok(action) => return action,
+                Err(e) => error!("[MN] Failed to build SDO response from tick: {:?}", e),
             }
         }
         Err(e) => error!("[MN] SDO Server tick error: {:?}", e),
