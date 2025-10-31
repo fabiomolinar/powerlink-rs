@@ -7,7 +7,7 @@ use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtCommand;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler}; // Import CoreNodeContext
 use crate::od::ObjectDictionary;
-use crate::sdo::transport::{AsndTransport, SdoTransport};
+use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
 use crate::types::NodeId;
