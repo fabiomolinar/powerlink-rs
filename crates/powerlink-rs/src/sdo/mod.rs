@@ -13,4 +13,6 @@ pub mod udp;
 pub use client::SdoClient;
 pub use command::SdoCommandHandler;
 pub use server::SdoServer;
-pub use transport::{SdoResponseData, SdoTransport};
+pub use transport::{AsndTransport, SdoResponseData, SdoTransport};
+#[cfg(feature = "sdo-udp")]
+pub use transport::UdpTransport;
