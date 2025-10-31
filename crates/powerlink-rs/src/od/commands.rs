@@ -91,7 +91,10 @@ pub fn restore_defaults(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{od::{Category, ObjectEntry, ObjectValue}, ObjectDictionaryStorage};
+    use crate::{
+        ObjectDictionaryStorage,
+        od::{Category, ObjectEntry, ObjectValue},
+    };
     use alloc::vec;
 
     struct MockStorage {

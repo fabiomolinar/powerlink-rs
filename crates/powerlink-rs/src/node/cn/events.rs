@@ -8,7 +8,7 @@ use crate::frame::{
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{serialize_frame_action, NodeAction};
+use crate::node::{NodeAction, serialize_frame_action};
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
@@ -156,8 +156,7 @@ pub(super) fn process_frame(
                     } else {
                         trace!(
                             "Received mismatched EA flag ({}, EN is {}) from MN in PReq.",
-                            preq.flags.ea,
-                            context.en_flag
+                            preq.flags.ea, context.en_flag
                         );
                     }
                 }
@@ -174,8 +173,7 @@ pub(super) fn process_frame(
                     context.ec_flag = soa.flags.er;
                     trace!(
                         "Processed SoA flags: ER={}, EC set to {}",
-                        soa.flags.er,
-                        context.ec_flag
+                        soa.flags.er, context.ec_flag
                     );
                     if soa.flags.ea == context.en_flag {
                         trace!(
@@ -185,8 +183,7 @@ pub(super) fn process_frame(
                     } else {
                         trace!(
                             "Received mismatched EA flag ({}, EN is {}) from MN in SoA.",
-                            soa.flags.ea,
-                            context.en_flag
+                            soa.flags.ea, context.en_flag
                         );
                     }
                 }
@@ -439,9 +436,9 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
         Ok(Some(response_data)) => {
             // SDO server generated a response (e.g., abort). Build the action.
             let build_result = match response_data.client_info {
-                SdoClientInfo::Asnd { .. } => {
-                    context.asnd_transport.build_response(response_data, context)
-                }
+                SdoClientInfo::Asnd { .. } => context
+                    .asnd_transport
+                    .build_response(response_data, context),
                 #[cfg(feature = "sdo-udp")]
                 SdoClientInfo::Udp { .. } => {
                     context.udp_transport.build_response(response_data, context)
@@ -487,8 +484,7 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     // --- A deadline has passed ---
     trace!(
         "Tick deadline reached at {}us (Deadline was {:?})",
-        current_time_us,
-        context.next_tick_us
+        current_time_us, context.next_tick_us
     );
     context.next_tick_us = None; // Consume the deadline
 

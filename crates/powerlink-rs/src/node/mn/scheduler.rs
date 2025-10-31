@@ -8,9 +8,9 @@ use crate::frame::{
     ASndFrame, DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId, SocFrame,
 };
 use crate::nmt::events::{NmtCommand, NmtEvent};
-use crate::nmt::{states::NmtState, NmtStateMachine};
+use crate::nmt::{NmtStateMachine, states::NmtState};
 use crate::node::mn::state::{CnInfo, CnState, CyclePhase};
-use crate::node::{serialize_frame_action, NodeAction};
+use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::{Object, ObjectValue};
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
@@ -301,10 +301,7 @@ pub(super) fn get_next_isochronous_node_to_poll(
                 // Found a valid node to poll in this cycle
                 trace!(
                     "[MN] Polling Node {} (State: {:?}, MuxCycle: {}) in mux cycle {}",
-                    node_id.0,
-                    state,
-                    assigned_cycle,
-                    current_multiplex_cycle
+                    node_id.0, state, assigned_cycle, current_multiplex_cycle
                 );
                 return Some(node_id);
             } else {
@@ -316,9 +313,7 @@ pub(super) fn get_next_isochronous_node_to_poll(
         } else {
             trace!(
                 "[MN] Skipping Node {} (assigned mux cycle {}) in current mux cycle {}.",
-                node_id.0,
-                assigned_cycle,
-                current_multiplex_cycle
+                node_id.0, assigned_cycle, current_multiplex_cycle
             );
         }
         // If the node is not in a pollable state or not for this cycle, the loop continues
@@ -366,9 +361,9 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                     .asnd_transport
                     .build_response(response_data, context),
                 #[cfg(feature = "sdo-udp")]
-                SdoClientInfo::Udp { .. } => context
-                    .udp_transport
-                    .build_response(response_data, context),
+                SdoClientInfo::Udp { .. } => {
+                    context.udp_transport.build_response(response_data, context)
+                }
             };
 
             match build_result {

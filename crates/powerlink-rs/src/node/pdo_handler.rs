@@ -95,7 +95,6 @@ pub trait PdoHandler<'s> {
 
         // Find the correct mapping for this source node by searching RPDO Comm Params (0x14xx)
         let mut mapping_index_opt = None;
-        
 
         for i in 0..256 {
             // Check all possible RPDO channels

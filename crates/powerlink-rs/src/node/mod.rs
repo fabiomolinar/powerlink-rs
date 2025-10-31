@@ -8,9 +8,9 @@ use log::{error, info, trace};
 pub use mn::ManagingNode;
 pub use pdo_handler::PdoHandler;
 
+use crate::frame::PowerlinkFrame;
 use crate::frame::basic::MacAddress;
 use crate::frame::codec::CodecHelpers;
-use crate::frame::PowerlinkFrame;
 use crate::nmt::states::NmtState;
 use crate::od::ObjectDictionary;
 use crate::sdo::SdoClient;

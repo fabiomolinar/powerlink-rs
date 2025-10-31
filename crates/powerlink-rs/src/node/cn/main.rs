@@ -1,8 +1,9 @@
 use super::events;
 use super::state::CnContext;
+use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler};
-use crate::frame::{deserialize_frame, DllError, NmtAction};
+use crate::frame::{DllError, NmtAction, deserialize_frame};
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
@@ -14,7 +15,6 @@ use crate::sdo::transport::AsndTransport;
 use crate::sdo::transport::UdpTransport;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
-use crate::PowerlinkError;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use log::{error, info, trace, warn};
