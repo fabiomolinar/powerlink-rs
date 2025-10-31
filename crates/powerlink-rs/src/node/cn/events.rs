@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/cn/events.rs
 use super::payload;
 use super::state::CnContext;
 use crate::common::NetTime;
@@ -8,7 +9,7 @@ use crate::frame::{
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{NodeAction, serialize_frame_action};
+use crate::node::{NodeAction, PdoHandler, serialize_frame_action};
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
@@ -156,7 +157,8 @@ pub(super) fn process_frame(
                     } else {
                         trace!(
                             "Received mismatched EA flag ({}, EN is {}) from MN in PReq.",
-                            preq.flags.ea, context.en_flag
+                            preq.flags.ea,
+                            context.en_flag
                         );
                     }
                 }
@@ -173,7 +175,8 @@ pub(super) fn process_frame(
                     context.ec_flag = soa.flags.er;
                     trace!(
                         "Processed SoA flags: ER={}, EC set to {}",
-                        soa.flags.er, context.ec_flag
+                        soa.flags.er,
+                        context.ec_flag
                     );
                     if soa.flags.ea == context.en_flag {
                         trace!(
@@ -183,7 +186,8 @@ pub(super) fn process_frame(
                     } else {
                         trace!(
                             "Received mismatched EA flag ({}, EN is {}) from MN in SoA.",
-                            soa.flags.ea, context.en_flag
+                            soa.flags.ea,
+                            context.en_flag
                         );
                     }
                 }
@@ -299,13 +303,21 @@ pub(super) fn process_frame(
         match &frame {
             PowerlinkFrame::PReq(preq_frame) => {
                 if preq_frame.destination == context.nmt_state_machine.node_id {
-                    // TODO This is a temporary fix, as PdoHandler is not yet implemented for CnContext
-                    // self.consume_preq_payload(preq_frame);
+                    context.consume_pdo_payload(
+                        preq_frame.source,
+                        &preq_frame.payload,
+                        preq_frame.pdo_version,
+                        preq_frame.flags.rd,
+                    );
                 }
             }
-            PowerlinkFrame::PRes(_pres_frame) => {
-                // TODO This is a temporary fix, as PdoHandler is not yet implemented for CnContext
-                // self.consume_pres_payload(pres_frame)
+            PowerlinkFrame::PRes(pres_frame) => {
+                context.consume_pdo_payload(
+                    pres_frame.source,
+                    &pres_frame.payload,
+                    pres_frame.pdo_version,
+                    pres_frame.flags.rd,
+                )
             }
             _ => {}
         }

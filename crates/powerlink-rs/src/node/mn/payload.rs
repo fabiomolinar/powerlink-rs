@@ -1,19 +1,19 @@
 // crates/powerlink-rs/src/node/mn/payload.rs
 use super::scheduler;
 use super::state::MnContext;
-use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
 use crate::frame::control::{SoAFlags, SocFlags};
-use crate::frame::poll::PReqFlags; // Import directly
+use crate::frame::poll::PReqFlags;
 use crate::frame::{
     ASndFrame, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame,
 };
-use crate::nmt::NmtStateMachine; // Added for nmt_state()
 use crate::nmt::events::NmtCommand;
+use crate::nmt::NmtStateMachine;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId};
+use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, trace, warn};
@@ -88,7 +88,7 @@ pub(super) fn build_preq_frame(
         ));
     };
 
-    // Find TPDO mapping for this CN
+    // Find the TPDO channel configured for this target CN.
     let mut pdo_channel = None;
     for i in 0..256 {
         let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE + i as u16;
@@ -154,13 +154,18 @@ pub(super) fn build_preq_frame(
     }
 }
 
-/// Builds the payload for a TPDO (PReq) frame.
+/// Builds the payload for a TPDO (in this case, for a PReq frame) by reading from the Object Dictionary
+/// based on the configured mapping for a specific TPDO channel.
+///
+/// Returns the payload and the mapping version, or an error if the configuration is invalid.
 pub(super) fn build_tpdo_payload(
     od: &ObjectDictionary,
     channel_index: u8,
 ) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
     let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE + channel_index as u16;
     let mapping_index = OD_IDX_TPDO_MAPP_PARAM_BASE + channel_index as u16;
+
+    // 1. Determine the target Node ID and Mapping Version for this channel from 0x18xx.
     let target_node_id = od
         .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
         .unwrap_or(0);
@@ -169,75 +174,94 @@ pub(super) fn build_tpdo_payload(
             .unwrap_or(0),
     );
 
+    // 2. Get the configured fixed payload size for this PReq from 0x1F8B.
     let payload_limit = od
         .read_u16(OD_IDX_MN_PREQ_PAYLOAD_LIMIT_LIST, target_node_id)
         .unwrap_or(36) as usize;
     let payload_limit = payload_limit.min(crate::types::C_DLL_ISOCHR_MAX_PAYL as usize);
 
+    // 3. Pre-allocate a zero-filled buffer of the fixed payload size.
     let mut payload = vec![0u8; payload_limit];
-    let mut max_offset_len = 0;
 
+    // 4. Read the number of mapped objects from 0x1Axx/0.
     if let Some(ObjectValue::Unsigned8(num_entries)) = od.read(mapping_index, 0).as_deref() {
-        for i in 1..=*num_entries {
-            // ERROR FIX (E0716): Bind the Cow to a variable to extend its lifetime.
-            let Some(entry_cow) = od.read(mapping_index, i) else {
-                warn!(
-                    "[MN] Could not read mapping entry {} for TPDO channel {}",
-                    i, channel_index
-                );
-                continue;
-            };
-            let ObjectValue::Unsigned64(raw_mapping) = *entry_cow else {
-                warn!(
-                    "[MN] Mapping entry {} for TPDO channel {} is not U64",
-                    i, channel_index
-                );
-                continue;
-            };
-            let entry = PdoMappingEntry::from_u64(raw_mapping);
-            let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
-                warn!(
-                    "[MN] Bit-level TPDO mapping not supported for PReq 0x{:04X}/{}",
-                    entry.index, entry.sub_index
-                );
-                continue;
-            };
-            let end_pos = offset + length;
-            if end_pos > payload_limit {
-                error!("TPDO mapping for PReq exceeds payload limit. Mapping invalid.");
-                return Err(PowerlinkError::ValidationError(
-                    "PDO mapping exceeds PReq payload limit",
-                ));
-            }
-            max_offset_len = max_offset_len.max(end_pos);
-            let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
-                warn!(
-                    "[MN] TPDO mapping for PReq 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
-                    entry.index, entry.sub_index
-                );
-                payload[offset..end_pos].fill(0);
-                continue;
-            };
-            let serialized_data = value_cow.serialize();
-            if serialized_data.len() != length {
-                warn!(
-                    "[MN] TPDO mapping for PReq 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes. Truncating/Padding.",
-                    entry.index,
-                    entry.sub_index,
-                    length,
-                    serialized_data.len()
-                );
-                let copy_len = serialized_data.len().min(length);
-                payload[offset..offset + copy_len].copy_from_slice(&serialized_data[..copy_len]);
-                if length > copy_len {
-                    payload[offset + copy_len..end_pos].fill(0);
+        // 5. Iterate through each mapping entry if the mapping is active.
+        if *num_entries > 0 {
+            trace!(
+                "Building MN TPDO for channel {} with {} entries.",
+                channel_index,
+                num_entries
+            );
+            for i in 1..=*num_entries {
+                let Some(entry_cow) = od.read(mapping_index, i) else {
+                    warn!(
+                        "[MN] Could not read mapping entry {} for TPDO channel {}",
+                        i, channel_index
+                    );
+                    continue;
+                };
+                let ObjectValue::Unsigned64(raw_mapping) = *entry_cow else {
+                    warn!(
+                        "[MN] Mapping entry {} for TPDO channel {} is not U64",
+                        i, channel_index
+                    );
+                    continue;
+                };
+
+                let entry = PdoMappingEntry::from_u64(raw_mapping);
+
+                let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
+                    warn!(
+                        "[MN] Bit-level TPDO mapping not supported for PReq 0x{:04X}/{}",
+                        entry.index, entry.sub_index
+                    );
+                    continue;
+                };
+
+                let end_pos = offset + length;
+                if end_pos > payload_limit {
+                    error!(
+                        "[MN] TPDO mapping for PReq exceeds payload limit for Node {}. [E_PDO_MAP_OVERRUN]",
+                        target_node_id
+                    );
+                    return Err(PowerlinkError::PdoMapOverrun);
                 }
-            } else {
-                payload[offset..end_pos].copy_from_slice(&serialized_data);
+
+                let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
+                    warn!(
+                        "[MN] TPDO mapping for PReq 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
+                        entry.index, entry.sub_index
+                    );
+                    // The buffer is already zero-filled, so no action needed.
+                    continue;
+                };
+
+                let serialized_data = value_cow.serialize();
+                if serialized_data.len() != length {
+                    warn!(
+                        "[MN] TPDO mapping for PReq 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes.",
+                        entry.index,
+                        entry.sub_index,
+                        length,
+                        serialized_data.len()
+                    );
+                    let copy_len = serialized_data.len().min(length);
+                    payload[offset..offset + copy_len]
+                        .copy_from_slice(&serialized_data[..copy_len]);
+                } else {
+                    payload[offset..end_pos].copy_from_slice(&serialized_data);
+                }
             }
         }
+    } else {
+        warn!(
+            "[MN] TPDO Mapping object {:#06X} not found or is invalid.",
+            mapping_index
+        );
     }
-    payload.truncate(max_offset_len);
+
+    // The payload size is fixed by payload_limit, not by the last mapped object.
+    // Do not truncate the payload.
     Ok((payload, pdo_version))
 }
 
@@ -250,7 +274,8 @@ pub(super) fn build_soa_frame(
 ) -> PowerlinkFrame {
     trace!(
         "[MN] Building SoA frame with service {:?} for Node {}",
-        req_service, target_node.0
+        req_service,
+        target_node.0
     );
     let epl_version = EPLVersion(
         context

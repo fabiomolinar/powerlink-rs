@@ -1,11 +1,9 @@
 // crates/powerlink-rs/src/node/pdo_handler.rs
-// Refined PDO consumption: Improved logging, error handling for mapping issues.
-
 use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler};
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
-use crate::types::NodeId;
-use log::{error, trace, warn}; // Added error
+use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
+use log::{error, trace, warn};
 
 const OD_IDX_RPDO_COMM_PARAM_BASE: u16 = 0x1400;
 const OD_IDX_RPDO_MAPP_PARAM_BASE: u16 = 0x1600;
@@ -26,8 +24,8 @@ pub trait PdoHandler<'s> {
     /// Helper to update the PDO error logging objects (0x1C80, 0x1C81).
     fn update_pdo_error_object(&mut self, object_index: u16, source_node_id: NodeId) {
         let node_id_val = source_node_id.0;
-        // Do not log for PReq source (0) or invalid/broadcast node IDs
-        if node_id_val == 0 || node_id_val > 254 {
+        // Do not log for the MN or other invalid/broadcast node IDs.
+        if node_id_val == 0 || node_id_val >= C_ADR_MN_DEF_NODE_ID {
             return;
         }
 
@@ -37,7 +35,6 @@ pub trait PdoHandler<'s> {
         let byte_index = (node_id_val - 1) as usize / 8;
         let bit_index = (node_id_val - 1) % 8;
 
-        // Clone the object value to modify it. This is simpler than dealing with mutable borrows.
         if let Some(cow) = self.od().read(object_index, 0) {
             if let ObjectValue::OctetString(mut bytes) = cow.into_owned() {
                 if let Some(byte_to_modify) = bytes.get_mut(byte_index) {
@@ -85,7 +82,7 @@ pub trait PdoHandler<'s> {
                 "Ignoring PDO payload from Node {}: RD flag is not set.",
                 source_node_id.0
             );
-            return; // Data is not valid
+            return;
         }
         trace!(
             "Attempting to consume PDO payload ({} bytes) from Node {}",
@@ -97,29 +94,26 @@ pub trait PdoHandler<'s> {
         let mut mapping_index_opt = None;
 
         for i in 0..256 {
-            // Check all possible RPDO channels
             let comm_param_index = OD_IDX_RPDO_COMM_PARAM_BASE + i as u16;
 
             // Check if this RPDO channel is configured for the source node
-            // Use self.od() which now correctly returns &'s mut
             if let Some(node_id_val) = self
                 .od()
                 .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
             {
-                // Handle PReq case where NodeID in OD is 0
-                let matches_source = (source_node_id.0 == 0 && node_id_val == 0) // PReq mapping
-                                  || (source_node_id.0 != 0 && node_id_val == source_node_id.0); // PRes mapping
+                // PReq from MN is mapped to NodeID 0 in OD; PRes is mapped to the source CN's ID.
+                let matches_source =
+                    (source_node_id.0 == C_ADR_MN_DEF_NODE_ID && node_id_val == 0)
+                        || (source_node_id.0 != 0 && node_id_val == source_node_id.0);
 
                 if matches_source {
                     // Found the correct communication parameter object
                     let expected_version = self
                         .od()
                         .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_VERSION)
-                        .unwrap_or(0); // Default to 0 if not found
+                        .unwrap_or(0);
 
                     // Check PDO Mapping Version (Spec 6.4.2)
-                    // If expected is 0, received must also be 0.
-                    // If expected > 0, received main version must match, received sub >= expected sub.
                     let expected_main = expected_version >> 4;
                     let expected_sub = expected_version & 0x0F;
                     let received_main = received_version.0 >> 4;
@@ -135,19 +129,16 @@ pub trait PdoHandler<'s> {
                             "PDO version mismatch for source Node {}. Expected {}, got {}. Ignoring payload. [E_PDO_MAP_VERS]",
                             source_node_id.0, expected_version, received_version.0
                         );
-                        // Use self.dll_error_manager() - Log error E_PDO_MAP_VERS (Spec 6.4.8.1.1)
                         self.dll_error_manager()
                             .handle_error(DllError::PdoMapVersion {
                                 node_id: source_node_id,
                             });
-                        // Update PDO error object 0x1C80
                         self.update_pdo_error_object(OD_IDX_PDO_ERR_MAP_VERS, source_node_id);
-                        return; // Stop processing this payload due to version mismatch
+                        return;
                     }
 
-                    // Version matches, store the corresponding mapping index
                     mapping_index_opt = Some(OD_IDX_RPDO_MAPP_PARAM_BASE + i as u16);
-                    break; // Found the mapping, exit the loop
+                    break;
                 }
             }
         }
@@ -159,7 +150,7 @@ pub trait PdoHandler<'s> {
                     "No RPDO mapping found or configured for source Node {}.",
                     source_node_id.0
                 );
-                return; // No mapping defined for this source
+                return;
             }
         };
 
@@ -168,67 +159,48 @@ pub trait PdoHandler<'s> {
         if let Some(mapping_cow) = self.od().read(mapping_index, 0) {
             if let ObjectValue::Unsigned8(num_entries) = *mapping_cow {
                 if num_entries == 0 {
-                    trace!(
-                        "RPDO mapping {:#06X} is disabled (0 entries).",
-                        mapping_index
-                    );
                     return;
                 }
                 trace!(
                     "Applying RPDO mapping {:#06X} with {} entries for Node {}",
-                    mapping_index, num_entries, source_node_id.0
+                    mapping_index,
+                    num_entries,
+                    source_node_id.0
                 );
                 for i in 1..=num_entries {
-                    // Use self.od() to read the specific mapping entry (0x16xx / i)
                     if let Some(entry_cow) = self.od().read(mapping_index, i) {
                         if let ObjectValue::Unsigned64(raw_mapping) = *entry_cow {
                             let entry = PdoMappingEntry::from_u64(raw_mapping);
-                            self.apply_rpdo_mapping_entry(&entry, payload, source_node_id);
-                        } else {
-                            warn!(
-                                "RPDO mapping entry {:#06X}/{} is not U64.",
-                                mapping_index, i
-                            );
+                            // If any entry fails, stop processing this PDO entirely.
+                            if self
+                                .apply_rpdo_mapping_entry(&entry, payload, source_node_id)
+                                .is_err()
+                            {
+                                break;
+                            }
                         }
-                    } else {
-                        warn!(
-                            "Could not read RPDO mapping entry {:#06X}/{}.",
-                            mapping_index, i
-                        );
                     }
                 }
-            } else {
-                warn!(
-                    "RPDO mapping object {:#06X} sub-index 0 is not U8.",
-                    mapping_index
-                );
             }
-        } else {
-            warn!(
-                "RPDO mapping object {:#06X} sub-index 0 not found.",
-                mapping_index
-            );
         }
     }
 
     /// Helper for `consume_pdo_payload` to apply a single mapping entry.
-    /// Note: This method needs mutable access to self to call od() and dll_error_manager() mutably.
+    /// Returns a Result to indicate if processing should stop.
     fn apply_rpdo_mapping_entry(
         &mut self,
         entry: &PdoMappingEntry,
         payload: &[u8],
         source_node_id: NodeId,
-    ) {
-        // Assuming byte alignment for now
+    ) -> Result<(), ()> {
         let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
             warn!(
                 "Bit-level RPDO mapping is not supported. Index: 0x{:04X}, SubIndex: {}.",
                 entry.index, entry.sub_index
             );
-            return;
+            return Ok(()); // Continue with next entry
         };
 
-        // Check payload bounds (Spec 6.4.8.1.2 Unexpected End of PDO)
         if payload.len() < offset + length {
             warn!(
                 "RPDO mapping for 0x{:04X}/{} from Node {} is out of bounds. Payload size: {}, expected at least {}. [E_PDO_SHORT_RX]",
@@ -238,63 +210,53 @@ pub trait PdoHandler<'s> {
                 payload.len(),
                 offset + length
             );
-            // Log error E_PDO_SHORT_RX
             self.dll_error_manager()
                 .handle_error(DllError::PdoPayloadShort {
                     node_id: source_node_id,
                 });
-            // Update PDO error object 0x1C81
             self.update_pdo_error_object(OD_IDX_PDO_ERR_SHORT_RX, source_node_id);
-            return; // Ignore this specific mapping entry, but continue with others if any
+            return Err(()); // Stop processing this PDO
         }
 
         let data_slice = &payload[offset..offset + length];
-        // Use self.od() to read the template. Need a separate borrow or clone.
-        // Cloning is simpler here to avoid complex borrow checker issues with self.od().write_internal later.
+        // Cloning is simpler here to avoid complex borrow checker issues with `write_internal`.
         let type_template_option = self
             .od()
             .read(entry.index, entry.sub_index)
-            .map(|cow| cow.into_owned()); // Clone the template value
+            .map(|cow| cow.into_owned());
 
         let Some(type_template) = type_template_option else {
-            // OD entry itself doesn't exist, cannot apply mapping.
-            // This is a configuration error, but potentially recoverable if other mappings are valid.
             warn!(
                 "RPDO mapping for 0x{:04X}/{} failed: OD entry not found.",
                 entry.index, entry.sub_index
             );
-            // Optionally log a configuration error here? Spec doesn't mandate DLL error.
-            return;
+            return Ok(());
         };
 
         match ObjectValue::deserialize(data_slice, &type_template) {
             Ok(value) => {
-                // Check if the received value type matches the OD entry type *exactly*.
-                // This prevents silent type coercion (e.g., a u8 from payload being written to a u16 OD object).
                 if core::mem::discriminant(&value) != core::mem::discriminant(&type_template) {
                     warn!(
                         "RPDO type mismatch after deserialize for 0x{:04X}/{}. Expected {:?}, got {:?}. Value ignored.",
                         entry.index, entry.sub_index, type_template, value
                     );
-                    // This is a form of E_PDO_MAP_OVERRUN or general parameter incompatibility (0x06040043).
-                    // We can signal it as a general PDO mapping error.
                     self.dll_error_manager()
                         .handle_error(DllError::PdoMapVersion {
                             node_id: source_node_id,
                         });
-                    return;
+                    return Err(());
                 }
 
                 trace!(
                     "Applying RPDO: Writing {:?} to 0x{:04X}/{}",
-                    value, entry.index, entry.sub_index
+                    value,
+                    entry.index,
+                    entry.sub_index
                 );
-                // Use self.od() - Write internally, bypassing access checks as this is network input
                 if let Err(e) = self
                     .od()
                     .write_internal(entry.index, entry.sub_index, value, false)
                 {
-                    // This write should ideally not fail if the OD entry exists and types matched.
                     error!(
                         "Critical Error: Failed to write RPDO data to existing OD entry 0x{:04X}/{}: {:?}",
                         entry.index, entry.sub_index, e
@@ -302,18 +264,17 @@ pub trait PdoHandler<'s> {
                 }
             }
             Err(e) => {
-                // Deserialization failed (e.g., wrong length for fixed type)
                 warn!(
                     "Failed to deserialize RPDO data for 0x{:04X}/{}: {:?}. Data slice: {:02X?}",
                     entry.index, entry.sub_index, e, data_slice
                 );
-                // This implies a configuration mismatch (length in mapping vs OD data type).
-                // Signal as E_PDO_SHORT_RX as the payload slice length doesn't match expected type length.
                 self.dll_error_manager()
                     .handle_error(DllError::PdoPayloadShort {
                         node_id: source_node_id,
                     });
+                return Err(());
             }
         }
+        Ok(())
     }
 }

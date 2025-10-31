@@ -8,7 +8,7 @@ use crate::od::ObjectValue;
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::sdo::SdoClient;
 use crate::types::C_ADR_MN_DEF_NODE_ID;
-use crate::{PowerlinkError, od::ObjectDictionary, types::NodeId};
+use crate::{od::ObjectDictionary, types::NodeId, PowerlinkError};
 use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -103,7 +103,7 @@ pub(super) fn build_pres_response(
     nmt_state: NmtState,
     od: &ObjectDictionary,
     sdo_client: &SdoClient,
-    pending_nmt_requests: &[(NmtCommand, NodeId)], // Add NMT request queue
+    pending_nmt_requests: &[(NmtCommand, NodeId)],
     en_flag: bool,
 ) -> PowerlinkFrame {
     debug!("Building PRes in response to PReq for node {}", node_id.0);
@@ -112,15 +112,14 @@ pub(super) fn build_pres_response(
         Ok((payload, version)) => (payload, version, true),
         Err(e) => {
             error!(
-                // Changed to error as this indicates a configuration problem
-                "Failed to build TPDO payload for PRes: {:?}. Sending empty PRes.",
+                "Failed to build TPDO payload for PRes: {:?}. Sending empty PRes with RD=0.",
                 e
             );
             (Vec::new(), PDOVersion(0), false)
         }
     };
 
-    // RD flag is only set if NMT is operational AND the payload was built successfully
+    // The RD flag is set only if the NMT state is Operational AND the PDO payload was built successfully.
     let rd_flag = (nmt_state == NmtState::NmtOperational) && payload_is_valid;
 
     // Check for pending SDO/NMT requests to set RS and PR flags.
@@ -139,7 +138,7 @@ pub(super) fn build_pres_response(
         en: en_flag,
         rs: RSFlag::new(rs_count),
         pr: pr_flag,
-        ..Default::default() // Let ms be false by default
+        ..Default::default()
     };
 
     let pres = PResFrame::new(mac_address, node_id, nmt_state, flags, pdo_version, payload);
@@ -154,11 +153,11 @@ fn build_ident_response_payload(od: &ObjectDictionary) -> Vec<u8> {
 
     // --- Populate fields based on OD values ---
 
-    // Flags (Octet 0-1): PR/RS - Assume none pending for now (needs SdoServer access if implemented)
+    // Flags (Octet 0-1): PR/RS - Assume none pending for now
     // NMTState (Octet 2)
-    payload[2] = od.read_u8(0x1F8C, 0).unwrap_or(0); // Read NMT_CurrNMTState_U8
-    // Reserved (Octet 3)
-    // EPLVersion (Octet 4) - from 0x1F83/0
+    payload[2] = od.read_u8(0x1F8C, 0).unwrap_or(0); // NMT_CurrNMTState_U8
+                                                    // Reserved (Octet 3)
+                                                    // EPLVersion (Octet 4) - from 0x1F83/0
     payload[4] = od.read_u8(0x1F83, 0).unwrap_or(0);
     // Reserved (Octet 5)
     // FeatureFlags (Octets 6-9) - from 0x1F82/0
@@ -218,14 +217,13 @@ fn build_status_response_payload(
     ec_flag: bool,
     emergency_queue: &mut VecDeque<ErrorEntry>,
 ) -> Vec<u8> {
-    // --- Determine max payload size ---
     // The payload limit is defined by AsyncMTU (0x1F98/8), minus ASnd header (4 bytes)
     let mtu = od
         .read_u16(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_MTU)
         .unwrap_or(300) as usize;
     let max_payload_size = mtu.saturating_sub(4);
 
-    // --- Base payload with fixed fields ---
+    // Base payload with fixed fields
     let mut payload = vec![0u8; 14];
     // Octet 0: Flags (EN, EC)
     if en_flag {
@@ -234,15 +232,15 @@ fn build_status_response_payload(
     if ec_flag {
         payload[0] |= 1 << 4;
     }
-    // Octet 1: Flags (PR, RS) - TODO: Needs access to SdoServer state
+    // Octet 1: Flags (PR, RS)
     // Octet 2: NMTState
     payload[2] = od.read_u8(0x1F8C, 0).unwrap_or(0);
     // Octets 3-5: Reserved
     // Octets 6-13: StaticErrorBitField
     payload[6] = od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
-    // Bytes 7-13 are reserved or device specific errors. Keep as zero for now.
+    // Bytes 7-13 are reserved or device specific errors.
 
-    // --- Append Error/Event History Entries from emergency queue ---
+    // Append Error/Event History Entries from emergency queue
     let mut entry_buffer = [0u8; 20]; // Buffer to serialize one entry
     while let Some(entry) = emergency_queue.front() {
         if payload.len() + 20 > max_payload_size {
@@ -289,11 +287,14 @@ fn build_status_response_payload(
     payload
 }
 
-/// Builds the payload for a TPDO (PRes) frame.
-/// Uses mapping 0x1A00 and respects payload limit 0x1F98/5.
+/// Builds the payload for a TPDO (PRes) frame by reading from the Object Dictionary
+/// based on the configured mapping for the CN's PRes (typically TPDO channel 0).
+///
+/// Returns the payload and the mapping version, or an error if the configuration is invalid.
 fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
-    let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE; // Default PRes is 0x1800
-    let mapping_index = OD_IDX_TPDO_MAPP_PARAM_BASE; // Default PRes is 0x1A00
+    // For a CN, the TPDO for PRes is almost always the first channel (0x1800/0x1A00).
+    let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE;
+    let mapping_index = OD_IDX_TPDO_MAPP_PARAM_BASE;
 
     // 1. Get Mapping Version from 0x1800/2
     let pdo_version = PDOVersion(
@@ -301,113 +302,97 @@ fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), Po
             .unwrap_or(0),
     );
 
-    // 2. Get Payload Limit from 0x1F98/5 (PresActPayloadLimit_U16)
+    // 2. Get the configured payload size limit for this PRes from 0x1F98/5.
     let payload_limit = od
         .read_u16(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_PRES_PAYLOAD_LIMIT)
-        .unwrap_or(36) as usize; // Default to 36 if not found
+        .unwrap_or(36) as usize;
 
-    // Clamp payload_limit to absolute maximum
+    // Clamp to the absolute maximum allowed by the specification.
     let payload_limit = payload_limit.min(crate::types::C_DLL_ISOCHR_MAX_PAYL as usize);
 
-    // Pre-allocate buffer based on the limit
+    // 3. Pre-allocate a buffer of the fixed payload size. The frame will always have this size.
     let mut payload = vec![0u8; payload_limit];
-    let mut max_offset_len = 0; // Track the actual highest byte written
+    let mut max_offset_len = 0; // Track the highest byte written to truncate correctly.
 
-    // 3. Iterate mapping entries from 0x1A00
-    if let Some(mapping_cow) = od.read(mapping_index, 0) {
-        if let ObjectValue::Unsigned8(num_entries) = *mapping_cow {
-            if num_entries > 0 {
-                // Only proceed if mapping is enabled
-                trace!(
-                    "Building TPDO payload using {:#06X} with {} entries.",
-                    mapping_index, num_entries
-                );
-                for i in 1..=num_entries {
-                    if let Some(entry_cow) = od.read(mapping_index, i) {
-                        if let ObjectValue::Unsigned64(raw_mapping) = *entry_cow {
-                            let entry = PdoMappingEntry::from_u64(raw_mapping);
-
-                            let (Some(offset), Some(length)) =
-                                (entry.byte_offset(), entry.byte_length())
-                            else {
-                                warn!(
-                                    "[CN] Bit-level TPDO mapping not supported for 0x{:04X}/{}",
-                                    entry.index, entry.sub_index
-                                );
-                                continue;
-                            };
-
-                            let end_pos = offset + length;
-
-                            if end_pos > payload_limit {
-                                error!(
-                                    "[CN] TPDO mapping for 0x{:04X}/{} (offset {}, len {}) exceeds PRes payload limit {} bytes. Mapping invalid. [E_PDO_MAP_OVERRUN]",
-                                    entry.index, entry.sub_index, offset, length, payload_limit
-                                );
-                                return Err(PowerlinkError::ValidationError(
-                                    "PDO mapping exceeds PRes payload limit",
-                                ));
-                            }
-                            max_offset_len = max_offset_len.max(end_pos);
-
-                            let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
-                                warn!(
-                                    "[CN] TPDO mapping for 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
-                                    entry.index, entry.sub_index
-                                );
-                                payload[offset..end_pos].fill(0);
-                                continue;
-                            };
-
-                            let serialized_data = value_cow.serialize();
-                            if serialized_data.len() != length {
-                                warn!(
-                                    "[CN] TPDO mapping for 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes. Truncating/Padding.",
-                                    entry.index,
-                                    entry.sub_index,
-                                    length,
-                                    serialized_data.len()
-                                );
-                                let copy_len = serialized_data.len().min(length);
-                                payload[offset..offset + copy_len]
-                                    .copy_from_slice(&serialized_data[..copy_len]);
-                                if length > copy_len {
-                                    payload[offset + copy_len..end_pos].fill(0);
-                                }
-                            } else {
-                                payload[offset..end_pos].copy_from_slice(&serialized_data);
-                            }
-                            trace!(
-                                "[CN] Applied TPDO to PRes: Read {:?} from 0x{:04X}/{}",
-                                value_cow, entry.index, entry.sub_index
-                            );
-                        } else {
-                            warn!("[CN] Mapping entry {} for TPDO (PRes) is not U64", i);
-                        }
-                    } else {
-                        warn!("[CN] Could not read mapping entry {} for TPDO (PRes)", i);
-                    }
-                }
-            } else {
-                trace!(
-                    "[CN] TPDO Mapping {:#06X} is disabled (0 entries).",
-                    mapping_index
-                );
-            }
-        } else {
-            warn!(
-                "[CN] TPDO Mapping object {:#06X} sub-index 0 not found or not U8.",
-                mapping_index
+    // 4. Read the number of mapped objects from 0x1A00/0.
+    if let Some(ObjectValue::Unsigned8(num_entries)) = od.read(mapping_index, 0).as_deref() {
+        if *num_entries > 0 {
+            trace!(
+                "Building TPDO payload using {:#06X} with {} entries.",
+                mapping_index,
+                num_entries
             );
+            // 5. Iterate through each mapping entry.
+            for i in 1..=*num_entries {
+                if let Some(ObjectValue::Unsigned64(raw_mapping)) =
+                    od.read(mapping_index, i).as_deref()
+                {
+                    let entry = PdoMappingEntry::from_u64(*raw_mapping);
+
+                    let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length())
+                    else {
+                        warn!(
+                            "[CN] Bit-level TPDO mapping not supported for 0x{:04X}/{}",
+                            entry.index, entry.sub_index
+                        );
+                        continue;
+                    };
+
+                    let end_pos = offset + length;
+
+                    if end_pos > payload_limit {
+                        error!(
+                            "[CN] TPDO mapping for 0x{:04X}/{} (offset {}, len {}) exceeds PRes payload limit {} bytes. [E_PDO_MAP_OVERRUN]",
+                            entry.index, entry.sub_index, offset, length, payload_limit
+                        );
+                        return Err(PowerlinkError::PdoMapOverrun);
+                    }
+                    max_offset_len = max_offset_len.max(end_pos);
+
+                    let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
+                        warn!(
+                            "[CN] TPDO mapping for 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
+                            entry.index, entry.sub_index
+                        );
+                        // The buffer is already zero-filled, so no action needed.
+                        continue;
+                    };
+
+                    let serialized_data = value_cow.serialize();
+                    if serialized_data.len() != length {
+                        warn!(
+                            "[CN] TPDO mapping for 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes. Truncating/Padding.",
+                            entry.index,
+                            entry.sub_index,
+                            length,
+                            serialized_data.len()
+                        );
+                        let copy_len = serialized_data.len().min(length);
+                        payload[offset..offset + copy_len]
+                            .copy_from_slice(&serialized_data[..copy_len]);
+                    } else {
+                        payload[offset..end_pos].copy_from_slice(&serialized_data);
+                    }
+                    trace!(
+                        "[CN] Applied TPDO to PRes: Read {:?} from 0x{:04X}/{}",
+                        value_cow,
+                        entry.index,
+                        entry.sub_index
+                    );
+                } else {
+                    warn!("[CN] Mapping entry {} for TPDO (PRes) is not U64", i);
+                }
+            }
         }
     } else {
-        warn!("[CN] TPDO Mapping object {:#06X} not found.", mapping_index);
+        warn!(
+            "[CN] TPDO Mapping object {:#06X} not found or is invalid.",
+            mapping_index
+        );
     }
 
-    payload.truncate(max_offset_len);
-    trace!(
-        "[CN] Built PRes payload with actual size: {}",
-        payload.len()
-    );
+    // Even if mappings don't fill the buffer, the payload size is fixed by the limit.
+    // The payload vector is already allocated to this size.
+    trace!("[CN] Built PRes payload with fixed size: {}", payload.len());
     Ok((payload, pdo_version))
 }
