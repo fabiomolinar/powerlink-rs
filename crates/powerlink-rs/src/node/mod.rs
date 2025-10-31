@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/mod.rs
 pub mod cn;
 pub mod mn;
 pub mod pdo_handler;
@@ -77,21 +78,21 @@ pub trait Node {
     fn next_action_time(&self) -> Option<u64>;
 }
 
-pub trait NodeContext {
+pub trait NodeContext<'s> {
     fn is_cn(&self) -> bool;
     fn is_mn(&self) -> bool {
         !self.is_cn()
     }
-    fn core(&self) -> &CoreNodeContext;
-    fn core_mut(&mut self) -> &mut CoreNodeContext;
+    fn core(&self) -> &CoreNodeContext<'s>;
+    fn core_mut(&mut self) -> &mut CoreNodeContext<'s>;
     fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine;
 }
 
 /// Helper to serialize a PowerlinkFrame (Ethernet) and prepare the NodeAction.
 /// This function is now shared by both CN and MN logic.
-pub(super) fn serialize_frame_action(
+pub(super) fn serialize_frame_action<'s>(
     frame: PowerlinkFrame,  
-    context: &impl NodeContext,  
+    context: &impl NodeContext<'s>,  
 ) -> Result<NodeAction, PowerlinkError> {
     let mut buf = vec![0u8; 1518];
     let eth_header;
@@ -153,8 +154,8 @@ pub(super) fn serialize_frame_action(
 }
 
 /// Helper to build ASnd frame from SdoResponseData.
-fn build_asnd_from_sdo_response(
-    context: &impl NodeContext,
+fn build_asnd_from_sdo_response<'s>(
+    context: &impl NodeContext<'s>,
     client_info: SdoClientInfo,
     seq_header: SequenceLayerHeader,
     command: SdoCommand,
@@ -193,8 +194,8 @@ fn build_asnd_from_sdo_response(
 
 /// Processes an SDO request received over UDP.
 #[cfg(feature = "sdo-udp")]
-fn process_udp_packet(
-    context: &mut impl NodeContext,
+fn process_udp_packet<'s>(
+    context: &mut impl NodeContext<'s>,
     data: &[u8],
     source_ip: crate::types::IpAddress,
     source_port: u16,
@@ -225,10 +226,11 @@ fn process_udp_packet(
         source_ip,
         source_port,
     };
-    match context.core().sdo_server.handle_request(
+    let core = context.core_mut();
+    match core.sdo_server.handle_request(
         sdo_payload,
         client_info,
-        &mut context.core().od,
+        &mut core.od,
         current_time_us,
     ) {
         Ok((seq_header, command)) => {

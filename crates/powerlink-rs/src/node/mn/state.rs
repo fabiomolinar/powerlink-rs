@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/mn/state.rs
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
@@ -56,14 +57,14 @@ impl<'s> PdoHandler<'s> for MnContext<'s> {
     }
 }
 
-impl<'s> NodeContext for MnContext<'s> {
+impl<'s> NodeContext<'s> for MnContext<'s> {
     fn is_cn(&self) -> bool {
         false
     }
-    fn core(&self) -> &CoreNodeContext {
+    fn core(&self) -> &CoreNodeContext<'s> {
         &self.core
     }
-    fn core_mut(&mut self) -> &mut CoreNodeContext {
+    fn core_mut(&mut self) -> &mut CoreNodeContext<'s> {
         &mut self.core
     }
     fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine {
