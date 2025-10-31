@@ -2,20 +2,22 @@ use super::cycle;
 use super::events;
 use super::scheduler;
 use super::state::{CnInfo, CyclePhase, MnContext};
+use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::{
-    deserialize_frame, DllMsStateMachine, PowerlinkFrame, ServiceId,
+    DllMsStateMachine, PowerlinkFrame, ServiceId, deserialize_frame,
     error::{DllError, DllErrorManager, LoggingErrorHandler, MnErrorCounters},
 };
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{CoreNodeContext, Node, NodeAction, build_udp_from_sdo_response, build_asnd_from_sdo_response}; // Import CoreNodeContext
+use crate::node::{
+    CoreNodeContext, Node, NodeAction, build_asnd_from_sdo_response, build_udp_from_sdo_response,
+}; // Import CoreNodeContext
 use crate::od::{Object, ObjectDictionary, ObjectValue};
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
-use crate::PowerlinkError;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
 use log::{debug, error, info, warn};
@@ -190,14 +192,14 @@ impl<'s> ManagingNode<'s> {
                             &mut self.context,
                             client_info,
                             seq_header,
-                            command
+                            command,
                         ) {
                             Ok(action) => action,
                             Err(e) => {
                                 error!("Failed to build SDO/ASnd response: {:?}", e);
                                 NodeAction::NoAction
                             }
-                        }
+                        };
                     }
                     Err(e) => {
                         error!("SDO server error (ASnd): {:?}", e);
@@ -276,4 +278,3 @@ impl<'s> Node for ManagingNode<'s> {
         self.context.next_tick_us
     }
 }
-

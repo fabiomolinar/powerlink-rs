@@ -1,7 +1,7 @@
 // crates/powerlink-rs/src/sdo/sequence_handler.rs
+use crate::PowerlinkError;
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::state::SdoServerState;
-use crate::PowerlinkError;
 use log::{debug, error, info, warn};
 
 /// Manages the SDO Sequence Layer logic, including connection state and sequence numbers.

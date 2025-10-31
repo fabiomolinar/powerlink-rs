@@ -2,17 +2,19 @@
 
 use super::payload;
 use super::state::CnContext;
+use crate::PowerlinkError;
 use crate::common::NetTime;
 use crate::frame::codec::CodecHelpers;
 use crate::frame::error::{EntryType, ErrorEntry, ErrorEntryMode};
 use crate::frame::{
-    ASndFrame, DllCsEvent, DllError, NmtAction, PowerlinkFrame,
-    RequestedServiceId, ServiceId,
+    ASndFrame, DllCsEvent, DllError, NmtAction, PowerlinkFrame, RequestedServiceId, ServiceId,
 };
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{serialize_frame_action, NodeAction, build_udp_from_sdo_response, build_asnd_from_sdo_response};
+use crate::node::{
+    NodeAction, build_asnd_from_sdo_response, build_udp_from_sdo_response, serialize_frame_action,
+};
 use crate::sdo::asnd;
 use crate::sdo::command::SdoCommand; // Added import
 use crate::sdo::sequence::SequenceLayerHeader; // Added import
@@ -20,7 +22,6 @@ use crate::sdo::server::SdoClientInfo;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::udp::serialize_sdo_udp_payload;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
-use crate::PowerlinkError;
 use alloc::vec;
 use log::{debug, error, info, trace, warn};
 
@@ -86,10 +87,15 @@ pub(super) fn process_frame(
         context.soc_timeout_check_active = true;
         if context.dll_error_manager.on_cycle_complete() {
             info!("[CN] All DLL errors cleared, resetting Generic Error bit.");
-            let current_err_reg = context.core.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+            let current_err_reg = context
+                .core
+                .od
+                .read_u8(OD_IDX_ERROR_REGISTER, 0)
+                .unwrap_or(0);
             let new_err_reg = current_err_reg & !0b1;
             context
-                .core.od
+                .core
+                .od
                 .write_internal(
                     OD_IDX_ERROR_REGISTER,
                     0,
@@ -100,9 +106,14 @@ pub(super) fn process_frame(
             context.error_status_changed = true;
         }
 
-        let cycle_time_opt = context.core.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64);
+        let cycle_time_opt = context
+            .core
+            .od
+            .read_u32(OD_IDX_CYCLE_TIME, 0)
+            .map(|v| v as u64);
         let tolerance_opt = context
-            .core.od
+            .core
+            .od
             .read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)
             .map(|v| v as u64);
 
@@ -126,7 +137,9 @@ pub(super) fn process_frame(
                 context.soc_timeout_check_active = false;
             }
         } else {
-            warn!("Could not read Cycle Time (0x1006) or SoC Tolerance (0x1C14) from OD. SoC timeout check disabled.");
+            warn!(
+                "Could not read Cycle Time (0x1006) or SoC Tolerance (0x1C14) from OD. SoC timeout check disabled."
+            );
             context.soc_timeout_check_active = false;
         }
     }
@@ -153,8 +166,7 @@ pub(super) fn process_frame(
                     } else {
                         trace!(
                             "Received mismatched EA flag ({}, EN is {}) from MN in PReq.",
-                            preq.flags.ea,
-                            context.en_flag
+                            preq.flags.ea, context.en_flag
                         );
                     }
                 }
@@ -171,16 +183,17 @@ pub(super) fn process_frame(
                     context.ec_flag = soa.flags.er;
                     trace!(
                         "Processed SoA flags: ER={}, EC set to {}",
-                        soa.flags.er,
-                        context.ec_flag
+                        soa.flags.er, context.ec_flag
                     );
                     if soa.flags.ea == context.en_flag {
-                        trace!("Received matching EA flag ({}) from MN in SoA.", soa.flags.ea);
+                        trace!(
+                            "Received matching EA flag ({}) from MN in SoA.",
+                            soa.flags.ea
+                        );
                     } else {
                         trace!(
                             "Received mismatched EA flag ({}, EN is {}) from MN in SoA.",
-                            soa.flags.ea,
-                            context.en_flag
+                            soa.flags.ea, context.en_flag
                         );
                     }
                 }
@@ -229,10 +242,15 @@ pub(super) fn process_frame(
             let (nmt_action, signaled) = context.dll_error_manager.handle_error(error);
             if signaled {
                 context.error_status_changed = true;
-                let current_err_reg = context.core.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                let current_err_reg = context
+                    .core
+                    .od
+                    .read_u8(OD_IDX_ERROR_REGISTER, 0)
+                    .unwrap_or(0);
                 let new_err_reg = current_err_reg | 0b1;
                 context
-                    .core.od
+                    .core
+                    .od
                     .write_internal(
                         OD_IDX_ERROR_REGISTER,
                         0,
@@ -324,54 +342,53 @@ pub(super) fn process_frame(
                         | NmtState::NmtPreOperational2
                         | NmtState::NmtReadyToOperate
                         | NmtState::NmtOperational
-                        | NmtState::NmtCsStopped => {
-                            match soa_frame.req_service_id {
-                                RequestedServiceId::IdentRequest => Some(
-                                    payload::build_ident_response(
-                                        context.core.mac_address,
-                                        context.nmt_state_machine.node_id,
-                                        &context.core.od,
-                                        soa_frame,
-                                    ),
-                                ),
-                                RequestedServiceId::StatusRequest => Some(
-                                    payload::build_status_response(
-                                        context.core.mac_address,
-                                        context.nmt_state_machine.node_id,
-                                        &mut context.core.od,
-                                        context.en_flag,
-                                        context.ec_flag,
-                                        &mut context.emergency_queue,
-                                        soa_frame,
-                                    ),
-                                ),
-                                RequestedServiceId::NmtRequestInvite => context
-                                    .pending_nmt_requests
-                                    .pop()
-                                    .map(|(cmd, tgt)| {
-                                        payload::build_nmt_request(
-                                            context.core.mac_address,
-                                            context.nmt_state_machine.node_id,
-                                            cmd,
-                                            tgt,
-                                            soa_frame,
-                                        )
-                                    }),
-                                RequestedServiceId::UnspecifiedInvite => {
-                                    context.core.sdo_client.pop_pending_request().map(|sdo_payload| {
-                                        PowerlinkFrame::ASnd(ASndFrame::new(
-                                            context.core.mac_address,
-                                            soa_frame.eth_header.source_mac,
-                                            NodeId(C_ADR_MN_DEF_NODE_ID),
-                                            context.nmt_state_machine.node_id,
-                                            ServiceId::Sdo,
-                                            sdo_payload.1,
-                                        ))
-                                    })
-                                }
-                                RequestedServiceId::NoService => None,
+                        | NmtState::NmtCsStopped => match soa_frame.req_service_id {
+                            RequestedServiceId::IdentRequest => {
+                                Some(payload::build_ident_response(
+                                    context.core.mac_address,
+                                    context.nmt_state_machine.node_id,
+                                    &context.core.od,
+                                    soa_frame,
+                                ))
                             }
-                        }
+                            RequestedServiceId::StatusRequest => {
+                                Some(payload::build_status_response(
+                                    context.core.mac_address,
+                                    context.nmt_state_machine.node_id,
+                                    &mut context.core.od,
+                                    context.en_flag,
+                                    context.ec_flag,
+                                    &mut context.emergency_queue,
+                                    soa_frame,
+                                ))
+                            }
+                            RequestedServiceId::NmtRequestInvite => {
+                                context.pending_nmt_requests.pop().map(|(cmd, tgt)| {
+                                    payload::build_nmt_request(
+                                        context.core.mac_address,
+                                        context.nmt_state_machine.node_id,
+                                        cmd,
+                                        tgt,
+                                        soa_frame,
+                                    )
+                                })
+                            }
+                            RequestedServiceId::UnspecifiedInvite => context
+                                .core
+                                .sdo_client
+                                .pop_pending_request()
+                                .map(|sdo_payload| {
+                                    PowerlinkFrame::ASnd(ASndFrame::new(
+                                        context.core.mac_address,
+                                        soa_frame.eth_header.source_mac,
+                                        NodeId(C_ADR_MN_DEF_NODE_ID),
+                                        context.nmt_state_machine.node_id,
+                                        ServiceId::Sdo,
+                                        sdo_payload.1,
+                                    ))
+                                }),
+                            RequestedServiceId::NoService => None,
+                        },
                         _ => None,
                     }
                 } else {
@@ -421,7 +438,11 @@ pub(super) fn process_frame(
 /// Processes a timeout or other periodic check.
 pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> NodeAction {
     // --- SDO Server Tick (handles timeouts/retransmissions) ---
-    match context.core.sdo_server.tick(current_time_us, &context.core.od) {
+    match context
+        .core
+        .sdo_server
+        .tick(current_time_us, &context.core.od)
+    {
         // `tick` now returns the components directly
         Ok(Some((client_info, seq_header, command))) => {
             // SDO server generated an abort frame, needs to be sent.
@@ -488,8 +509,7 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     // --- A deadline has passed ---
     trace!(
         "Tick deadline reached at {}us (Deadline was {:?})",
-        current_time_us,
-        context.next_tick_us
+        current_time_us, context.next_tick_us
     );
     context.next_tick_us = None; // Consume the deadline
 
@@ -521,17 +541,24 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                 if signaled {
                     context.error_status_changed = true;
                     // Update Error Register (0x1001)
-                    let current_err_reg = context.core.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                    let current_err_reg = context
+                        .core
+                        .od
+                        .read_u8(OD_IDX_ERROR_REGISTER, 0)
+                        .unwrap_or(0);
                     let new_err_reg = current_err_reg | 0b1; // Set Generic Error
                     context
-                        .core.od
+                        .core
+                        .od
                         .write_internal(
                             OD_IDX_ERROR_REGISTER,
                             0,
                             crate::od::ObjectValue::Unsigned8(new_err_reg),
                             false,
                         )
-                        .unwrap_or_else(|e| error!("[CN] Failed to update Error Register: {:?}", e));
+                        .unwrap_or_else(|e| {
+                            error!("[CN] Failed to update Error Register: {:?}", e)
+                        });
                 }
                 if nmt_action != NmtAction::None {
                     context
@@ -544,17 +571,22 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
         }
         // Reschedule next check if still active
         if context.soc_timeout_check_active {
-            let cycle_time_opt = context.core.od.read_u32(OD_IDX_CYCLE_TIME, 0).map(|v| v as u64);
+            let cycle_time_opt = context
+                .core
+                .od
+                .read_u32(OD_IDX_CYCLE_TIME, 0)
+                .map(|v| v as u64);
             let tolerance_opt = context
-                .core.od
+                .core
+                .od
                 .read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)
                 .map(|v| v as u64);
 
             if let (Some(cycle_time_us), Some(tolerance_ns)) = (cycle_time_opt, tolerance_opt) {
                 if cycle_time_us > 0 {
-                    let cycles_missed =
-                        ((current_time_us - context.last_soc_reception_time_us) / cycle_time_us)
-                            + 1;
+                    let cycles_missed = ((current_time_us - context.last_soc_reception_time_us)
+                        / cycle_time_us)
+                        + 1;
                     let next_expected_soc_time =
                         context.last_soc_reception_time_us + cycles_missed * cycle_time_us;
                     let next_deadline = next_expected_soc_time + (tolerance_ns / 1000);
@@ -579,9 +611,3 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
 
     NodeAction::NoAction // Default return if no frame needs sending
 }
-
-
-
-
-
-

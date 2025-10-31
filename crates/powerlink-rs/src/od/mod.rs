@@ -162,9 +162,7 @@ impl<'a> ObjectDictionary<'a> {
     ) -> Result<(), PowerlinkError> {
         trace!(
             "Attempting OD write: {:#06X}/{}, Value: {:?}",
-            index,
-            sub_index,
-            value
+            index, sub_index, value
         );
         // Handle special command objects.
         if index == 0x1010 {
@@ -200,8 +198,7 @@ impl<'a> ObjectDictionary<'a> {
                 pdo_validator::validate_pdo_mapping(self, index, new_num_entries)?;
                 trace!(
                     "PDO mapping validation successful for {:#06X}, enabling {} entries.",
-                    index,
-                    new_num_entries
+                    index, new_num_entries
                 );
                 return self.write_internal(index, sub_index, value, false);
             } else {

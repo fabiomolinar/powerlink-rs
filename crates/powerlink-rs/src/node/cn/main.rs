@@ -1,10 +1,11 @@
 use super::events;
 use super::state::CnContext;
+use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{
     CnErrorCounters, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler,
 };
-use crate::frame::{deserialize_frame, DllError, NmtAction, PReqFrame, PResFrame};
+use crate::frame::{DllError, NmtAction, PReqFrame, PResFrame, deserialize_frame};
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
@@ -13,12 +14,11 @@ use crate::node::{CoreNodeContext, Node, NodeAction, PdoHandler}; // Import Core
 use crate::od::ObjectDictionary;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::server::SdoClientInfo;
-use crate::sdo::{SdoServer, SdoClient};
-use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
-use crate::PowerlinkError;
+use crate::sdo::{SdoClient, SdoServer};
+use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use log::{error, info, trace, warn, debug};
+use log::{debug, error, info, trace, warn};
 
 const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
 
@@ -63,7 +63,10 @@ impl<'s> ControlledNode<'s> {
                 core: core_context, // Use the new core context
                 nmt_state_machine,
                 dll_state_machine: Default::default(),
-                dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
+                dll_error_manager: DllErrorManager::new(
+                    CnErrorCounters::new(),
+                    LoggingErrorHandler,
+                ),
                 pending_nmt_requests: Vec::new(),
                 emergency_queue: VecDeque::with_capacity(10), // Default capacity for 10 errors
                 last_soc_reception_time_us: 0,
@@ -86,7 +89,9 @@ impl<'s> ControlledNode<'s> {
 
     /// Allows the application to queue an SDO request payload to be sent.
     pub fn queue_sdo_request(&mut self, payload: Vec<u8>) {
-        self.context.core.queue_sdo_request(NodeId(C_ADR_MN_DEF_NODE_ID), payload);
+        self.context
+            .core
+            .queue_sdo_request(NodeId(C_ADR_MN_DEF_NODE_ID), payload);
     }
 
     /// Allows the application to queue an NMT command request to be sent to the MN.
@@ -100,11 +105,7 @@ impl<'s> ControlledNode<'s> {
     }
 
     /// Processes a POWERLINK Ethernet frame.
-    fn process_ethernet_frame(
-        &mut self,
-        buffer: &[u8],
-        current_time_us: u64,
-    ) -> NodeAction {
+    fn process_ethernet_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
         match deserialize_frame(buffer) {
             Ok(frame) => events::process_frame(&mut self.context, frame, current_time_us),
             Err(e) if e != PowerlinkError::InvalidEthernetFrame => {
@@ -122,8 +123,12 @@ impl<'s> ControlledNode<'s> {
                 if signaled {
                     self.context.error_status_changed = true;
                     // Update Error Register (0x1001), Set Bit 0: Generic Error
-                    let current_err_reg =
-                        self.context.core.od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+                    let current_err_reg = self
+                        .context
+                        .core
+                        .od
+                        .read_u8(OD_IDX_ERROR_REGISTER, 0)
+                        .unwrap_or(0);
                     let new_err_reg = current_err_reg | 0b1;
                     self.context
                         .core
@@ -134,7 +139,9 @@ impl<'s> ControlledNode<'s> {
                             crate::od::ObjectValue::Unsigned8(new_err_reg),
                             false,
                         )
-                        .unwrap_or_else(|e| error!("[CN] Failed to update Error Register: {:?}", e));
+                        .unwrap_or_else(|e| {
+                            error!("[CN] Failed to update Error Register: {:?}", e)
+                        });
                 }
                 // Trigger NMT error handling if required
                 if nmt_action != NmtAction::None {
@@ -176,8 +183,7 @@ impl<'s> Node for ControlledNode<'s> {
     fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
         // --- Try Ethernet Frame Processing ---
         // Check length and EtherType
-        if buffer.len() >= 14 && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
-        {
+        if buffer.len() >= 14 && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes() {
             // Check if we are in BasicEthernet
             if self.nmt_state() == NmtState::NmtBasicEthernet {
                 info!(
@@ -497,7 +503,9 @@ mod tests {
         let mut node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
         // Manually set state to Operational for test
         node.context.nmt_state_machine.current_state = NmtState::NmtOperational;
-        node.context.nmt_state_machine.update_od_state(&mut node.context.core.od);
+        node.context
+            .nmt_state_machine
+            .update_od_state(&mut node.context.core.od);
 
         // NMT_CT11: Trigger internal error
         node.context
@@ -516,7 +524,9 @@ mod tests {
         let mut node = ControlledNode::new(od, MacAddress([0; 6])).unwrap();
         // Manually set state to Operational
         node.context.nmt_state_machine.current_state = NmtState::NmtOperational;
-        node.context.nmt_state_machine.update_od_state(&mut node.context.core.od);
+        node.context
+            .nmt_state_machine
+            .update_od_state(&mut node.context.core.od);
 
         // NMT_CT8: Receive StopNode
         node.context

@@ -1,8 +1,8 @@
 use super::events::NmtEvent;
 use super::states::NmtState;
+use crate::NodeId;
 use crate::frame::DllError;
 use crate::od::{ObjectDictionary, ObjectValue};
-use crate::NodeId;
 use alloc::vec::Vec;
 use log::info;
 

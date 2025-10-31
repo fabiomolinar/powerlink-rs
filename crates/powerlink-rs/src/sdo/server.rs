@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/sdo/server.rs
-use crate::frame::basic::MacAddress;
 use crate::frame::PRFlag;
+use crate::frame::basic::MacAddress;
 use crate::od::ObjectValue;
 use crate::sdo::command::{
     CommandId, CommandLayerHeader, DefaultSdoHandler, ReadByIndexRequest, ReadByNameRequest,
@@ -12,7 +12,7 @@ use crate::sdo::sequence_handler::SdoSequenceHandler;
 use crate::sdo::state::{SdoServerState, SdoTransferState};
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
-use crate::{od::ObjectDictionary, PowerlinkError};
+use crate::{PowerlinkError, od::ObjectDictionary};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -248,7 +248,7 @@ impl SdoServer {
                 debug!("Client ACK received, continuing segmented upload.");
                 let (response_command, is_last) =
                     state.get_next_upload_segment(od, current_time_us);
-                
+
                 // If not last, put state back. If last, transition to Established.
                 if !is_last {
                     *self.sequence_handler.state_mut() = SdoServerState::SegmentedUpload(state);
@@ -300,7 +300,7 @@ impl SdoServer {
 
                 response_header.receive_sequence_number =
                     self.sequence_handler.current_receive_sequence();
-                
+
                 // If this is the end of a transfer, clear client info
                 if response_command.header.segmentation == Segmentation::Expedited
                     || response_command.header.segmentation == Segmentation::Complete
@@ -357,8 +357,7 @@ impl SdoServer {
                     let (response_command, is_last) =
                         state.get_next_upload_segment(od, current_time_us);
                     if !is_last {
-                        *self.sequence_handler.state_mut() =
-                            SdoServerState::SegmentedUpload(state);
+                        *self.sequence_handler.state_mut() = SdoServerState::SegmentedUpload(state);
                     } else {
                         *self.sequence_handler.state_mut() = SdoServerState::Established;
                     }
@@ -973,4 +972,3 @@ impl Default for SdoServer {
         }
     }
 }
-

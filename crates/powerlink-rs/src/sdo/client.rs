@@ -51,4 +51,3 @@ impl SdoClient {
         self.pending_client_requests.is_empty()
     }
 }
-

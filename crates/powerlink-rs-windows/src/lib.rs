@@ -2,9 +2,9 @@
 
 use pnet::datalink::{self, Channel, NetworkInterface as PnetInterface};
 use powerlink_rs::{
+    NetworkInterface,
     hal::PowerlinkError,
     types::{C_SDO_EPL_PORT, IpAddress},
-    NetworkInterface,
 };
 use std::io;
 use std::net::{SocketAddr, UdpSocket};

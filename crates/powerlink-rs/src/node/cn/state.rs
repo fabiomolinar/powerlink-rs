@@ -1,14 +1,16 @@
 // crates/powerlink-rs/src/node/cn/state.rs
-use crate::frame::basic::MacAddress;
-use crate::frame::error::{CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler};
+use crate::ErrorHandler;
 use crate::frame::DllCsStateMachine;
+use crate::frame::basic::MacAddress;
+use crate::frame::error::{
+    CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler,
+};
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtCommand;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler}; // Import CoreNodeContext
 use crate::od::ObjectDictionary;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::NodeId;
-use crate::ErrorHandler;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
@@ -18,7 +20,7 @@ pub struct CnContext<'s> {
     pub nmt_state_machine: CnNmtStateMachine,
     pub dll_state_machine: DllCsStateMachine,
     // dll_error_manager is separated due to its generic parameters
-    pub dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>, 
+    pub dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
     /// Queue for NMT commands this CN wants the MN to execute.
     pub pending_nmt_requests: Vec<(NmtCommand, NodeId)>,
     /// Queue for detailed error/event entries to be reported in StatusResponse.

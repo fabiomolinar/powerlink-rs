@@ -15,11 +15,7 @@ use log::{debug, error, info, trace, warn};
 /// The MN primarily *consumes* PRes and ASnd frames.
 /// This function is now called by `ManagingNode::process_powerlink_frame`
 /// and does not handle SDO frames directly anymore.
-pub(super) fn process_frame(
-    context: &mut MnContext,
-    frame: PowerlinkFrame,
-    current_time_us: u64,
-) {
+pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, current_time_us: u64) {
     // 1. Update NMT state machine based on the frame type.
     if let Some(event) = frame.nmt_event() {
         if context.nmt_state_machine.current_state() != NmtState::NmtNotActive {
@@ -59,8 +55,7 @@ pub(super) fn process_frame(
                 handle_pres_frame(context, &pres_frame);
                 // PRes received, advance to the next action in the cycle.
                 // The action is returned by `tick` in the scheduler, so we don't need to capture it here.
-                let _action =
-                    super::cycle::advance_cycle_phase(context, current_time_us);
+                let _action = super::cycle::advance_cycle_phase(context, current_time_us);
             } else {
                 warn!(
                     "[MN] Received unexpected PRes from Node {}.",

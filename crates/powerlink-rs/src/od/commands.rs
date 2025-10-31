@@ -1,15 +1,12 @@
 // crates/powerlink-rs/src/od/commands.rs
 use super::{AccessType, Object, ObjectDictionary, ObjectValue};
-use crate::hal::ObjectDictionaryStorage;
 use crate::PowerlinkError;
+use crate::hal::ObjectDictionaryStorage;
 use alloc::collections::BTreeMap;
 use log::{error, trace};
 
 /// Collects all storable parameters and tells the storage backend to save them.
-pub fn store_parameters(
-    od: &mut ObjectDictionary,
-    list_to_save: u8,
-) -> Result<(), PowerlinkError> {
+pub fn store_parameters(od: &mut ObjectDictionary, list_to_save: u8) -> Result<(), PowerlinkError> {
     if list_to_save == 0 {
         error!("Attempted to store parameters with invalid sub-index 0.");
         return Err(PowerlinkError::StorageError("Cannot save to sub-index 0"));
@@ -159,10 +156,7 @@ mod tests {
         od.insert(
             0x1800, // Communication object
             ObjectEntry {
-                object: Object::Record(vec![
-                    ObjectValue::Unsigned8(10),
-                    ObjectValue::Unsigned8(1),
-                ]),
+                object: Object::Record(vec![ObjectValue::Unsigned8(10), ObjectValue::Unsigned8(1)]),
                 name: "StorableCommVar",
                 category: Category::Optional,
                 access: Some(AccessType::ReadWriteStore), // Storable
@@ -182,7 +176,7 @@ mod tests {
 
         // Directly test the store_parameters function for Application Params (sub-index 3)
         store_parameters(&mut od, 3).unwrap();
-        
+
         assert_eq!(storage.saved_data.len(), 1);
         assert_eq!(
             storage.saved_data.get(&(0x6000, 0)),
@@ -206,5 +200,4 @@ mod tests {
         // Test invalid sub-index
         assert!(restore_defaults(&mut od, 0).is_err());
     }
-
 }

@@ -1,6 +1,7 @@
 // crates/powerlink-rs/src/node/mn/payload.rs
 use super::scheduler;
 use super::state::MnContext;
+use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
 use crate::frame::control::{SoAFlags, SocFlags};
@@ -8,12 +9,11 @@ use crate::frame::poll::PReqFlags; // Import directly
 use crate::frame::{
     ASndFrame, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame,
 };
-use crate::nmt::events::NmtCommand;
 use crate::nmt::NmtStateMachine; // Added for nmt_state()
+use crate::nmt::events::NmtCommand;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId}; // Added C_ADR_BROADCAST_NODE_ID
-use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -96,7 +96,8 @@ pub(super) fn build_preq_frame(
     for i in 0..256 {
         let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE + i as u16;
         if context
-            .core.od
+            .core
+            .od
             .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
             == Some(target_node_id.0)
         {
@@ -111,8 +112,8 @@ pub(super) fn build_preq_frame(
 
     match payload_result {
         Ok((payload, pdo_version)) => {
-            let rd_flag =
-                context.nmt_state_machine.current_state() == crate::nmt::states::NmtState::NmtOperational;
+            let rd_flag = context.nmt_state_machine.current_state()
+                == crate::nmt::states::NmtState::NmtOperational;
             // Get the last known EA flag for this node
             let ea_flag = context
                 .node_info
@@ -254,7 +255,13 @@ pub(super) fn build_soa_frame(
         "[MN] Building SoA frame with service {:?} for Node {}",
         req_service, target_node.0
     );
-    let epl_version = EPLVersion(context.core.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
+    let epl_version = EPLVersion(
+        context
+            .core
+            .od
+            .read_u8(OD_IDX_EPL_VERSION, 0)
+            .unwrap_or(0x15),
+    );
 
     let mut flags = SoAFlags::default();
     flags.er = set_er_flag;
@@ -278,7 +285,13 @@ pub(super) fn build_soa_ident_request(
         "[MN] Building SoA(IdentRequest) for Node {}",
         target_node_id.0
     );
-    let epl_version = EPLVersion(context.core.od.read_u8(OD_IDX_EPL_VERSION, 0).unwrap_or(0x15));
+    let epl_version = EPLVersion(
+        context
+            .core
+            .od
+            .read_u8(OD_IDX_EPL_VERSION, 0)
+            .unwrap_or(0x15),
+    );
     let req_service = if target_node_id.0 == 0 {
         RequestedServiceId::NoService
     } else {

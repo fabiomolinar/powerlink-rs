@@ -1,9 +1,9 @@
 // crates/powerlink-rs/src/sdo/asnd.rs
 //! Handles serialization of SDO data for ASnd frames.
 
+use crate::PowerlinkError;
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
-use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
 

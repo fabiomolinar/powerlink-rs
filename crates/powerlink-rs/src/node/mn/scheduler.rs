@@ -3,6 +3,7 @@ use super::cycle; // Added for cycle::advance_cycle_phase
 use super::events; // Added for events::handle_dll_event
 use super::payload; // Added for payload::build...
 use super::state::MnContext;
+use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
 use crate::frame::codec::CodecHelpers;
@@ -10,10 +11,12 @@ use crate::frame::{
     ASndFrame, DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId, SocFrame,
 };
 use crate::nmt::events::{NmtCommand, NmtEvent};
-use crate::nmt::{states::NmtState, NmtStateMachine};
-use crate::node::mn::state::{CnInfo, CnState, CyclePhase};
-use crate::node::{NodeAction, serialize_frame_action, build_udp_from_sdo_response, build_asnd_from_sdo_response};
+use crate::nmt::{NmtStateMachine, states::NmtState};
 use crate::node::NodeContext;
+use crate::node::mn::state::{CnInfo, CnState, CyclePhase};
+use crate::node::{
+    NodeAction, build_asnd_from_sdo_response, build_udp_from_sdo_response, serialize_frame_action,
+};
 use crate::od::{Object, ObjectValue};
 use crate::sdo::asnd;
 use crate::sdo::command::SdoCommand; // Added import
@@ -22,7 +25,6 @@ use crate::sdo::server::SdoClientInfo;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::udp::serialize_sdo_udp_payload;
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
-use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -152,9 +154,10 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
                     "[MN] All mandatory nodes PreOperational/ReadyToOp. Triggering NMT transition to ReadyToOp."
                 );
                 // NMT_MT4
-                context
-                    .nmt_state_machine
-                    .process_event(NmtEvent::ConfigurationCompleteCnsReady, &mut context.core.od);
+                context.nmt_state_machine.process_event(
+                    NmtEvent::ConfigurationCompleteCnsReady,
+                    &mut context.core.od,
+                );
             } else {
                 debug!(
                     "[MN] All mandatory nodes PreOperational/ReadyToOp, but waiting for application trigger to enter ReadyToOp."
@@ -332,18 +335,14 @@ pub(super) fn get_next_isochronous_node_to_poll(
 
 /// Helper to check if there are more isochronous nodes to poll in the current cycle.
 /// Does not modify `next_isoch_node_idx`.
-pub(super) fn has_more_isochronous_nodes(
-    context: &MnContext,
-    current_multiplex_cycle: u8,
-) -> bool {
+pub(super) fn has_more_isochronous_nodes(context: &MnContext, current_multiplex_cycle: u8) -> bool {
     // Check remaining nodes in the list from the current index
     for idx in context.next_isoch_node_idx..context.isochronous_nodes.len() {
         let node_id = context.isochronous_nodes[idx];
         let assigned_cycle = context.multiplex_assign.get(&node_id).copied().unwrap_or(0);
         // Corrected multiplex check
         let should_poll_this_cycle = assigned_cycle == 0
-            || (context.multiplex_cycle_len > 0
-                && assigned_cycle == (current_multiplex_cycle + 1));
+            || (context.multiplex_cycle_len > 0 && assigned_cycle == (current_multiplex_cycle + 1));
 
         if should_poll_this_cycle {
             let state = context
@@ -363,7 +362,11 @@ pub(super) fn has_more_isochronous_nodes(
 /// This function was moved from `main.rs`.
 pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     // --- 0. SDO Server Tick (handles timeouts/retransmissions) ---
-    match context.core.sdo_server.tick(current_time_us, &context.core.od) {
+    match context
+        .core
+        .sdo_server
+        .tick(current_time_us, &context.core.od)
+    {
         // `tick` now returns the components directly
         Ok(Some((client_info, seq_header, command))) => {
             #[cfg(feature = "sdo-udp")]
@@ -408,16 +411,17 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
         context.initial_operational_actions_done = true;
         if (context.nmt_state_machine.startup_flags & (1 << 1)) != 0 {
             info!("[MN] Sending NMTStartNode (Broadcast).");
-            return serialize_frame_action(                
+            return serialize_frame_action(
                 payload::build_nmt_command_frame(
                     context,
                     NmtCommand::StartNode,
                     NodeId(C_ADR_BROADCAST_NODE_ID),
                 ),
-                context
-            ).unwrap_or(
+                context,
+            )
+            .unwrap_or(
                 // TODO: Handle error properly
-                NodeAction::NoAction
+                NodeAction::NoAction,
             );
         } else if let Some(&node_id) = context.mandatory_nodes.first() {
             info!("[MN] Queuing NMTStartNode (Unicast).");
@@ -441,16 +445,17 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                 return serialize_frame_action(
                     payload::build_nmt_command_frame(context, command, target_node),
                     context,
-                ).unwrap_or(
+                )
+                .unwrap_or(
                     // TODO: Handle error properly
-                    NodeAction::NoAction 
+                    NodeAction::NoAction,
                 );
             } else if let Some(frame) = context.mn_async_send_queue.pop() {
                 info!("[MN] Sending queued generic async frame.");
                 context.current_phase = CyclePhase::Idle;
                 return serialize_frame_action(frame, context).unwrap_or(
                     // TODO: handler error properly
-                    NodeAction::NoAction
+                    NodeAction::NoAction,
                 );
             } else if let Some((target_node_id, sdo_payload)) =
                 context.pending_sdo_client_requests.pop()
@@ -474,7 +479,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                 );
                 return serialize_frame_action(PowerlinkFrame::ASnd(asnd), context).unwrap_or(
                     // TODO: handle error properly
-                    NodeAction::NoAction
+                    NodeAction::NoAction,
                 );
             } else {
                 warn!("[MN] Was in AwaitingMnAsyncSend, but all send queues are empty.");
@@ -549,8 +554,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
 
         if current_nmt_state >= NmtState::NmtPreOperational1 {
             context.dll_error_manager.on_cycle_complete();
-            if current_nmt_state >= NmtState::NmtPreOperational2
-                && context.multiplex_cycle_len > 0
+            if current_nmt_state >= NmtState::NmtPreOperational2 && context.multiplex_cycle_len > 0
             {
                 context.current_multiplex_cycle =
                     (context.current_multiplex_cycle + 1) % context.multiplex_cycle_len;
@@ -568,10 +572,11 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                             context.current_multiplex_cycle,
                             context.multiplex_cycle_len,
                         ),
-                        context
-                    ).unwrap_or(
+                        context,
+                    )
+                    .unwrap_or(
                         // TODO: handle error properly
-                        NodeAction::NoAction
+                        NodeAction::NoAction,
                     )
                 }
             };
@@ -635,9 +640,7 @@ pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option
             if mac_bytes.len() >= 6 && mac_bytes[0..6].iter().any(|&b| b != 0) {
                 return Some(MacAddress(mac_bytes[0..6].try_into().unwrap()));
             }
-        } else if let Some(ObjectValue::Unsigned32(mac_val_u32)) =
-            entries.get(node_id.0 as usize)
-        {
+        } else if let Some(ObjectValue::Unsigned32(mac_val_u32)) = entries.get(node_id.0 as usize) {
             // Fallback for old (incorrect) implementation that used U32
             warn!("Reading MAC address from U32, OD 0x1F84 should use OctetString.");
             let mac_bytes = mac_val_u32.to_le_bytes();
@@ -648,4 +651,3 @@ pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option
     }
     None
 }
-

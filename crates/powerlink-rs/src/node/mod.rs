@@ -8,22 +8,22 @@ use log::{error, info, trace};
 pub use mn::ManagingNode;
 pub use pdo_handler::PdoHandler;
 
+use crate::frame::basic::MacAddress;
 use crate::frame::codec::CodecHelpers;
 use crate::frame::{ASndFrame, PowerlinkFrame, ServiceId};
+use crate::nmt::states::NmtState;
+use crate::od::ObjectDictionary;
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
 use crate::sdo::server::SdoClientInfo;
 #[cfg(feature = "sdo-udp")]
-use crate::types::IpAddress;
-use crate::frame::basic::MacAddress;
-use crate::nmt::states::NmtState;
-use crate::od::ObjectDictionary;
-use crate::sdo::{asnd, SdoClient, SdoServer};
-use crate::{NodeId, PowerlinkError};
-use alloc::vec::Vec;
-use alloc::vec;
-#[cfg(feature = "sdo-udp")]
 use crate::sdo::udp::serialize_sdo_udp_payload;
+use crate::sdo::{SdoClient, SdoServer, asnd};
+#[cfg(feature = "sdo-udp")]
+use crate::types::IpAddress;
+use crate::{NodeId, PowerlinkError};
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// Holds state and components common to all POWERLINK node types (MN and CN).
 pub struct CoreNodeContext<'s> {
@@ -91,8 +91,8 @@ pub trait NodeContext<'s> {
 /// Helper to serialize a PowerlinkFrame (Ethernet) and prepare the NodeAction.
 /// This function is now shared by both CN and MN logic.
 pub(super) fn serialize_frame_action<'s>(
-    frame: PowerlinkFrame,  
-    context: &impl NodeContext<'s>,  
+    frame: PowerlinkFrame,
+    context: &impl NodeContext<'s>,
 ) -> Result<NodeAction, PowerlinkError> {
     let mut buf = vec![0u8; 1518];
     let eth_header;
@@ -138,11 +138,7 @@ pub(super) fn serialize_frame_action<'s>(
                     buf[i] = 0;
                 }
             }
-            info!(
-                "Sending frame type: {:?} ({} bytes)",
-                frame,
-                buf.len()
-            );
+            info!("Sending frame type: {:?} ({} bytes)", frame, buf.len());
             trace!("Sending frame bytes ({}): {:02X?}", buf.len(), &buf);
             Ok(NodeAction::SendFrame(buf))
         }
@@ -169,7 +165,7 @@ fn build_asnd_from_sdo_response<'s>(
         SdoClientInfo::Udp { .. } => {
             return Err(PowerlinkError::InternalError(
                 "Attempted to build ASnd response for UDP client",
-            ))
+            ));
         }
     };
 
@@ -182,14 +178,16 @@ fn build_asnd_from_sdo_response<'s>(
         ServiceId::Sdo,
         sdo_payload,
     );
-    info!("[MN] Sending SDO response via ASnd to Node {}", source_node_id.0);
-    Ok(serialize_frame_action(
-        PowerlinkFrame::ASnd(asnd_frame),
-        context
-    ). unwrap_or(
-        // TODO: handle error properly
-        NodeAction::NoAction
-    ))
+    info!(
+        "[MN] Sending SDO response via ASnd to Node {}",
+        source_node_id.0
+    );
+    Ok(
+        serialize_frame_action(PowerlinkFrame::ASnd(asnd_frame), context).unwrap_or(
+            // TODO: handle error properly
+            NodeAction::NoAction,
+        ),
+    )
 }
 
 /// Processes an SDO request received over UDP.
@@ -227,12 +225,10 @@ fn process_udp_packet<'s>(
         source_port,
     };
     let core = context.core_mut();
-    match core.sdo_server.handle_request(
-        sdo_payload,
-        client_info,
-        &mut core.od,
-        current_time_us,
-    ) {
+    match core
+        .sdo_server
+        .handle_request(sdo_payload, client_info, &mut core.od, current_time_us)
+    {
         Ok((seq_header, command)) => {
             match build_udp_from_sdo_response(client_info, seq_header, command) {
                 Ok(action) => action,
@@ -251,7 +247,7 @@ fn process_udp_packet<'s>(
 
 /// Helper to build NodeAction::SendUdp from SdoResponseData.
 #[cfg(feature = "sdo-udp")]
-fn build_udp_from_sdo_response(
+pub fn build_udp_from_sdo_response(
     client_info: SdoClientInfo,
     seq_header: SequenceLayerHeader,
     command: SdoCommand,
@@ -264,7 +260,7 @@ fn build_udp_from_sdo_response(
         SdoClientInfo::Asnd { .. } => {
             return Err(PowerlinkError::InternalError(
                 "Attempted to build UDP response for ASnd client",
-            ))
+            ));
         }
     };
 

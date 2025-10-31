@@ -1,5 +1,5 @@
 // crates/powerlink-rs/src/od/storage.rs
-use super::{predefined, ObjectDictionary};
+use super::{ObjectDictionary, predefined};
 use crate::PowerlinkError;
 
 /// Initialises the Object Dictionary.

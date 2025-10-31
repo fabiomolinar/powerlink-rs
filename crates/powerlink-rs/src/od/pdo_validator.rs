@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/od/pdo_validator.rs
 use super::{Object, ObjectDictionary, ObjectValue};
-use crate::{pdo::PdoMappingEntry, PowerlinkError};
+use crate::{PowerlinkError, pdo::PdoMappingEntry};
 use log::{error, trace};
 
 /// Validates that a new PDO mapping configuration does not exceed payload size limits.
@@ -128,7 +128,11 @@ mod tests {
 
         // Directly test the validator function
         let result = validate_pdo_mapping(&od, 0x1A00, 2);
-        assert!(result.is_ok(), "Validation failed unexpectedly: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Validation failed unexpectedly: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -207,5 +211,4 @@ mod tests {
             ))
         ));
     }
-
 }

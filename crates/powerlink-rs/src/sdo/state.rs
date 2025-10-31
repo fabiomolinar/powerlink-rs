@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/sdo/state.rs
-use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::od::ObjectDictionary;
+use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::{PowerlinkError, od::ObjectValue};
 use alloc::vec::Vec;
 use log::{debug, error, info, warn};
@@ -174,10 +174,7 @@ impl SdoTransferState {
 
     /// Helper to perform the final write to the Object Dictionary.
     /// This logic was moved from SdoServer::write_to_od.
-    pub(super) fn perform_od_write(
-        &self,
-        od: &mut ObjectDictionary,
-    ) -> Result<(), u32> {
+    pub(super) fn perform_od_write(&self, od: &mut ObjectDictionary) -> Result<(), u32> {
         info!(
             "Writing {} bytes to OD 0x{:04X}/{}",
             self.data_buffer.len(),
@@ -185,32 +182,38 @@ impl SdoTransferState {
             self.sub_index
         );
         // Get a clone of the template to avoid double mutable borrow
-        match od.read(self.index, self.sub_index).map(|cow| cow.into_owned()) {
-            Some(type_template) => match ObjectValue::deserialize(&self.data_buffer, &type_template)
-            {
-                Ok(value) => {
-                    // Double-check type compatibility after deserialize, before writing
-                    if core::mem::discriminant(&value) != core::mem::discriminant(&type_template) {
-                        error!(
-                            "Type mismatch after deserialize (write_to_od): Expected {:?}, got {:?} for 0x{:04X}/{}",
-                            type_template, value, self.index, self.sub_index
-                        );
-                        return Err(0x0607_0010); // Type mismatch
+        match od
+            .read(self.index, self.sub_index)
+            .map(|cow| cow.into_owned())
+        {
+            Some(type_template) => {
+                match ObjectValue::deserialize(&self.data_buffer, &type_template) {
+                    Ok(value) => {
+                        // Double-check type compatibility after deserialize, before writing
+                        if core::mem::discriminant(&value)
+                            != core::mem::discriminant(&type_template)
+                        {
+                            error!(
+                                "Type mismatch after deserialize (write_to_od): Expected {:?}, got {:?} for 0x{:04X}/{}",
+                                type_template, value, self.index, self.sub_index
+                            );
+                            return Err(0x0607_0010); // Type mismatch
+                        }
+                        match od.write(self.index, self.sub_index, value) {
+                            Ok(_) => Ok(()),
+                            // Map OD write errors (which use PowerlinkError) to SDO Abort Codes
+                            Err(PowerlinkError::StorageError("Object is read-only")) => {
+                                Err(0x0601_0002)
+                            } // Attempt to write read-only
+                            Err(PowerlinkError::TypeMismatch) => Err(0x0607_0010), // Should be caught earlier, but safety check
+                            Err(PowerlinkError::ValidationError(_)) => Err(0x0609_0030), // Value range exceeded (e.g., PDO validation)
+                            Err(_) => Err(0x0800_0020), // Data cannot be transferred or stored
+                        }
                     }
-                    match od.write(self.index, self.sub_index, value) {
-                        Ok(_) => Ok(()),
-                        // Map OD write errors (which use PowerlinkError) to SDO Abort Codes
-                        Err(PowerlinkError::StorageError("Object is read-only")) => {
-                            Err(0x0601_0002)
-                        } // Attempt to write read-only
-                        Err(PowerlinkError::TypeMismatch) => Err(0x0607_0010), // Should be caught earlier, but safety check
-                        Err(PowerlinkError::ValidationError(_)) => Err(0x0609_0030), // Value range exceeded (e.g., PDO validation)
-                        Err(_) => Err(0x0800_0020), // Data cannot be transferred or stored
-                    }
+                    Err(PowerlinkError::BufferTooShort) => Err(0x0607_0013), // Length too low
+                    Err(_) => Err(0x0607_0010), // Data type mismatch or length error during deserialize
                 }
-                Err(PowerlinkError::BufferTooShort) => Err(0x0607_0013), // Length too low
-                Err(_) => Err(0x0607_0010), // Data type mismatch or length error during deserialize
-            },
+            }
             // Distinguish between Object not found and Sub-index not found
             None if od.read_object(self.index).is_none() => Err(0x0602_0000), // Object does not exist
             None => Err(0x0609_0011), // Sub-index does not exist
