@@ -460,7 +460,6 @@ pub(super) fn handle_read_multiple_params(
 }
 
 pub(super) fn handle_max_segment_size(
-    server: &mut SdoServer,
     command: SdoCommand,
     mut response_header: CommandLayerHeader,
 ) -> SdoCommand {

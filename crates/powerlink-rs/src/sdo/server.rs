@@ -474,7 +474,7 @@ impl SdoServer {
                 current_time_us,
             ),
             CommandId::MaxSegmentSize => {
-                handlers::handle_max_segment_size(self, command, response_header)
+                handlers::handle_max_segment_size(command, response_header)
             }
             // Delegate complex commands to the custom handler
             CommandId::WriteAllByIndex => self.handler.handle_write_all_by_index(command, od),
