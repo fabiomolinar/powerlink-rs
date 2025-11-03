@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/mn/state.rs
 use crate::ErrorHandler;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
@@ -103,6 +104,8 @@ pub struct CnInfo {
     pub en_flag: bool,
     /// The last EA (Exception Acknowledge) flag sent *to* the CN by the MN.
     pub ea_flag: bool,
+    /// Flag indicating the `CHECK_COMMUNICATION` step has passed.
+    pub communication_ok: bool,
 }
 
 impl Default for CnInfo {
@@ -112,6 +115,7 @@ impl Default for CnInfo {
             // Both flags start as false, as no error has been signaled or acknowledged.
             en_flag: false,
             ea_flag: false,
+            communication_ok: false,
         }
     }
 }

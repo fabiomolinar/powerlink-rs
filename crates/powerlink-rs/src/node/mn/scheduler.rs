@@ -19,7 +19,7 @@ use log::{debug, error, info, trace, warn};
 
 // Constants for OD access, moved from main.rs
 const OD_IDX_CYCLE_TIME: u16 = 0x1006;
-const OD_IDX_MAC_MAP: u16 = 0x1F84;
+const OD_IDX_MAC_MAP: u16 = 0x1F84; // This is not a MAC map, it's Device Type List
 
 /// Determines the highest priority asynchronous action to be taken.
 /// The priority is:
@@ -121,6 +121,21 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             context
                 .nmt_state_machine
                 .process_event(NmtEvent::AllCnsIdentified, &mut context.core.od);
+
+            // --- Phase 1.4: BOOT_STEP2 ---
+            // Now that we are in PreOp2, queue NMTEnableReadyToOperate for all identified CNs.
+            // (Spec 7.4.1.4, 7.4.2.2.2)
+            for (node_id, info) in context.node_info.iter() {
+                if info.state == CnState::Identified {
+                    info!(
+                        "[MN] BOOT_STEP2: Queuing NMTEnableReadyToOperate for Node {}.",
+                        node_id.0
+                    );
+                    context
+                        .pending_nmt_commands
+                        .push((NmtCommand::EnableReadyToOperate, *node_id));
+                }
+            }
         }
     } else if current_mn_state == NmtState::NmtPreOperational2 {
         // Check if all mandatory nodes are PreOperational or further (ReadyToOp reported via PRes/Status)
@@ -153,20 +168,21 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             }
         }
     } else if current_mn_state == NmtState::NmtReadyToOperate {
-        // Check if all mandatory nodes are Operational
-        let all_mandatory_operational = context.mandatory_nodes.iter().all(|node_id| {
-            let state = context
+        // --- Phase 1.5: CHECK_COMMUNICATION ---
+        // Check if all mandatory nodes have passed communication checks (Spec 7.4.1.5)
+        let all_mandatory_comm_checked = context.mandatory_nodes.iter().all(|node_id| {
+            context
                 .node_info
                 .get(node_id)
-                .map_or(CnState::Unknown, |info| info.state);
-            state >= CnState::Operational
+                .map_or(false, |info| info.communication_ok) // This field will be added in state.rs
         });
-        if all_mandatory_operational {
+
+        if all_mandatory_comm_checked {
             // Check MN startup flags if application trigger is needed
             // NMT_StartUp_U32.Bit2 = 0 -> Auto transition
             if context.nmt_state_machine.startup_flags & (1 << 2) == 0 {
                 info!(
-                    "[MN] All mandatory nodes Operational. Triggering NMT transition to Operational."
+                    "[MN] CHECK_COMMUNICATION passed for all mandatory nodes. Triggering NMT transition to Operational."
                 );
                 // NMT_MT5 - Use AllMandatoryCnsOperational event as the trigger
                 context
@@ -174,7 +190,7 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
                     .process_event(NmtEvent::AllMandatoryCnsOperational, &mut context.core.od);
             } else {
                 debug!(
-                    "[MN] All mandatory nodes Operational, but waiting for application trigger to enter Operational."
+                    "[MN] All mandatory nodes passed CHECK_COMMUNICATION, but waiting for application trigger to enter Operational."
                 );
             }
         }
@@ -605,6 +621,10 @@ pub(super) fn schedule_timeout(context: &mut MnContext, deadline_us: u64, event:
 
 /// Gets a CN's MAC address from the Object Dictionary.
 pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option<MacAddress> {
+    // This OD entry is defined by the spec for identification, not MACs.
+    // A real implementation would use a dynamic ARP table or a static config (e.g., 0x1F84 is Device Type, not MAC)
+    // For this test harness, we will assume a static mapping or a different object.
+    // The example `io_module.rs` uses 0x1F84 as a placeholder MAC map, which is incorrect per spec.
     if let Some(Object::Array(entries)) = context.core.od.read_object(OD_IDX_MAC_MAP) {
         // Corrected: Read OD_IDX_MAC_MAP (0x1F84) which stores MACs as OctetString
         if let Some(ObjectValue::OctetString(mac_bytes)) = entries.get(node_id.0 as usize) {
