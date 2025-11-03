@@ -9,8 +9,17 @@ use powerlink_rs::{
 };
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::{Arc, Mutex}; // Use Arc for shared UDP socket
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+// --- Imports for optional pcap feature ---
+#[cfg(feature = "pcap")]
+use pcap::SavefileWriter;
+#[cfg(feature = "pcap")]
+use std::fs::File;
+#[cfg(feature = "pcap")]
+use std::time::{SystemTime, UNIX_EPOCH};
+// --- End of pcap imports ---
 
 pub struct LinuxPnetInterface {
     // Raw Ethernet handling (remains the same)
@@ -22,9 +31,13 @@ pub struct LinuxPnetInterface {
     // UDP Handling (added)
     udp_socket: Arc<UdpSocket>, // Arc allows sharing the socket if needed later
     local_ip_address: IpAddress,
+    // PCAP file writer (conditionally compiled)
+    #[cfg(feature = "pcap")]
+    pcap_writer: Option<Mutex<SavefileWriter<File>>>,
 }
 
 impl LinuxPnetInterface {
+    /// Creates a new interface without packet capturing.
     pub fn new(interface_name: &str, node_id: u8) -> Result<Self, String> {
         let interface = datalink::interfaces()
             .into_iter()
@@ -46,7 +59,6 @@ impl LinuxPnetInterface {
         };
 
         // --- UDP Socket Setup ---
-        // Find the correct IPv4 address for the interface
         let local_ip = interface
             .ips
             .iter()
@@ -59,12 +71,10 @@ impl LinuxPnetInterface {
 
         let local_ip_address: IpAddress = local_ip.octets();
 
-        // Bind the UDP socket to the local IP and the standard POWERLINK SDO port
         let local_sock_addr = SocketAddr::from((local_ip, C_SDO_EPL_PORT));
         let udp_socket = UdpSocket::bind(local_sock_addr)
             .map_err(|e| format!("Failed to bind UDP socket to {}: {}", local_sock_addr, e))?;
 
-        // Set UDP socket to non-blocking for receive_udp
         udp_socket
             .set_nonblocking(true)
             .map_err(|e| format!("Failed to set UDP socket non-blocking: {}", e))?;
@@ -77,7 +87,42 @@ impl LinuxPnetInterface {
             mac_address,
             udp_socket: Arc::new(udp_socket),
             local_ip_address,
+            // Conditionally compile the pcap_writer field
+            #[cfg(feature = "pcap")]
+            pcap_writer: None,
         })
+    }
+
+    /// Creates a new interface that also captures all raw traffic to a .pcap file.
+    /// This function is only available if the "pcap" feature is enabled.
+    #[cfg(feature = "pcap")]
+    pub fn with_pcap(
+        interface_name: &str,
+        node_id: u8,
+        pcap_filename: &str,
+    ) -> Result<Self, String> {
+        // First, create the standard interface
+        let mut interface = Self::new(interface_name, node_id)?;
+
+        // Now, create and add the pcap writer
+        let file = File::create(pcap_filename)
+            .map_err(|e| format!("Failed to create pcap file: {}", e))?;
+        let writer = SavefileWriter::new(file)
+            .map_err(|e| format!("Failed to create pcap writer: {}", e))?;
+
+        interface.pcap_writer = Some(Mutex::new(writer));
+
+        Ok(interface)
+    }
+
+    /// Helper to get the current timestamp for pcap packets.
+    /// This function is only available if the "pcap" feature is enabled.
+    #[cfg(feature = "pcap")]
+    fn get_pcap_timestamp() -> (u32, u32) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO);
+        (now.as_secs() as u32, now.subsec_micros())
     }
 
     /// Sets the read timeout for the underlying *raw Ethernet* channel.
@@ -107,6 +152,17 @@ impl LinuxPnetInterface {
 impl NetworkInterface for LinuxPnetInterface {
     // --- Raw Ethernet Methods ---
     fn send_frame(&mut self, frame: &[u8]) -> Result<(), PowerlinkError> {
+        // Conditionally write to pcap
+        #[cfg(feature = "pcap")]
+        if let Some(writer_mutex) = &self.pcap_writer {
+            let (secs, micros) = Self::get_pcap_timestamp();
+            let mut writer = writer_mutex.lock().unwrap();
+            writer
+                .write(secs, micros, frame, frame.len() as u32)
+                .map_err(|_| PowerlinkError::IoError)?;
+            writer.flush().map_err(|_| PowerlinkError::IoError)?;
+        }
+
         self.tx_raw
             .lock()
             .unwrap()
@@ -123,6 +179,18 @@ impl NetworkInterface for LinuxPnetInterface {
                 let len = frame.len();
                 if buffer.len() >= len {
                     buffer[..len].copy_from_slice(frame);
+
+                    // Conditionally write to pcap
+                    #[cfg(feature = "pcap")]
+                    if let Some(writer_mutex) = &self.pcap_writer {
+                        let (secs, micros) = Self::get_pcap_timestamp();
+                        let mut writer = writer_mutex.lock().unwrap();
+                        writer
+                            .write(secs, micros, &buffer[..len], len as u32)
+                            .map_err(|_| PowerlinkError::IoError)?;
+                        writer.flush().map_err(|_| PowerlinkError::IoError)?;
+                    }
+
                     Ok(len)
                 } else {
                     Err(PowerlinkError::BufferTooShort)
@@ -153,6 +221,18 @@ impl NetworkInterface for LinuxPnetInterface {
         dest_port: u16,
         data: &[u8],
     ) -> Result<(), PowerlinkError> {
+        // Conditionally write UDP payload to pcap
+        #[cfg(feature = "pcap")]
+        if let Some(writer_mutex) = &self.pcap_writer {
+            let (secs, micros) = Self::get_pcap_timestamp();
+            let mut writer = writer_mutex.lock().unwrap();
+            // Note: This only captures the payload, not the full IP/UDP packet.
+            writer
+                .write(secs, micros, data, data.len() as u32)
+                .map_err(|_| PowerlinkError::IoError)?;
+            writer.flush().map_err(|_| PowerlinkError::IoError)?;
+        }
+
         // Convert destination IP and port to SocketAddr
         let dest_sock_addr = SocketAddr::from((dest_ip, dest_port));
         // Use send_to on the UdpSocket
@@ -171,6 +251,17 @@ impl NetworkInterface for LinuxPnetInterface {
     ) -> Result<Option<(usize, IpAddress, u16)>, PowerlinkError> {
         match self.udp_socket.recv_from(buffer) {
             Ok((size, src_sock_addr)) => {
+                // Conditionally write received UDP payload to pcap
+                #[cfg(feature = "pcap")]
+                if let Some(writer_mutex) = &self.pcap_writer {
+                    let (secs, micros) = Self::get_pcap_timestamp();
+                    let mut writer = writer_mutex.lock().unwrap();
+                    writer
+                        .write(secs, micros, &buffer[..size], size as u32)
+                        .map_err(|_| PowerlinkError::IoError)?;
+                    writer.flush().map_err(|_| PowerlinkError::IoError)?;
+                }
+
                 // Successfully received data
                 let src_ip = match src_sock_addr.ip() {
                     std::net::IpAddr::V4(ip4) => ip4.octets(),
@@ -195,7 +286,6 @@ impl NetworkInterface for LinuxPnetInterface {
         }
     }
 
-    // Removed #[cfg(feature = "sdo-udp")] guards from implementation methods
     fn local_ip_address(&self) -> IpAddress {
         self.local_ip_address
     }
