@@ -1,6 +1,5 @@
 // 'alloc' is used for error messages
 extern crate alloc;
-use alloc::format;
 use alloc::string::String;
 
 /// Errors that can occur during PDO processing.

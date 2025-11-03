@@ -11,19 +11,24 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
     - [x] 4.6 Frame Structures (SoC, PReq, PRes, SoA, ASnd)
     - [x] 4.2.4 Cycle State Machines (MN and CN)
     - [x] 4.7 DLL Error Handling
-    - [x] Other DLL concepts
-  - **Chapter 5 (Network/Transport Layer): 0%**
+    - [ ] *Gap: Advanced/optional features like full multiplexed slot scheduling optimization.*
+  - **Chapter 5 (Network/Transport Layer): 80%**
+    - [x] SDO over UDP/IP HAL (`send_udp`/`receive_udp` in `NetworkInterface`)
+    - [x] Platform implementations (Linux/Windows) for UDP sockets
+    - [x] Core SDO/UDP serialization logic (`sdo/udp.rs`)
+    - [x] Core `UdpTransport` implementation
+    - [ ] *Gap: Integration of `receive_udp` into the main `Node` processing loop to feed the `SdoServer`.*
   - **Chapter 6 (Application Layer): 90%**
     - [x] 6.1 Basic Data Types (`NetTime`, `RelativeTime`)
     - [x] 6.2 Object Dictionary Structure
     - [x] 6.3 Service Data Objects (SDO) via ASnd
     - [x] 6.4 Process Data Objects (PDO) with mapping, validation, and error handling
     - [x] 6.5 Error Signaling
-  - **Chapter 7 (NMT): 80%**
-    - [x] Basic NMT data structures (`NmtState`)
-    - [x] 7.1 NMT State Machines
-    - [ ] 7.3 NMT Services (partially implemented for MN boot-up)
-    - [x] 7.4 MN Boot-up (initial logic in place)
+    - [ ] *Gap: Full implementation of application services like Configuration Management (CFM) and Program Download (PDL) logic.*
+  - **Chapter 7 (NMT): 90%**
+    - [x] 7.1 NMT State Machines (Common, MN, CN)
+    - [x] 7.4 MN Boot-up (full validation sequence)
+    - [ ] *Gap: Full implementation of `7.3 NMT Services` beyond boot-up commands (e.g., NMT Guard Services, NMT Info Services).*
   - **Chapter 8 (Diagnostics): 0%**
   - **Chapter 9 (Routing): 0%**
 - **EPSG 302-A (High Availability)**: 0% (for the future)
@@ -72,7 +77,7 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
     - **CN Response Logic**: Ensure `ControlledNode` reacts correctly to MN frames (SoC, PReq, SoA) according to its NMT/DLL state.
     - **DLL Error Handling Integration**: Ensure DLL error counters correctly trigger the specified NMT state changes.
   - Success Metric: A simulated MN/CN pair can successfully transition to the NMT_CS_OPERATIONAL state and maintain a stable POWERLINK cycle.
-  - Status: **In development**. Core MN scheduling and CN response logic is implemented and undergoing refinement.
+  - Status: **Completed**. The core logic for both MN and CN NMT/DLL state machines and the full MN boot-up validation sequence (Chapter 7.4) is now implemented.
 - Phase 7: Integration Testing and Validation:
   - Focus: Creating robust integration tests for the full MN/CN communication cycle.
   - Key Features:
@@ -81,7 +86,7 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
     - Test NMT command handling (e.g., `StopNode`, `ResetNode`).
     - Test DLL error handling scenarios (e.g., PRes timeouts).
   - Success Metric: All integration tests pass, demonstrating a stable and conformant basic network operation.
-  - Status: **In development**. Initial Docker-based integration tests for the boot-up sequence and SDO communication are in place.
+  - Status: **In development**. With Phase 6 complete, the immediate focus is on expanding the Docker-based integration tests to validate the full boot-up sequence, PDO exchange, and error handling.
 - Future (post DS-301):
   - Microcontroller Support: Implement a `no_std` I/O module targeting a specific embedded MAC/PHY driver using the traits defined in Phase 4.
   - Configuration Files: Implement parsers for the `XML` Device Description (`XDD`) and `XML` Device Configuration (`XDC`) files (defined by EPSG DS-311).

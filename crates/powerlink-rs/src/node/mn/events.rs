@@ -14,7 +14,6 @@ use log::{debug, error, info, trace, warn};
 // --- Constants for OD access ---
 const OD_IDX_STARTUP_U32: u16 = 0x1F80;
 const OD_IDX_PRES_PAYLOAD_LIMIT_LIST: u16 = 0x1F8D;
-const OD_IDX_MN_CN_PRES_TIMEOUT: u16 = 0x1F92;
 const OD_IDX_DEVICE_TYPE_LIST: u16 = 0x1F84;
 const OD_IDX_VENDOR_ID_LIST: u16 = 0x1F85;
 const OD_IDX_PRODUCT_CODE_LIST: u16 = 0x1F86;
