@@ -4,6 +4,7 @@ members = [
     "crates/powerlink-rs-linux",
     "crates/powerlink-rs-windows",
     "crates/powerlink-rs-embedded",
+    "crates/powerlink-rs-monitor",
 ]
 default-members = [
     "crates/powerlink-rs",
