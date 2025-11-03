@@ -27,5 +27,5 @@ pub use frame::error::{DllErrorManager, ErrorHandler, LoggingErrorHandler, NoOpE
 pub use hal::{NetworkInterface, ObjectDictionaryStorage, PowerlinkError};
 pub use node::cn::ControlledNode;
 pub use node::{Node, NodeAction};
-pub use pdo::PdoMappingEntry;
-pub use types::NodeId; // Export the new PDO mapping struct
+pub use pdo::{PdoError, PdoMappingEntry}; // Export PdoError
+pub use types::NodeId;

@@ -1,12 +1,15 @@
 // crates/powerlink-rs/src/node/pdo_handler.rs
 use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler};
 use crate::od::{ObjectDictionary, ObjectValue};
-use crate::pdo::{PDOVersion, PdoMappingEntry};
+use crate::pdo::{error::PdoError, PDOVersion, PdoMappingEntry}; // Import PdoError from new module
 use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
 use log::{error, trace, warn};
 
 const OD_IDX_RPDO_COMM_PARAM_BASE: u16 = 0x1400;
 const OD_IDX_RPDO_MAPP_PARAM_BASE: u16 = 0x1600;
+// Add TPDO constants for the new function
+const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
+const OD_IDX_TPDO_MAPP_PARAM_BASE: u16 = 0x1A00;
 const OD_SUBIDX_PDO_COMM_NODEID: u8 = 1;
 const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
 const OD_IDX_PDO_ERR_MAP_VERS: u16 = 0x1C80;
@@ -275,6 +278,119 @@ pub trait PdoHandler<'s> {
                 return Err(());
             }
         }
+        Ok(())
+    }
+
+    /// Fills a buffer with the CN's TPDO payload.
+    ///
+    /// This default implementation is for a CN, which can only have one
+    /// TPDO (Comm param 0x1800, Mapping param 0x1A00).
+    ///
+    /// Returns the `PDOVersion` for this mapping, or 0 if disabled.
+    fn prepare_tpdo_payload(&mut self, payload_buffer: &mut [u8]) -> PDOVersion {
+        // 1. Get the TPDO mapping (1A00h for a CN).
+        let mapping_index = OD_IDX_TPDO_MAPP_PARAM_BASE;
+        let num_entries = self.od().read_u8(mapping_index, 0).unwrap_or(0);
+
+        // If no entries, TPDO is disabled.
+        if num_entries == 0 {
+            return PDOVersion(0);
+        }
+
+        // 2. Iterate over each mapping entry and pack data.
+        for i in 1..=num_entries {
+            if let Some(entry_cow) = self.od().read(mapping_index, i) {
+                if let ObjectValue::Unsigned64(raw_mapping) = *entry_cow {
+                    let entry = PdoMappingEntry::from_u64(raw_mapping);
+                    if let Err(e) = self.apply_tpdo_mapping_entry(&entry, payload_buffer) {
+                        // On error (e.g., buffer too small, type mismatch),
+                        // we must stop and return an invalid PDO (version 0).
+                        error!("[PDO] Failed to apply TPDO mapping entry for {:#06X}/{}: {:?}. Invalidating TPDO.", entry.index, entry.sub_index, e);
+                        return PDOVersion(0);
+                    }
+                }
+            } else {
+                error!(
+                    "[PDO] Failed to read TPDO mapping entry {:#06X}/{}",
+                    mapping_index, i
+                );
+                return PDOVersion(0);
+            }
+        }
+
+        // 3. Get the mapping version from 1800h, sub-index 2.
+        let mapping_version = self
+            .od()
+            .read_u8(OD_IDX_TPDO_COMM_PARAM_BASE, OD_SUBIDX_PDO_COMM_VERSION)
+            .unwrap_or(0);
+
+        PDOVersion(mapping_version)
+    }
+
+    /// Helper for `prepare_tpdo_payload` to apply a single mapping entry.
+    /// Returns a Result to indicate if processing should stop.
+    fn apply_tpdo_mapping_entry(
+        &mut self,
+        entry: &PdoMappingEntry,
+        payload_buffer: &mut [u8],
+    ) -> Result<(), PdoError> {
+        let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
+            warn!(
+                "Bit-level TPDO mapping is not supported. Index: 0x{:04X}, SubIndex: {}.",
+                entry.index, entry.sub_index
+            );
+            return Ok(()); // Continue with next entry
+        };
+
+        if payload_buffer.len() < offset + length {
+            warn!(
+                "TPDO mapping for 0x{:04X}/{} is out of bounds. Buffer size: {}, expected at least {}.",
+                entry.index,
+                entry.sub_index,
+                payload_buffer.len(),
+                offset + length
+            );
+            return Err(PdoError::PayloadBufferTooSmall {
+                expected_bits: (offset + length) as u16 * 8,
+                actual_bytes: payload_buffer.len(),
+            });
+        }
+
+        let data_slice = &mut payload_buffer[offset..offset + length];
+
+        // Read the value from the OD
+        let Some(value) = self.od().read(entry.index, entry.sub_index) else {
+            warn!(
+                "TPDO mapping for 0x{:04X}/{} failed: OD entry not found.",
+                entry.index, entry.sub_index
+            );
+            // Per spec, we should probably fill with 0s, but stopping is safer
+            // and forces a configuration error.
+            return Err(PdoError::ObjectNotFound {
+                index: entry.index,
+                sub_index: entry.sub_index,
+            });
+        };
+
+        // Serialize the value into the slice
+        if let Err(e) = value.serialize(data_slice) {
+            warn!(
+                "Failed to serialize TPDO data for 0x{:04X}/{}: {:?}. Value: {:?}",
+                entry.index, entry.sub_index, e, value
+            );
+            // Try to get actual bit size from value
+            let actual_bits = match value.size_in_bytes() {
+                Some(bytes) => (bytes * 8) as u16,
+                None => 0, // Cannot be determined
+            };
+            return Err(PdoError::TypeMismatch {
+                index: entry.index,
+                sub_index: entry.sub_index,
+                expected_bits: length as u16 * 8,
+                actual_bits,
+            });
+        }
+
         Ok(())
     }
 }
