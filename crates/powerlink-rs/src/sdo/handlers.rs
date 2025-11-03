@@ -10,6 +10,7 @@ use crate::sdo::command::{
 use crate::sdo::state::{SdoServerState, SdoTransferState};
 
 use super::SdoServer;
+use alloc::vec::Vec;
 
 use crate::sdo::OD_IDX_SDO_TIMEOUT;
 const MAX_EXPEDITED_PAYLOAD: usize = 1452;
