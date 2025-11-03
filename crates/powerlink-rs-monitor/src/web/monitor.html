@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POWERLINK-RS Monitor</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --text-color: #e0e0e0;
+            --border-color: #444;
+            --header-bg: #2a2a2a;
+            --table-header-bg: #333;
+            --table-row-odd: #2c2c2c;
+            
+            --state-op: #4caf50;
+            --state-preop: #ffeb3b;
+            --state-stopped: #f44336;
+            --state-missing: #f44336;
+            --state-unknown: #9e9e9e;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 16px;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .card {
+            background-color: var(--header-bg);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            padding: 16px;
+        }
+        .card h2 {
+            margin-top: 0;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        thead th {
+            background-color: var(--table-header-bg);
+        }
+        tbody tr:nth-child(odd) {
+            background-color: var(--table-row-odd);
+        }
+        #mn-status-value {
+            font-weight: bold;
+            font-size: 1.2em;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .counter-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 16px;
+        }
+        .counter-grid dt {
+            font-weight: bold;
+        }
+        .counter-grid dd {
+            margin-left: 0;
+            text-align: right;
+            font-family: monospace;
+            font-size: 1.1em;
+        }
+        
+        /* State Color Classes */
+        .state-operational { color: var(--state-op); }
+        .state-preoperational { color: var(--state-preop); }
+        .state-stopped { color: var(--state-stopped); }
+        .state-missing { color: var(--state-stopped); font-style: italic; }
+        .state-unknown { color: var(--state-unknown); }
+    </style>
+</head>
+<body>
+    <h1>POWERLINK-RS Monitor</h1>
+    <div class="container">
+        <div class="card">
+            <h2>Global Status</h2>
+            <dl class="counter-grid">
+                <dt>MN NMT State</dt>
+                <dd><span id="mn-status-value" class="state-unknown">UNKNOWN</span></dd>
+                <dt>WebSocket</dt>
+                <dd id="ws-status">Connecting...</dd>
+            </dl>
+        </div>
+
+        <div class="card">
+            <h2>Diagnostic Counters</h2>
+            <dl class="counter-grid" id="diag-counters">
+                <dt>Isochronous Cycles</dt>
+                <dd id="count-isochr_cycles">0</dd>
+                <dt>Isochronous Rx</dt>
+                <dd id="count-isochr_rx">0</dd>
+                <dt>Isochronous Tx</dt>
+                <dd id="count-isochr_tx">0</dd>
+                <dt>Asynchronous Rx</dt>
+                <dd id="count-async_rx">0</dd>
+                <dt>Asynchronous Tx</dt>
+                <dd id="count-async_tx">0</dd>
+                <dt>Emergency Queue Overflow</dt>
+                <dd id="count-emergency_queue_overflow">0</dd>
+            </dl>
+        </div>
+
+        <div class="card">
+            <h2>DLL Error Counters</h2>
+            <dl class="counter-grid" id="dll-errors"></dl>
+        </div>
+
+        <div class="card" style="grid-column: 1 / -1;">
+            <h2>Controlled Nodes</h2>
+            <table id="cn-table">
+                <thead>
+                    <tr>
+                        <th>Node ID</th>
+                        <th>NMT State</th>
+                        <th>Comm. OK</th>
+                    </tr>
+                </thead>
+                <tbody id="cn-table-body">
+                    </tbody>
+            </table>
+        </div>
+
+        <div class="card" style="grid-column: 1 / -1;">
+            <h2>Object Dictionary Browser</h2>
+            <p>
+                The interactive OD Browser is a planned feature for the
+                <strong>standalone (SDO-based)</strong> monitor mode.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        const wsStatus = document.getElementById('ws-status');
+        const mnStatus = document.getElementById('mn-status-value');
+        const cnTableBody = document.getElementById('cn-table-body');
+        const dllErrorList = document.getElementById('dll-errors');
+        const diagCounterList = document.getElementById('diag-counters');
+
+        function connect() {
+            const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+            const host = window.location.host;
+            const socket = new WebSocket(`${proto}//${host}/ws`);
+
+            socket.onopen = () => {
+                wsStatus.textContent = "Connected";
+                wsStatus.className = "state-operational";
+            };
+
+            socket.onclose = () => {
+                wsStatus.textContent = "Disconnected. Retrying...";
+                wsStatus.className = "state-stopped";
+                // Simple retry logic
+                setTimeout(connect, 2000);
+            };
+
+            socket.onerror = (err) => {
+                wsStatus.textContent = "Error";
+                wsStatus.className = "state-stopped";
+                console.error("WebSocket Error:", err);
+            };
+
+            socket.onmessage = (event) => {
+                try {
+                    const snapshot = JSON.parse(event.data);
+                    updateDashboard(snapshot);
+                } catch (e) {
+                    console.error("Failed to parse snapshot:", e);
+                }
+            };
+        }
+
+        function updateDashboard(snapshot) {
+            // 1. Update Global MN Status
+            const mnState = snapshot.mn_nmt_state || "UNKNOWN";
+            mnStatus.textContent = mnState;
+            mnStatus.className = getStateClass(mnState);
+
+            // 2. Update CN Table
+            updateCnTable(snapshot.cn_states || []);
+            
+            // 3. Update DLL Error Counters
+            updateCounters(dllErrorList, snapshot.dll_error_counters);
+            
+            // 4. Update Diagnostic Counters
+            updateCounters(diagCounterList, snapshot.diagnostic_counters);
+        }
+
+        function updateCnTable(cnStates) {
+            // Mark all existing rows for deletion
+            const rowsToRemove = new Set();
+            for (const row of cnTableBody.rows) {
+                rowsToRemove.add(row.id);
+            }
+
+            for (const cn of cnStates) {
+                const rowId = `cn-row-${cn.node_id}`;
+                let row = document.getElementById(rowId);
+
+                if (row) {
+                    // Row exists, update it
+                    rowsToRemove.delete(rowId); // Keep this row
+                    
+                    const stateCell = row.cells[1];
+                    const commCell = row.cells[2];
+                    
+                    stateCell.textContent = cn.nmt_state;
+                    stateCell.className = getStateClass(cn.nmt_state);
+                    
+                    commCell.textContent = cn.communication_ok ? "✔" : "✘";
+                    commCell.className = cn.communication_ok ? "state-operational" : "state-stopped";
+                } else {
+                    // Row doesn't exist, create it
+                    row = cnTableBody.insertRow();
+                    row.id = rowId;
+                    
+                    const idCell = row.insertCell(0);
+                    const stateCell = row.insertCell(1);
+                    const commCell = row.insertCell(2);
+                    
+                    idCell.textContent = cn.node_id;
+                    stateCell.textContent = cn.nmt_state;
+                    stateCell.className = getStateClass(cn.nmt_state);
+                    
+                    commCell.textContent = cn.communication_ok ? "✔" : "✘";
+                    commCell.className = cn.communication_ok ? "state-operational" : "state-stopped";
+                }
+            }
+            
+            // Remove any old rows that weren't in the new snapshot
+            rowsToRemove.forEach(rowId => {
+                document.getElementById(rowId)?.remove();
+            });
+        }
+        
+        function updateCounters(listElement, counters) {
+            // This is a generic function to update a <dl> grid
+            for (const [key, value] of Object.entries(counters)) {
+                let dd = document.getElementById(`count-${key}`);
+                if (!dd) {
+                    // Create the dt/dd pair if it doesn't exist
+                    let dt = document.createElement('dt');
+                    dt.textContent = key.replace(/_/g, ' '); // simple formatting
+                    listElement.appendChild(dt);
+                    
+                    dd = document.createElement('dd');
+                    dd.id = `count-${key}`;
+                    listElement.appendChild(dd);
+                }
+                dd.textContent = value;
+            }
+        }
+
+        function getStateClass(state) {
+            const s = state.toLowerCase();
+            if (s.includes("operational")) return "state-operational";
+            if (s.includes("preop")) return "state-preoperational";
+            if (s.includes("stopped")) return "state-stopped";
+            if (s.includes("missing")) return "state-missing";
+            return "state-unknown";
+        }
+
+        // Start the connection
+        connect();
+    </script>
+</body>
+</html>
