@@ -2,7 +2,6 @@
 extern crate alloc;
 use alloc::format;
 use alloc::string::String;
-use crate::od::SdoAbortCode;
 
 /// Errors that can occur during PDO processing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,12 +16,7 @@ pub enum PdoError {
         expected_bits: u16,
         actual_bits: u16,
     },
-    /// The PDO payload buffer is too small to hold the data described by the mapping.
-    PayloadBufferTooSmall {
-        expected_bits: u16,
-        actual_bytes: usize,
-    },
-    /// The PDO payload is too small to contain the data described by the mapping.
+    /// The PDO payload or buffer is too small to contain the data described by the mapping.
     PayloadTooSmall {
         expected_bits: u16,
         actual_bytes: usize,
@@ -56,41 +50,17 @@ impl core::fmt::Display for PdoError {
                     index, sub_index, expected_bits, actual_bits
                 )
             }
-            Self::PayloadBufferTooSmall {
-                expected_bits,
-                actual_bytes,
-            } => {
-                write!(
-                    f,
-                    "TPDO buffer is too small: mapping requires {} bits, but buffer is only {} bytes",
-                    expected_bits, actual_bytes
-                )
-            }
             Self::PayloadTooSmall {
                 expected_bits,
                 actual_bytes,
             } => {
                 write!(
                     f,
-                    "RPDO payload is too small: mapping requires {} bits, but payload is only {} bytes",
+                    "PDO payload/buffer is too small: mapping requires {} bits, but size is only {} bytes",
                     expected_bits, actual_bytes
                 )
             }
             Self::ConfigurationError(s) => write!(f, "PDO configuration error: {}", s),
-        }
-    }
-}
-
-// Helper to convert OdError to PdoError
-impl From<SdoAbortCode> for PdoError {
-    fn from(error: SdoAbortCode) -> Self {
-        match error {
-            // We lose context here, but it's the best we can do.
-            SdoAbortCode::ObjectDoesNotExist => PdoError::ObjectNotFound {
-                index: 0,
-                sub_index: 0,
-            },
-            _ => PdoError::ConfigurationError(format!("OD access failed: {:?}", error)),
         }
     }
 }

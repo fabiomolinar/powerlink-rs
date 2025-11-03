@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/pdo_handler.rs
 use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler};
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{error::PdoError, PDOVersion, PdoMappingEntry}; // Import PdoError from new module
@@ -350,7 +349,7 @@ pub trait PdoHandler<'s> {
                 payload_buffer.len(),
                 offset + length
             );
-            return Err(PdoError::PayloadBufferTooSmall {
+            return Err(PdoError::PayloadTooSmall {
                 expected_bits: (offset + length) as u16 * 8,
                 actual_bytes: payload_buffer.len(),
             });
@@ -373,23 +372,28 @@ pub trait PdoHandler<'s> {
         };
 
         // Serialize the value into the slice
-        if let Err(e) = value.serialize(data_slice) {
+        //
+        // This is the corrected logic.
+        // value.serialize() returns a Vec<u8>
+        let bytes_to_pack = value.serialize();
+
+        if bytes_to_pack.len() != length {
+            // Error: The actual data size from the OD does not match
+            // the length specified in the mapping
             warn!(
-                "Failed to serialize TPDO data for 0x{:04X}/{}: {:?}. Value: {:?}",
-                entry.index, entry.sub_index, e, value
+                "TPDO serialize mismatch for 0x{:04X}/{}: mapping length is {} bytes, but value serialized {} bytes.",
+                entry.index, entry.sub_index, length, bytes_to_pack.len()
             );
-            // Try to get actual bit size from value
-            let actual_bits = match value.size_in_bytes() {
-                Some(bytes) => (bytes * 8) as u16,
-                None => 0, // Cannot be determined
-            };
             return Err(PdoError::TypeMismatch {
                 index: entry.index,
                 sub_index: entry.sub_index,
                 expected_bits: length as u16 * 8,
-                actual_bits,
+                actual_bits: (bytes_to_pack.len() * 8) as u16,
             });
         }
+
+        // Copy the serialized bytes into the payload buffer slice
+        data_slice.copy_from_slice(&bytes_to_pack);
 
         Ok(())
     }
