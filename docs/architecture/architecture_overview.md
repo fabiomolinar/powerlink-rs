@@ -6,8 +6,8 @@ This document describes the foundational architectural decisions of the `powerli
 
 The project utilizes a Rust **workspace** to achieve clear separation between the core protocol logic and platform-specific network communication.
 
-1.  **The Core Crate (`powerlink-rs`):** This is defined as the **"Platform-agnostic core logic for Ethernet POWERLINK Rust implementation"**. It contains the fundamental protocol state machines and data structures necessary to implement the standard (e.g., NMT cycle logic, frame parsing/generation). It is set as the default member of the workspace.
-2.  **I/O Driver Crates (`powerlink-io-*`):** These separate crates handle the low-level, raw Ethernet input/output (I/O) for different operating systems and embedded environments. Current planned drivers include `powerlink-io-linux`, `powerlink-io-windows`, and `powerlink-io-embedded`.
+1. **The Core Crate (`powerlink-rs`):** This is defined as the **"Platform-agnostic core logic for Ethernet POWERLINK Rust implementation"**. It contains the fundamental protocol state machines and data structures necessary to implement the standard (e.g., NMT cycle logic, frame parsing/generation). It is set as the default member of the workspace.
+2. **I/O Driver Crates (`powerlink-io-*`):** These separate crates handle the low-level, raw Ethernet input/output (I/O) for different operating systems and embedded environments. Current planned drivers include `powerlink-io-linux`, `powerlink-io-windows`, and `powerlink-io-embedded`.
 
 ## Resource Management and Portability (The `no_std` Core)
 
@@ -41,33 +41,38 @@ The core implementation mirrors the functional layers defined in the EPSG DS 301
 | **Service Data Objects (SDO)** | Modules implementing non-real-time data exchange (client/server model). SDO services are implemented using sequenced commands over asynchronous frames (ASnd) or UDP/IP. |
 | **Process Data Objects (PDO)** | Modules handling real-time, cyclic data exchange (Producer/Consumer model) carried within PReq and PRes frames. |
 
+## Diagnostics and Monitoring (`powerlink-rs-monitor`)
+
+Debugging a real-time network protocol by observing application logs is inherently difficult and inefficient. To solve this, a dedicated `powerlink-rs-monitor` crate is planned to provide a flexible, graphical monitoring tool (e.g., a web-based GUI).
+
+A critical requirement is that the monitoring tool **must never interfere with or block the real-time POWERLINK cycle**.
+
+To achieve this, the `powerlink-rs-monitor` crate will be designed to operate in two distinct modes:
+
+### Approach 1: In-Process (Default)
+
+This mode is designed for high-performance, deep diagnostics during development and testing.
+
+- **"How":** The monitor runs as a **non-real-time (NRT) thread** within the same application as the `ManagingNode` or `ControlledNode`.
+  - **Real-Time (RT) Thread:** Runs the core POWERLINK `Node` logic.
+  - **Non-Real-Time (NRT) Thread:** Runs a `tokio` async runtime, a web server (e.g., `axum`), and a WebSocket endpoint for the GUI.
+  - **The "Plug":** The two threads communicate via a **bounded, real-time-safe channel** (e.g., `crossbeam-channel::bounded(1)`).
+- **"Why":** At the end of each cycle, the RT thread copies its internal state (NMT state, error counters, scheduler status, etc.) into a snapshot struct and uses **`sender.try_send(snapshot)`** to send it to the NRT thread.
+  - If the web server is busy, the channel is full, `try_send` fails immediately, and the snapshot is dropped.
+  - This **guarantees the real-time loop is never blocked** by the web server.
+  - It also provides complete, internal visibility of the node's state with zero impact on network bandwidth.
+
+### Approach 2: Standard-Compliant (Out-of-Process)
+
+This mode acts as a standard-compliant, external diagnostic tool, as defined by the EPSG specification.
+
+- **"How":** The `powerlink-rs-monitor` application runs as a completely separate process. It initializes its own `ControlledNode` stack and joins the network as a **Diagnostic Device (Node ID 253)**.
+- **"Why":** It acts as a standard SDO client, polling the `ManagingNode` (Node 240) for data using standard SDO `ReadByIndex` requests (over ASnd or UDP).
+  - It polls standard diagnostic objects like `NMT_MNNodeCurrState_AU8 (0x1F8Eh)` to get all CN states.
+  - It polls diagnostic counters like `DIA_NMTTelegrCount_REC (0x1101h)` and `DIA_ERRStatistics_REC (0x1102h)`.
+- **Advantages:** This approach is fully interoperable and can monitor any compliant MN (not just one built with `powerlink-rs`). It also serves as an excellent integration test for our SDO client/server stack.
+- **Disadvantages:** It creates additional network load in the asynchronous phase and can only view data explicitly exposed in the MN's Object Dictionary.
+
 ## Naming Conventions
 
 This crate tries to keep the Rust standard when creating names. However, where appropriate, it should document what are the names defined by the specification.
-
-## The Core Crate `powerlink-rs`
-
-### Key Modules & Responsibilities
-
-*`hal` defines the `NetworkInterface` trait, which is the contract for all platform-specific I/O crates. It also defines the primary `PowerlinkError` enum. The trait contains the following methods:
-    * `send_frame`: Sends a raw Ethernet frame (including Ethernet header) over the network.
-    * `receive_frame`: Attempts to receive a single raw Ethernet frame into the provided buffer.
-    * `local_node_id`: Returns the Node ID assigned to this local device.
-    * `local_mac_address`: Returns the local MAC address of the interface.
-*`types` contains primitive, globally relevant types (`NodeId`, `MessageType`, integer aliases) and protocol constants.
-*`common` contains more complex but globally used data structures like `NetTime` and `TimeOfDay`.
-*`frame` implements the Data Link Layer (DLL).
-    * `basic.rs`, `control.rs`, `poll.rs`: Define the structs for all POWERLINK frames.
-    * `codec.rs`: Provides the `Codec` trait and helper functions for serializing and deserializing frames.
-    * `cs_state_machine.rs`, `ms_state_machine.rs`: Implement the low-level cycle state machines (DLL_CS and DLL_MS).
-    * `error/`: Contains the complete DLL error handling logic, including the `ErrorHandler` trait and counter implementations.
-*`nmt` implements the high-level Network Management layer.
-    * `states.rs`: Defines the `NmtState` and `NmtEvent` enums.
-    * `cn_state_machine.rs`: Implements the state machine for a Controlled Node.
-    * `mn_state_machine.rs`: (Placeholder) for the Managing Node's state machine.
-    * `flags.rs`: Defines the `FeatureFlags` bitmask struct.
-*`od` implements the Object Dictionary.
-    * Uses an `ObjectEntry` struct to store metadata (like `AccessType`) alongside the `Object` data.
-    * The `read()` method uses `Cow<ObjectValue>` to efficiently return either a borrowed reference to existing data or an owned value for calculated data (like the length of an array at sub-index 0).
-*`pdo` contains a basic implementation for `PayloadSize`.
-*`sdo` is a placeholder for the future implementation of Service Data Objects.

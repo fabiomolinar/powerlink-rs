@@ -30,6 +30,9 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
     - [x] 7.4 MN Boot-up (full validation sequence)
     - [ ] *Gap: Full implementation of `7.3 NMT Services` beyond boot-up commands (e.g., NMT Guard Services, NMT Info Services).*
   - **Chapter 8 (Diagnostics): 0%**
+    - (Planned via `powerlink-rs-monitor` crate)
+    - [ ] **Non-standard**, integrated web application (in-process channel)
+    - [ ] **Standard-compliant** tool (out-of-process SDO)
   - **Chapter 9 (Routing): 0%**
 - **EPSG 302-A (High Availability)**: 0% (for the future)
 - **EPSG 302-B (Multiple ASnd)**: 0% (for the future)
@@ -41,6 +44,8 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
 ## Testing
 
 Some integration tests requiring access to the network layer. `#[ignore]` is used with these tests as they require root privileges, so these are ignored by default. They can still be ran, for example with Linux, by using `sudo` and using the full path to the cargo executable (example: `sudo -E /home/<user_name>/.cargo/bin/cargo test --package powerlink-rs-linux --test loopback_test -- test_cn_responds_to_preq_on_loopback --exact --show-output --ignored`).
+
+To aid in debugging these complex integration tests, a dedicated `powerlink-rs-monitor` crate is planned. This tool will provide a web-based GUI to visualize the NMT state, error counters, and other diagnostic data in real-time. It is designed to run alongside the node (either in-process for development or as a separate diagnostic node) and will be the primary tool for observing test behavior, supplementing raw `.pcap` logs.
 
 ## Roadmap
 
@@ -72,13 +77,19 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
 - Phase 6: Core NMT Cycle Logic (MN/CN Implementation):
   - Focus: Implementing the roles required to run an entire POWERLINK network.
   - Key Features (DS-301):
-    - **MN Cycle Orchestration**: Refine `ManagingNode::tick` to precisely follow the isochronous and asynchronous phases based on OD timings.
-    - **MN Boot-Up Sequence**: Implement the detailed boot-up logic for identifying, checking, and commanding state transitions for CNs (Chapter 7.4).
-    - **CN Response Logic**: Ensure `ControlledNode` reacts correctly to MN frames (SoC, PReq, SoA) according to its NMT/DLL state.
-    - **DLL Error Handling Integration**: Ensure DLL error counters correctly trigger the specified NMT state changes.
+    - MN Cycle Orchestration: Refine `ManagingNode::tick` to precisely follow the isochronous and asynchronous phases based on OD timings.
+    - MN Boot-Up Sequence: Implement the detailed boot-up logic for identifying, checking, and commanding state transitions for CNs (Chapter 7.4).
+    - CN Response Logic: Ensure `ControlledNode` reacts correctly to MN frames (SoC, PReq, SoA) according to its NMT/DLL state.
+    - DLL Error Handling Integration: Ensure DLL error counters correctly trigger the specified NMT state changes.
   - Success Metric: A simulated MN/CN pair can successfully transition to the NMT_CS_OPERATIONAL state and maintain a stable POWERLINK cycle.
   - Status: **Completed**. The core logic for both MN and CN NMT/DLL state machines and the full MN boot-up validation sequence (Chapter 7.4) is now implemented.
-- Phase 7: Integration Testing and Validation:
+- Phase 7: Debugging and Monitoring (`powerlink-rs-monitor`):
+  - Focus: Implement a dedicated `powerlink-rs-monitor` crate. This tool will provide a web-based GUI for real-time diagnostics.
+  - Key features:
+    - In-Process (Default): Runs as a non-real-time thread in the same application as the node, communicating via an RT-safe channel (e.g., `crossbeam-channel`). This provides deep, internal state visibility for development and debugging without impacting network performance.
+    - Out-of-Process (Standard): Runs as a separate, standard-compliant Diagnostic Node (e.g., Node 253) that polls the MN's diagnostic OD entries (0x1F8E, 0x1101, etc.) via SDO, allowing it to monitor any compliant MN on the network.
+  - Status: **In development**.
+- Phase 8: Integration Testing and Validation:
   - Focus: Creating robust integration tests for the full MN/CN communication cycle.
   - Key Features:
     - Develop Docker-based tests for the full boot-up sequence.
@@ -97,8 +108,7 @@ Some integration tests requiring access to the network layer. `#[ignore]` is use
     - Multiple PReq/PRes (EPSG DS-302-D).
     - Dynamic Node Allocation (EPSG DS-302-E).
 - Hopefully one day:
-  - Conformance Testing: Development effort should eventually include test cases inspired by the requirements documented in the EPSG DS-310 Conformance Test Specification.
-  - Debugging and monitoring tools.
+  - **Conformance Testing**: Development effort should eventually include test cases inspired by the requirements documented in the EPSG DS-310 Conformance Test Specification.  
 
 ## Licensing
 
