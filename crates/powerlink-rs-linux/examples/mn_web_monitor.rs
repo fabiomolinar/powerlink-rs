@@ -61,6 +61,27 @@ async fn main() {
     }
 }
 
+/// Helper function to create the network interface.
+/// This will enable pcap logging if the PCAP_FILE_PATH env var is set.
+fn create_interface(
+    interface_name: &str,
+    node_id: u8,
+) -> Result<LinuxPnetInterface, String> {
+    // Check if the "pcap" feature is enabled at compile time
+    #[cfg(feature = "pcap")]
+    {
+        // If it is, check the environment variable at runtime
+        if let Ok(pcap_path) = env::var("PCAP_FILE_PATH") {
+            info!("[RT-Thread] PCAP logging enabled, writing to {}", pcap_path);
+            return LinuxPnetInterface::with_pcap(interface_name, node_id, &pcap_path);
+        }
+    }
+
+    // Default: create interface without pcap
+    info!("[RT-Thread] PCAP logging disabled.");
+    LinuxPnetInterface::new(interface_name, node_id)
+}
+
 /// This function runs the real-time POWERLINK node loop.
 /// It must never block on non-RT tasks.
 fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), String> {
@@ -68,7 +89,8 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
     let interface_name = env::var("POWERLINK_INTERFACE").unwrap_or_else(|_| "eth0".to_string());
     info!("[RT-Thread] Using interface: {}", interface_name);
 
-    let mut interface = LinuxPnetInterface::new(&interface_name, C_ADR_MN_DEF_NODE_ID)
+    // Use our new helper function to create the interface
+    let mut interface = create_interface(&interface_name, C_ADR_MN_DEF_NODE_ID)
         .map_err(|e| format!("Failed to create interface: {}", e))?;
     
     // Set a short read timeout so the loop can spin

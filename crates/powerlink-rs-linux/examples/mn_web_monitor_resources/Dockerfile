@@ -1,5 +1,5 @@
-# Use the official Rust image as a builder
-FROM --platform=linux/amd64 rust:slim-bookworm
+# Use the slim-bookworm, platform-specific image as requested
+FROM --platform=linux/amd64 rust:slim-bookworm AS builder
 
 # Install libpcap-dev for pnet
 RUN apt-get update && apt-get install -y libpcap-dev
@@ -34,8 +34,8 @@ COPY crates/powerlink-rs-embedded crates/powerlink-rs-embedded
 RUN cargo build --release --example mn_web_monitor --features powerlink-rs-linux/pcap
 
 # --- Final Image ---
-# Use a minimal base image
-FROM debian:bullseye-slim
+# Use a matching bookworm-slim base image
+FROM debian:bookworm-slim
 
 # Install runtime dependencies (libpcap0.8)
 RUN apt-get update && apt-get install -y libpcap0.8 && rm -rf /var/lib/apt/lists/*

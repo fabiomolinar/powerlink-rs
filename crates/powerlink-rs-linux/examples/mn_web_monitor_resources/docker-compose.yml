@@ -20,3 +20,10 @@ services:
       - POWERLINK_INTERFACE=eth0
       # Enable Rust logging
       - RUST_LOG=info,powerlink_rs=debug,powerlink_rs_monitor=debug
+      # --- Add this line to enable pcap capture ---
+      - PCAP_FILE_PATH=/pcap/mn_monitor.pcap
+    
+    # --- Add this section to map the pcap directory ---
+    volumes:
+      # Maps ./pcap_logs on your host to /pcap inside the container
+      - ./pcap_logs:/pcap
