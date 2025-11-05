@@ -381,7 +381,7 @@ fn run_cn_logic(interface_name: &str) {
         // --- Application Logic: Simulate Hardware I/O ---
         // 1. Read simulated hardware inputs and write to OD
         digital_input_counter = digital_input_counter.wrapping_add(1);
-        node.od
+        node.context.core.od
             .write(
                 IDX_DIGITAL_INPUTS,
                 0,
@@ -390,7 +390,7 @@ fn run_cn_logic(interface_name: &str) {
             .unwrap();
 
         // 2. Read outputs from OD (written by MN) and "write" to simulated hardware
-        if let Some(do_val) = node.od.read_u8(IDX_DIGITAL_OUTPUTS, 0) {
+        if let Some(do_val) = node.context.core.od.read_u8(IDX_DIGITAL_OUTPUTS, 0) {
             if do_val != 0 {
                 info!("[CN] Digital outputs received from MN: {:#04x}", do_val);
             }
@@ -468,9 +468,9 @@ fn run_mn_logic(interface_name: &str, cn_mac: MacAddress) {
 
         // --- Application Logic: Mirror Inputs to Outputs ---
         if node.nmt_state() == NmtState::NmtOperational {
-            if let Some(di_val) = node.od.read_u8(IDX_DIGITAL_INPUTS, 0) {
+            if let Some(di_val) = node.context.core.od.read_u8(IDX_DIGITAL_INPUTS, 0) {
                 // Mirror inputs to outputs
-                node.od
+                node.context.core.od
                     .write(IDX_DIGITAL_OUTPUTS, 0, ObjectValue::Unsigned8(di_val))
                     .unwrap();
 

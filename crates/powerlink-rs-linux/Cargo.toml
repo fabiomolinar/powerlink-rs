@@ -25,5 +25,5 @@ lazy_static = "1.5.0"
 
 # --- Crates used for the powerlink-rs-monitor example ---
 powerlink-rs-monitor = { path = "../powerlink-rs-monitor", features = ["in-process"] }
-tokio = { version = "1", features = ["full"] } # Needed by the example to run the monitor
-crossbeam-channel = "0.5" # Needed by the example for the RT <-> NRT channel
+tokio = { version = "1.48.0", features = ["full"] } # Needed by the example to run the monitor
+crossbeam-channel = "0.5.15" # Needed by the example for the RT <-> NRT channel

@@ -6,6 +6,7 @@ pub mod pdo_handler;
 pub use cn::ControlledNode;
 use log::{error, info, trace};
 pub use mn::ManagingNode;
+pub use mn::{MnContext, CnInfo, CnState};
 pub use pdo_handler::PdoHandler;
 
 use crate::frame::PowerlinkFrame;

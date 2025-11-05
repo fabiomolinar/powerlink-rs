@@ -33,7 +33,7 @@ const OD_IDX_MULTIPLEX_ASSIGN: u16 = 0x1F9B;
 /// Represents a complete POWERLINK Managing Node (MN).
 /// This struct is now a thin wrapper around the MnContext.
 pub struct ManagingNode<'s> {
-    pub(super) context: MnContext<'s>,
+    pub context: MnContext<'s>,
 }
 
 impl<'s> ManagingNode<'s> {

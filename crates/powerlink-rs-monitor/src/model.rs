@@ -1,3 +1,4 @@
+// crates/powerlink-rs-monitor/src/model.rs
 //! Defines the core data structures for diagnostic monitoring.
 //!
 //! These structs are used to pass data from the real-time node thread
@@ -7,7 +8,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Serialize;
-use serde_json::Value; // Keep this for arbitrary error counters
+// serde_json::Value is no longer needed for dll_error_counters
 
 /// A serializable snapshot of a single Controlled Node's state,
 /// as seen by the Managing Node.
@@ -18,7 +19,7 @@ pub struct CnInfo {
     pub communication_ok: bool,
 }
 
-/// A serializable snapshot of the node's diagnostic counters,
+/// A serializable DTO for the node's diagnostic counters,
 /// primarily from OD 0x1101 and 0x1102.
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct DiagnosticCounters {
@@ -33,6 +34,17 @@ pub struct DiagnosticCounters {
     pub emergency_queue_overflow: u32,
 }
 
+/// A serializable DTO for the node's internal DLL error counters.
+/// This struct mirrors `powerlink_rs::frame::MnErrorCounters`
+/// to provide a stable serialization API.
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct MnDllErrorCounters {
+    pub crc_errors: u32,
+    pub collision: u32,
+    pub cycle_time_exceeded: u32,
+    pub loss_of_link_cumulative: u32,    
+}
+
 /// The main data packet sent from the POWERLINK node to the monitor.
 /// This contains a complete snapshot of the network's state for a given cycle.
 #[derive(Serialize, Clone, Debug)]
@@ -41,8 +53,8 @@ pub struct DiagnosticSnapshot {
     pub mn_nmt_state: String,
     /// A list of all known Controlled Nodes and their current states.
     pub cn_states: Vec<CnInfo>,
-    /// A JSON-compatible representation of the node's generic DLL error counters.
-    pub dll_error_counters: Value,
+    /// A structured representation of the node's internal DLL error counters.
+    pub dll_error_counters: MnDllErrorCounters,
     /// A structured representation of the node's diagnostic counters (OD 0x1101/0x1102).
     pub diagnostic_counters: DiagnosticCounters,
 }

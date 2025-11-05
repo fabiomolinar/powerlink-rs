@@ -24,7 +24,7 @@ const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct is a thin wrapper around a context object that holds all state.
 pub struct ControlledNode<'s> {
-    context: CnContext<'s>,
+    pub context: CnContext<'s>,
 }
 
 impl<'s> ControlledNode<'s> {

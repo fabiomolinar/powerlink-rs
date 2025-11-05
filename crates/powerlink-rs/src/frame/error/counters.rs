@@ -48,6 +48,10 @@ impl ThresholdCounter {
     pub fn is_active(&self) -> bool {
         self.threshold_cnt > 0
     }
+
+    pub fn cumulative_count(&self) -> u32 {
+        self.cumulative_cnt
+    }
 }
 
 // --- Controlled Node (CN) Counters ---

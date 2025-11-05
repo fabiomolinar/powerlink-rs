@@ -759,12 +759,15 @@ dependencies = [
 name = "powerlink-rs-linux"
 version = "0.0.0"
 dependencies = [
+ "crossbeam-channel",
  "env_logger",
  "lazy_static",
  "log",
  "pcap",
  "pnet",
  "powerlink-rs",
+ "powerlink-rs-monitor",
+ "tokio",
 ]
 
 [[package]]
