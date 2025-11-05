@@ -43,5 +43,8 @@ RUN apt-get update && apt-get install -y libpcap0.8 && rm -rf /var/lib/apt/lists
 # Copy the built binary from the builder stage
 COPY --from=builder /app/powerlink-rs-linux-example/target/release/examples/mn_web_monitor /usr/local/bin/mn_web_monitor
 
+# Set execute permission
+RUN chmod +x /usr/local/bin/mn_web_monitor
+
 # Set the binary as the entrypoint
 ENTRYPOINT ["/usr/local/bin/mn_web_monitor"]
