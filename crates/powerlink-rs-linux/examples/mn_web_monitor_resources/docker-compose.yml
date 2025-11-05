@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  mn-web-monitor:
+    build:
+      context: ../../../.. 
+      dockerfile: ./crates/powerlink-rs-linux/examples/mn_web_monitor_resources/Dockerfile
+    container_name: mn-web-monitor
+    # We must use host networking for raw socket access (pnet)
+    network_mode: "host"
+    # Set capability for raw sockets
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    # Expose the web server port to the host
+    ports:
+      - "3000:3000"
+    environment:
+      # Set the interface to use inside the container
+      - POWERLINK_INTERFACE=eth0
+      # Enable Rust logging
+      - RUST_LOG=info,powerlink_rs=debug,powerlink_rs_monitor=debug
