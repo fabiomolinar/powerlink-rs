@@ -65,6 +65,34 @@ pub trait Node {
     /// returned by `next_action_time` has been reached.
     fn tick(&mut self, current_time_us: u64) -> NodeAction;
 
+    /// Runs one full cycle of the node's logic.
+    ///
+    /// This is the recommended function to call in your main application loop.
+    /// It handles:
+    /// 1. Processing an incoming raw frame (if any).
+    /// 2. Ticking the node's internal timers.
+    /// 3. Prioritizing the resulting actions.
+    ///
+    /// It correctly implements the required priority, where reactive
+    /// (frame-based) actions always take precedence over proactive
+    /// (timer-based) actions.
+    ///
+    /// # Arguments
+    /// * `buffer`: The raw byte slice from `interface.receive_frame()`.
+    ///   If no frame was received (e.g., `Ok(0)`), pass an empty slice `&[]`.
+    /// * `current_time_us`: The current timestamp.
+    ///
+    /// # Returns
+    /// The single, highest-priority `NodeAction` to be executed.
+    fn run_cycle(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
+        let frame_action = self.process_raw_frame(buffer, current_time_us);
+        let tick_action = self.tick(current_time_us);
+        if frame_action != NodeAction::NoAction {
+            return frame_action;
+        }
+        tick_action
+    }
+
     /// Returns the current NMT state of the node.
     fn nmt_state(&self) -> NmtState;
 
