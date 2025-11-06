@@ -1,7 +1,7 @@
 //! Utility functions for creating default Object Dictionaries.
 
 use super::{
-    data::{AccessType, Category, Object, ObjectValue, PdoMapping},
+    {AccessType, Category, Object, ObjectValue, PdoMapping},
     entry::ObjectEntry,
     ObjectDictionary,
 };
@@ -149,7 +149,7 @@ pub fn new_mn_default(node_id: NodeId) -> ObjectDictionary<'static> {
     // --- Modify/Add MN-Specific Objects ---
 
     // 0x1F82: NMT_FeatureFlags_U32 (Add MN flag)
-    let mn_flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND | FeatureFlags::MANAGING_NODE;
+    let mn_flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND;
     od.insert(
         0x1F82,
         ObjectEntry {
@@ -183,67 +183,73 @@ pub fn new_mn_default(node_id: NodeId) -> ObjectDictionary<'static> {
     // 0x1F84: NMT_MNNodeList_AU32 (Device Type List)
     od.insert(
         0x1F84,
-        ObjectEntry::array(
-            0x1F84,
-            "NMT_MNNodeList_AU32",
-            C_ADR_MN_DEF_NODE_ID, // Max sub-index
-            Object::Variable(ObjectValue::Unsigned32(0)),
-        ),
+        ObjectEntry { 
+            object: Object::Array(vec![ObjectValue::Unsigned32(0)]), 
+            name: "NMT_MNNodeList_AU32", 
+            category: Category::Mandatory, 
+            access: Some(AccessType::ReadWrite), 
+            default_value: None, value_range: None, pdo_mapping: None
+         }
     );
 
     // 0x1F85: NMT_MNVendorIdList_AU32
     od.insert(
         0x1F85,
-        ObjectEntry::array(
-            0x1F85,
-            "NMT_MNVendorIdList_AU32",
-            C_ADR_MN_DEF_NODE_ID,
-            Object::Variable(ObjectValue::Unsigned32(0)),
-        ),
+        ObjectEntry { 
+            object: Object::Array(vec![ObjectValue::Unsigned32(0)]), 
+            name: "NMT_MNVendorIdList_AU32", 
+            category: Category::Mandatory, 
+            access: Some(AccessType::ReadWrite), 
+            default_value: None, value_range: None, pdo_mapping: None
+         }
     );
 
     // 0x1F86: NMT_MNProductCodeList_AU32
     od.insert(
         0x1F86,
-        ObjectEntry::array(
-            0x1F86,
-            "NMT_MNProductCodeList_AU32",
-            C_ADR_MN_DEF_NODE_ID,
-            Object::Variable(ObjectValue::Unsigned32(0)),
-        ),
+        ObjectEntry { 
+            object: Object::Array(vec![ObjectValue::Unsigned32(0)]), 
+            name: "NMT_MNProductCodeList_AU32", 
+            category: Category::Mandatory, 
+            access: Some(AccessType::ReadWrite), 
+            default_value: None, value_range: None, pdo_mapping: None
+         }
     );
 
     // 0x1F87: NMT_MNRevisionNoList_AU32
     od.insert(
         0x1F87,
-        ObjectEntry::array(
-            0x1F87,
-            "NMT_MNRevisionNoList_AU32",
-            C_ADR_MN_DEF_NODE_ID,
-            Object::Variable(ObjectValue::Unsigned32(0)),
-        ),
+        ObjectEntry { 
+            object: Object::Array(vec![ObjectValue::Unsigned32(0)]), 
+            name: "NMT_MNRevisionNoList_AU32", 
+            category: Category::Mandatory, 
+            access: Some(AccessType::ReadWrite), 
+            default_value: None, value_range: None, pdo_mapping: None
+         }
     );
 
     // 0x1F8D: DLL_MNPResPayloadLimitList_AU16
     od.insert(
         0x1F8D,
-        ObjectEntry::array(
-            0x1F8D,
-            "DLL_MNPResPayloadLimitList_AU16",
-            C_ADR_MN_DEF_NODE_ID,
-            Object::Variable(ObjectValue::Unsigned16(0)),
-        ),
+        ObjectEntry { 
+            object: Object::Array(vec![ObjectValue::Unsigned16(0)]), 
+            name: "DLL_MNPResPayloadLimitList_AU16", 
+            category: Category::Mandatory, 
+            access: Some(AccessType::ReadWrite), 
+            default_value: None, value_range: None, pdo_mapping: None
+         }
     );
 
     // 0x1F92: DLL_MNPResTimeOut_AU32
     od.insert(
         0x1F92,
-        ObjectEntry::array(
-            0x1F92,
-            "DLL_MNPResTimeOut_AU32",
-            C_ADR_MN_DEF_NODE_ID,
-            Object::Variable(ObjectValue::Unsigned32(100000)), // 100ms
-        ),
+        ObjectEntry { 
+            object: Object::Array(vec![ObjectValue::Unsigned32(100000)]), // 100ms
+            name: "DLL_MNPResTimeOut_AU32", 
+            category: Category::Mandatory, 
+            access: Some(AccessType::ReadWrite), 
+            default_value: None, value_range: None, pdo_mapping: None
+         }
     );
 
     od
