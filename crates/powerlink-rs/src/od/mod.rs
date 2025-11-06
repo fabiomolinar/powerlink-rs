@@ -5,6 +5,7 @@ mod pdo_validator;
 mod predefined;
 mod storage;
 mod value;
+pub mod utils;
 
 pub use entry::{AccessType, Category, Object, ObjectEntry, PdoMapping, ValueRange};
 pub use value::ObjectValue;
