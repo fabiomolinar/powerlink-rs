@@ -1,10 +1,12 @@
-// crates/powerlink-rs-linux/examples/mn_web_monitor.rs
 //! This example application runs a POWERLINK Managing Node (MN)
 //! and a real-time web monitor in parallel.
 //!
 //! It demonstrates the 'in-process' monitoring mode, where the node
 //! and the web server run in the same application but in different
 //! threads, communicating via an RT-safe channel.
+//! 
+//! This example can be ran with docker by running:
+//! `docker-compose -f crates/powerlink-io-linux/examples/mn_web_monitor_resources/docker-compose.yml up --build`
 
 use crossbeam_channel::{self, Sender};
 use log::{error, info, trace};
