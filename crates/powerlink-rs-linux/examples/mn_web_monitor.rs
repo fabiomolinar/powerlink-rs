@@ -7,20 +7,16 @@
 //! threads, communicating via an RT-safe channel.
 
 use crossbeam_channel::{self, Sender};
-use log::{error, info, trace, warn};
+use log::{error, info, trace};
 use powerlink_rs::{
-    nmt::NmtStateMachine,
-    node::{
-        mn::{MnContext, CnState, ManagingNode},
-        Node, NodeAction,
-    },
-    od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue},
+    node::{mn::ManagingNode, Node, NodeAction},
+    od::utils::new_mn_default,
     types::{C_ADR_MN_DEF_NODE_ID, NodeId},
-    NetworkInterface, // Added this
+    NetworkInterface,
 };
 use powerlink_rs_linux::LinuxPnetInterface;
 use powerlink_rs_monitor::{
-    model::{DiagnosticCounters, DiagnosticSnapshot, MnDllErrorCounters},
+    model::DiagnosticSnapshot,
     start_in_process_monitor,
 };
 use std::{
@@ -99,7 +95,7 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
 
     // --- 2. Setup Object Dictionary ---
     info!("[RT-Thread] Creating Object Dictionary...");
-    let od = create_mn_od();
+    let od = new_mn_default(NodeId(C_ADR_MN_DEF_NODE_ID));
 
     // --- 3. Create Node ---
     let mut node = ManagingNode::new(od, interface.local_mac_address().into())
@@ -124,7 +120,7 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
         // and action prioritization.
         let action = node.run_cycle(buffer_slice, current_time_us);
 
-        // 4b. Execute node actions
+        // Execute node actions
         match action {
             NodeAction::SendFrame(frame) => {
                 trace!("[RT-Thread] Sending frame ({} bytes)", frame.len());
@@ -141,164 +137,10 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
         }
 
         // 4c. Send snapshot to monitor (non-blocking)
-        let snapshot = build_snapshot(&node.context);
+        let snapshot = DiagnosticSnapshot::from_context(&node.context);
         let _ = snapshot_tx.try_send(snapshot); // Ignore error if channel is full
 
         // In a real application, we would sleep until `node.next_tick_us()`
         thread::sleep(Duration::from_micros(100));
     }
-}
-
-/// Creates a `DiagnosticSnapshot` from the node's internal context.
-/// This is the "transformation" step.
-fn build_snapshot(context: &MnContext) -> DiagnosticSnapshot {
-    // 1. Transform internal CnInfo into serializable monitor::model::CnInfo
-    let cn_states = context
-        .node_info
-        .iter()
-        .map(|(id, info)| powerlink_rs_monitor::model::CnInfo {
-            node_id: id.0,
-            nmt_state: cn_state_to_string(info.state),
-            communication_ok: info.communication_ok,
-        })
-        .collect();
-
-    // --- FIX: Manually create the serializable DTO ---
-    let core_counters = &context.dll_error_manager.counters;
-    let monitor_counters = MnDllErrorCounters {
-        crc_errors: core_counters.crc_errors.cumulative_count(),
-        collision: core_counters.collision.cumulative_count(),
-        cycle_time_exceeded: core_counters.cycle_time_exceeded.cumulative_count(),
-        loss_of_link_cumulative: core_counters.loss_of_link_cumulative,
-    };
-
-    // 2. Build the snapshot
-    DiagnosticSnapshot {
-        // --- FIX: Call NmtStateMachine trait method (trait is in scope) ---
-        mn_nmt_state: format!("{:?}", context.nmt_state_machine.current_state()),
-        cn_states,
-        dll_error_counters: monitor_counters, // <-- Use the new DTO
-        diagnostic_counters: build_diag_counters(&context.core.od),
-    }
-}
-
-/// Helper to build the diagnostic counters struct from the OD.
-fn build_diag_counters(od: &ObjectDictionary) -> DiagnosticCounters {
-    DiagnosticCounters {
-        isochr_cycles: od.read_u32(0x1101, 1).unwrap_or(0),
-        isochr_rx: od.read_u32(0x1101, 2).unwrap_or(0),
-        isochr_tx: od.read_u32(0x1101, 3).unwrap_or(0),
-        async_rx: od.read_u32(0x1101, 4).unwrap_or(0),
-        async_tx: od.read_u32(0x1101, 5).unwrap_or(0),
-        emergency_queue_overflow: od.read_u32(0x1102, 2).unwrap_or(0),
-    }
-}
-
-/// Helper to create a minimal Object Dictionary for the MN.
-fn create_mn_od() -> ObjectDictionary<'static> {
-    let mut od = ObjectDictionary::new(None);
-    
-    od.insert(
-        0x1006, // NMT_CycleLen_U32
-        ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned32(20000)), // 20ms
-            name: "NMT_CycleLen_U32",
-            category: Category::Mandatory,
-            access: Some(AccessType::ReadWriteStore),
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-        },
-    );
-    od.insert(
-        0x1101, // DIA_NMTTelegrCount_REC
-        ObjectEntry {
-            object: Object::Record(vec![
-                ObjectValue::Unsigned32(0), // 1: IsochrCyc_U32
-                ObjectValue::Unsigned32(0), // 2: IsochrRx_U32
-                ObjectValue::Unsigned32(0), // 3: IsochrTx_U32
-                ObjectValue::Unsigned32(0), // 4: AsyncRx_U32
-                ObjectValue::Unsigned32(0), // 5: AsyncTx_U32
-            ]),
-            name: "DIA_NMTTelegrCount_REC",
-            category: Category::Optional,
-            access: None,
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-        },
-    );
-    od.insert(
-        0x1102, // DIA_ERRStatistics_REC
-        ObjectEntry {
-            object: Object::Record(vec![
-                ObjectValue::Unsigned32(0), // 1: HistoryEntryWrite_U32
-                ObjectValue::Unsigned32(0), // 2: EmergencyQueueOverflow_U32
-            ]),
-            name: "DIA_ERRStatistics_REC",
-            category: Category::Optional,
-            access: None,
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-        },
-    );
-
-    let node_id = NodeId(42);
-    od.insert(
-        0x1F84, // NMT_MNNodeList_AU32 (Device Type List)
-        ObjectEntry {
-            // --- FIX: An Array holds ObjectValues, not Objects ---
-            object: Object::Array(
-                (0..=255)
-                    .map(|_| ObjectValue::Unsigned32(0))
-                    .collect(),
-            ),
-            name: "NMT_MNNodeList_AU32",
-            category: Category::Optional,
-            access: None,
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-        },
-    );
-    od.insert(
-        0x1F82, // NMT_MNNodeAssgmt_AU32 (Feature flags per node)
-        ObjectEntry {
-            // --- FIX: An Array holds ObjectValues, not Objects ---
-            object: Object::Array(
-                (0..=255)
-                    .map(|_| ObjectValue::Unsigned32(0))
-                    .collect(),
-            ),
-            name: "NMT_MNNodeAssgmt_AU32",
-            category: Category::Mandatory,
-            access: None,
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-        },
-    );
-
-    // --- FIX: Use public .write() and pass an ObjectValue ---
-    od.write(
-        0x1F82,
-        node_id.0.into(),
-        ObjectValue::Unsigned32(0x0000_0004),
-    )
-    .unwrap(); // Mandatory CN
-    od
-}
-
-/// Helper to convert internal CnState to a human-readable string.
-fn cn_state_to_string(state: CnState) -> String {
-    match state {
-        CnState::Unknown => "Unknown",
-        CnState::Identified => "Identified",
-        CnState::PreOperational => "PreOperational",
-        CnState::Operational => "Operational",
-        CnState::Stopped => "Stopped",
-        CnState::Missing => "Missing",
-    }
-    .to_string()
 }
