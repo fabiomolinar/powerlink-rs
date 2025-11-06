@@ -114,7 +114,7 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
         let current_time_us = start_time.elapsed().as_micros() as u64;
 
         // 4a. Receive frames
-        let action = match interface.receive_frame(&mut buffer) {
+        let frame_action = match interface.receive_frame(&mut buffer) {
             Ok(bytes) if bytes > 0 => {
                 let received_slice = &buffer[..bytes];
                 // --- FIX: Call process_raw_frame (public method) ---
@@ -122,12 +122,20 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
             }
             Ok(_) => {
                 // No frame received, just tick the node
-                node.tick(current_time_us)
+                NodeAction::NoAction
             }
             Err(e) => {
                 warn!("[RT-Thread] Receive error: {:?}", e);
                 NodeAction::NoAction
             }
+        };
+
+        let tick_action = node.tick(current_time_us);
+
+        let action = if frame_action != NodeAction::NoAction {
+            frame_action
+        } else {
+            tick_action
         };
 
         // 4b. Execute node actions
