@@ -14,7 +14,7 @@ use std::time::Duration;
 
 // --- Imports for optional pcap feature ---
 #[cfg(feature = "pcap")]
-use pcap::SavefileWriter;
+use pcap::Savefile;
 #[cfg(feature = "pcap")]
 use std::fs::File;
 #[cfg(feature = "pcap")]
@@ -33,7 +33,7 @@ pub struct LinuxPnetInterface {
     local_ip_address: IpAddress,
     // PCAP file writer (conditionally compiled)
     #[cfg(feature = "pcap")]
-    pcap_writer: Option<Mutex<SavefileWriter<File>>>,
+    pcap_writer: Option<Mutex<Savefile>>,
 }
 
 impl LinuxPnetInterface {
@@ -107,7 +107,7 @@ impl LinuxPnetInterface {
         // Now, create and add the pcap writer
         let file = File::create(pcap_filename)
             .map_err(|e| format!("Failed to create pcap file: {}", e))?;
-        let writer = SavefileWriter::new(file)
+        let writer = Savefile::new(file)
             .map_err(|e| format!("Failed to create pcap writer: {}", e))?;
 
         interface.pcap_writer = Some(Mutex::new(writer));

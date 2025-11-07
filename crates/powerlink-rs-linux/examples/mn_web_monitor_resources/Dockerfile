@@ -31,7 +31,7 @@ COPY crates/powerlink-rs-windows crates/powerlink-rs-windows
 COPY crates/powerlink-rs-embedded crates/powerlink-rs-embedded
 
 # Build the specific example binary, enabling the 'pcap' feature
-RUN cargo build --release --example mn_web_monitor --features powerlink-rs-linux/pcap
+RUN cargo build --release --example mn_web_monitor --features pcap -p powerlink-rs-linux
 
 # --- Final Image ---
 # Use a matching bookworm-slim base image
