@@ -5,7 +5,7 @@
 //! To run this example:
 //! 1. Ensure you have Docker and docker-compose installed.
 //! 2. From the workspace root, run:
-//!    docker-compose -f crates/powerlink-io-linux/examples/io_module_resources/docker-compose.yml up --build
+//!    docker-compose -f crates/powerlink-rs-linux/examples/io_module_resources/docker-compose.yml up --build
 //!
 //! The MN will print the digital inputs it receives from the CN, and the CN will
 //! print the digital outputs it receives from the MN. The MN logic mirrors the
