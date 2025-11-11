@@ -50,7 +50,14 @@ pub(super) fn process_frame(
                         .asnd_transport
                         .build_response(response_data, context)
                     {
-                        Ok(action) => return action,
+                        Ok(action) => {
+                            // Increment SDO Tx counter for ASnd response
+                            context.core.od.increment_counter(
+                                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                                constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                            );
+                            return action;
+                        }
                         Err(e) => {
                             error!("Failed to build SDO/ASnd response: {:?}", e);
                             return NodeAction::NoAction;
@@ -507,11 +514,9 @@ pub(super) fn process_frame(
                                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                                 constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_TX,
                             );
+                            // *** CORRECTED CALL ***
                             Some(payload::build_pres_response(
-                                context.core.mac_address,
-                                context.nmt_state_machine.node_id,
-                                current_nmt_state,
-                                &context.core.od,
+                                context,
                                 &context.core.sdo_client,
                                 &context.pending_nmt_requests,
                                 context.en_flag,

@@ -227,6 +227,11 @@ impl<'s> ManagingNode<'s> {
                             current_time_us,
                         ) {
                             Ok(response_data) => {
+                                // *** INCREMENT SDO TX COUNTER ***
+                                self.context.core.od.increment_counter(
+                                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                                );
                                 return match self
                                     .context
                                     .asnd_transport

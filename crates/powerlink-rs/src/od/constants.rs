@@ -16,6 +16,7 @@ pub const IDX_NMT_STORE_PARAM_CMD_REC: u16 = 0x1010;
 pub const IDX_NMT_RESTORE_PARAM_CMD_REC: u16 = 0x1011;
 pub const IDX_NMT_IDENTITY_OBJECT_REC: u16 = 0x1018;
 pub const IDX_CFM_VERIFY_CONFIG_REC: u16 = 0x1020;
+pub const IDX_PDL_LOC_VER_APPL_SW_REC: u16 = 0x1F52; // Added this constant
 
 // 0x11xx: Diagnostic Objects
 pub const IDX_DIAG_NMT_TELEGR_COUNT_REC: u16 = 0x1101;
@@ -37,10 +38,18 @@ pub const SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG: u8 = 5; // StaticErrorBitFieldCh
 pub const SUBIDX_DIAG_ERR_STATS_ER_POS_EDGE: u8 = 6; // ERPositiveEdge_U32
 pub const SUBIDX_DIAG_ERR_STATS_EN_EDGE: u8 = 7; // ENEdge_U32
 
+// 0x13xx: SDO Parameters
+pub const IDX_SDO_SERVER_PARAM_REC: u16 = 0x1300;
+pub const SUBIDX_SDO_SERVER_TIMEOUT_U32: u8 = 1;
+pub const IDX_SDO_CLIENT_PARAM_REC: u16 = 0x1301;
+pub const IDX_SDO_CLIENT_RETRY_REC: u16 = 0x1302;
+
 // 0x14xx: RPDO Communication Parameters
 pub const IDX_RPDO_COMM_PARAM_REC_START: u16 = 0x1400;
 pub const IDX_RPDO_COMM_PARAM_REC_END: u16 = 0x14FF;
 pub const IDX_RPDO_COMM_PARAM_REC_1: u16 = 0x1401;
+pub const SUBIDX_PDO_COMM_PARAM_NODEID_U8: u8 = 1;
+pub const SUBIDX_PDO_COMM_PARAM_VERSION_U8: u8 = 2;
 
 // 0x16xx: RPDO Mapping Parameters
 pub const IDX_RPDO_MAPPING_PARAM_REC_START: u16 = 0x1600;
@@ -59,6 +68,8 @@ pub const IDX_TPDO_MAPPING_PARAM_REC_1: u16 = 0x1A01;
 
 // 0x1Cxx: DLL Parameters
 pub const IDX_DLL_CN_LOSS_OF_SOC_TOL_U32: u16 = 0x1C14;
+pub const IDX_PDO_ERR_MAP_VERS_OSTR: u16 = 0x1C80;
+pub const IDX_PDO_ERR_SHORT_RX_OSTR: u16 = 0x1C81;
 
 // 0x1Exx: Network Layer Parameters
 pub const IDX_NWL_IP_ADDR_TABLE_REC: u16 = 0x1E40;
@@ -68,7 +79,6 @@ pub const IDX_NMT_START_UP_U32: u16 = 0x1F80;
 pub const IDX_NMT_NODE_ASSIGNMENT_AU32: u16 = 0x1F81;
 pub const IDX_NMT_FEATURE_FLAGS_U32: u16 = 0x1F82;
 pub const IDX_NMT_EPL_VERSION_U8: u16 = 0x1F83;
-// This was incorrectly named in events.rs. The spec uses 0x1F84 for DeviceTypeIdList
 pub const IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32: u16 = 0x1F84;
 pub const IDX_NMT_MN_VENDOR_ID_LIST_AU32: u16 = 0x1F85;
 pub const IDX_NMT_MN_PRODUCT_CODE_LIST_AU32: u16 = 0x1F86;

@@ -2,10 +2,11 @@ use crate::frame::basic::MacAddress;
 use crate::frame::error::ErrorEntry;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
+use crate::nmt::NmtStateMachine;
 use crate::nmt::events::NmtCommand;
 use crate::nmt::states::NmtState;
-use crate::od::ObjectValue;
-use crate::pdo::{PDOVersion, PdoMappingEntry};
+use crate::od::{constants, ObjectValue}; // Import constants
+use crate::pdo::PDOVersion;
 use crate::sdo::SdoClient;
 use crate::types::C_ADR_MN_DEF_NODE_ID;
 use crate::{od::ObjectDictionary, types::NodeId, PowerlinkError};
@@ -14,14 +15,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, trace, warn};
 
-// Constants for OD access
-const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
-const OD_IDX_TPDO_MAPP_PARAM_BASE: u16 = 0x1A00;
-const OD_IDX_CYCLE_TIMING_REC: u16 = 0x1F98; // NMT_CycleTiming_REC
-const OD_SUBIDX_PRES_PAYLOAD_LIMIT: u8 = 5; // PresActPayloadLimit_U16 in 0x1F98
-const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
-const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
-const OD_SUBIDX_ASYNC_MTU: u8 = 8; // AsyncMTU_U16 in 0x1F98
+// Import the context directly for the new TPDO build method
+use super::state::CnContext;
 
 /// Builds an `ASnd` frame for the `IdentResponse` service.
 pub(super) fn build_ident_response(
@@ -98,24 +93,35 @@ pub(super) fn build_nmt_request(
 
 /// Builds a `PRes` frame in response to being polled by a `PReq`.
 pub(super) fn build_pres_response(
-    mac_address: MacAddress,
-    node_id: NodeId,
-    nmt_state: NmtState,
-    od: &ObjectDictionary,
+    context: &CnContext, // Use the full context
     sdo_client: &SdoClient,
     pending_nmt_requests: &[(NmtCommand, NodeId)],
     en_flag: bool,
 ) -> PowerlinkFrame {
+    let node_id = context.nmt_state_machine.node_id();
+    let nmt_state = context.nmt_state_machine.current_state();
+    let mac_address = context.core.mac_address;
+
     debug!("Building PRes in response to PReq for node {}", node_id.0);
 
-    let (payload, pdo_version, payload_is_valid) = match build_tpdo_payload(od) {
+    // Call the new inherent method on CnContext
+    let (payload, pdo_version, payload_is_valid) = match context.build_tpdo_payload() {
         Ok((payload, version)) => (payload, version, true),
         Err(e) => {
             error!(
                 "Failed to build TPDO payload for PRes: {:?}. Sending empty PRes with RD=0.",
                 e
             );
-            (Vec::new(), PDOVersion(0), false)
+            // Must still send a PRes of the correct configured size, even if empty
+            let payload_limit = context
+                .core
+                .od
+                .read_u16(
+                    constants::IDX_NMT_CYCLE_TIMING_REC,
+                    constants::SUBIDX_NMT_CYCLE_TIMING_PRES_ACT_PAYLOAD_U16,
+                )
+                .unwrap_or(36) as usize;
+            (vec![0u8; payload_limit], PDOVersion(0), false)
         }
     };
 
@@ -155,49 +161,133 @@ fn build_ident_response_payload(od: &ObjectDictionary) -> Vec<u8> {
 
     // Flags (Octet 0-1): PR/RS - Assume none pending for now
     // NMTState (Octet 2)
-    payload[2] = od.read_u8(0x1F8C, 0).unwrap_or(0); // NMT_CurrNMTState_U8
-                                                    // Reserved (Octet 3)
-                                                    // EPLVersion (Octet 4) - from 0x1F83/0
-    payload[4] = od.read_u8(0x1F83, 0).unwrap_or(0);
+    payload[2] = od
+        .read_u8(constants::IDX_NMT_CURR_NMT_STATE_U8, 0)
+        .unwrap_or(0);
+    // Reserved (Octet 3)
+    // EPLVersion (Octet 4) - from 0x1F83/0
+    payload[4] = od
+        .read_u8(constants::IDX_NMT_EPL_VERSION_U8, 0)
+        .unwrap_or(0);
     // Reserved (Octet 5)
     // FeatureFlags (Octets 6-9) - from 0x1F82/0
-    payload[6..10].copy_from_slice(&od.read_u32(0x1F82, 0).unwrap_or(0).to_le_bytes());
+    payload[6..10].copy_from_slice(
+        &od.read_u32(constants::IDX_NMT_FEATURE_FLAGS_U32, 0)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // MTU (Octets 10-11) - from 0x1F98/8 (AsyncMTU_U16)
-    payload[10..12].copy_from_slice(&od.read_u16(0x1F98, 8).unwrap_or(0).to_le_bytes());
+    payload[10..12].copy_from_slice(
+        &od.read_u16(
+            constants::IDX_NMT_CYCLE_TIMING_REC,
+            constants::SUBIDX_NMT_CYCLE_TIMING_ASYNC_MTU_U16,
+        )
+        .unwrap_or(0)
+        .to_le_bytes(),
+    );
     // PollInSize (Octets 12-13) - from 0x1F98/4 (PreqActPayloadLimit_U16)
-    payload[12..14].copy_from_slice(&od.read_u16(0x1F98, 4).unwrap_or(0).to_le_bytes());
+    payload[12..14].copy_from_slice(
+        &od.read_u16(
+            constants::IDX_NMT_CYCLE_TIMING_REC,
+            constants::SUBIDX_NMT_CYCLE_TIMING_PREQ_ACT_PAYLOAD_U16,
+        )
+        .unwrap_or(0)
+        .to_le_bytes(),
+    );
     // PollOutSize (Octets 14-15) - from 0x1F98/5 (PresActPayloadLimit_U16)
-    payload[14..16].copy_from_slice(&od.read_u16(0x1F98, 5).unwrap_or(0).to_le_bytes());
+    payload[14..16].copy_from_slice(
+        &od.read_u16(
+            constants::IDX_NMT_CYCLE_TIMING_REC,
+            constants::SUBIDX_NMT_CYCLE_TIMING_PRES_ACT_PAYLOAD_U16,
+        )
+        .unwrap_or(0)
+        .to_le_bytes(),
+    );
     // ResponseTime (Octets 16-19) - from 0x1F98/3 (PresMaxLatency_U32)
-    payload[16..20].copy_from_slice(&od.read_u32(0x1F98, 3).unwrap_or(0).to_le_bytes());
+    payload[16..20].copy_from_slice(
+        &od.read_u32(
+            constants::IDX_NMT_CYCLE_TIMING_REC,
+            constants::SUBIDX_NMT_CYCLE_TIMING_PRES_MAX_LATENCY_U32,
+        )
+        .unwrap_or(0)
+        .to_le_bytes(),
+    );
     // Reserved (Octets 20-21)
     // DeviceType (Octets 22-25) - from 0x1000/0
-    payload[22..26].copy_from_slice(&od.read_u32(0x1000, 0).unwrap_or(0).to_le_bytes());
+    payload[22..26].copy_from_slice(
+        &od.read_u32(constants::IDX_NMT_DEVICE_TYPE_U32, 0)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // VendorID (Octets 26-29) - from 0x1018/1
-    payload[26..30].copy_from_slice(&od.read_u32(0x1018, 1).unwrap_or(0).to_le_bytes());
+    payload[26..30].copy_from_slice(
+        &od.read_u32(constants::IDX_NMT_IDENTITY_OBJECT_REC, 1)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // ProductCode (Octets 30-33) - from 0x1018/2
-    payload[30..34].copy_from_slice(&od.read_u32(0x1018, 2).unwrap_or(0).to_le_bytes());
+    payload[30..34].copy_from_slice(
+        &od.read_u32(constants::IDX_NMT_IDENTITY_OBJECT_REC, 2)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // RevisionNumber (Octets 34-37) - from 0x1018/3
-    payload[34..38].copy_from_slice(&od.read_u32(0x1018, 3).unwrap_or(0).to_le_bytes());
+    payload[34..38].copy_from_slice(
+        &od.read_u32(constants::IDX_NMT_IDENTITY_OBJECT_REC, 3)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // SerialNumber (Octets 38-41) - from 0x1018/4
-    payload[38..42].copy_from_slice(&od.read_u32(0x1018, 4).unwrap_or(0).to_le_bytes());
+    payload[38..42].copy_from_slice(
+        &od.read_u32(constants::IDX_NMT_IDENTITY_OBJECT_REC, 4)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // VendorSpecificExtension1 (Octets 42-49) - Skipped (zeros)
     // VerifyConfigurationDate (Octets 50-53) - from 0x1020/1
-    payload[50..54].copy_from_slice(&od.read_u32(0x1020, 1).unwrap_or(0).to_le_bytes());
+    payload[50..54].copy_from_slice(
+        &od.read_u32(constants::IDX_CFM_VERIFY_CONFIG_REC, 1)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // VerifyConfigurationTime (Octets 54-57) - from 0x1020/2
-    payload[54..58].copy_from_slice(&od.read_u32(0x1020, 2).unwrap_or(0).to_le_bytes());
+    payload[54..58].copy_from_slice(
+        &od.read_u32(constants::IDX_CFM_VERIFY_CONFIG_REC, 2)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // ApplicationSwDate (Octets 58-61) - from 0x1F52/1
-    payload[58..62].copy_from_slice(&od.read_u32(0x1F52, 1).unwrap_or(0).to_le_bytes());
+    payload[58..62].copy_from_slice(
+        &od.read_u32(constants::IDX_PDL_LOC_VER_APPL_SW_REC, 1)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // ApplicationSwTime (Octets 62-65) - from 0x1F52/2
-    payload[62..66].copy_from_slice(&od.read_u32(0x1F52, 2).unwrap_or(0).to_le_bytes());
+    payload[62..66].copy_from_slice(
+        &od.read_u32(constants::IDX_PDL_LOC_VER_APPL_SW_REC, 2)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // IPAddress (Octets 66-69) - from 0x1E40/2
-    payload[66..70].copy_from_slice(&od.read_u32(0x1E40, 2).unwrap_or(0).to_le_bytes());
+    payload[66..70].copy_from_slice(
+        &od.read_u32(constants::IDX_NWL_IP_ADDR_TABLE_REC, 2)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // SubnetMask (Octets 70-73) - from 0x1E40/3
-    payload[70..74].copy_from_slice(&od.read_u32(0x1E40, 3).unwrap_or(0).to_le_bytes());
+    payload[70..74].copy_from_slice(
+        &od.read_u32(constants::IDX_NWL_IP_ADDR_TABLE_REC, 3)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // DefaultGateway (Octets 74-77) - from 0x1E40/5
-    payload[74..78].copy_from_slice(&od.read_u32(0x1E40, 5).unwrap_or(0).to_le_bytes());
+    payload[74..78].copy_from_slice(
+        &od.read_u32(constants::IDX_NWL_IP_ADDR_TABLE_REC, 5)
+            .unwrap_or(0)
+            .to_le_bytes(),
+    );
     // HostName (Octets 78-109) - from 0x1F9A/0 (VISIBLE_STRING32)
-    if let Some(cow_val) = od.read(0x1F9A, 0) {
+    if let Some(cow_val) = od.read(constants::IDX_NMT_HOST_NAME_VSTR, 0) {
         if let crate::od::ObjectValue::VisibleString(s) = &*cow_val {
             let bytes = s.as_bytes();
             let len = bytes.len().min(32); // Max 32 bytes for hostname field
@@ -219,9 +309,12 @@ fn build_status_response_payload(
 ) -> Vec<u8> {
     // The payload limit is defined by AsyncMTU (0x1F98/8), minus ASnd header (4 bytes)
     let mtu = od
-        .read_u16(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_MTU)
+        .read_u16(
+            constants::IDX_NMT_CYCLE_TIMING_REC,
+            constants::SUBIDX_NMT_CYCLE_TIMING_ASYNC_MTU_U16,
+        )
         .unwrap_or(300) as usize;
-    let max_payload_size = mtu.saturating_sub(4);
+    let max_payload_size = mtu.saturating_sub(4); // Corrected typo
 
     // Base payload with fixed fields
     let mut payload = vec![0u8; 14];
@@ -234,10 +327,14 @@ fn build_status_response_payload(
     }
     // Octet 1: Flags (PR, RS)
     // Octet 2: NMTState
-    payload[2] = od.read_u8(0x1F8C, 0).unwrap_or(0);
+    payload[2] = od
+        .read_u8(constants::IDX_NMT_CURR_NMT_STATE_U8, 0)
+        .unwrap_or(0);
     // Octets 3-5: Reserved
     // Octets 6-13: StaticErrorBitField
-    payload[6] = od.read_u8(OD_IDX_ERROR_REGISTER, 0).unwrap_or(0);
+    payload[6] = od
+        .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
+        .unwrap_or(0);
     // Bytes 7-13 are reserved or device specific errors.
 
     // Append Error/Event History Entries from emergency queue
@@ -285,114 +382,4 @@ fn build_status_response_payload(
     }
 
     payload
-}
-
-/// Builds the payload for a TPDO (PRes) frame by reading from the Object Dictionary
-/// based on the configured mapping for the CN's PRes (typically TPDO channel 0).
-///
-/// Returns the payload and the mapping version, or an error if the configuration is invalid.
-fn build_tpdo_payload(od: &ObjectDictionary) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
-    // For a CN, the TPDO for PRes is almost always the first channel (0x1800/0x1A00).
-    let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE;
-    let mapping_index = OD_IDX_TPDO_MAPP_PARAM_BASE;
-
-    // 1. Get Mapping Version from 0x1800/2
-    let pdo_version = PDOVersion(
-        od.read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_VERSION)
-            .unwrap_or(0),
-    );
-
-    // 2. Get the configured payload size limit for this PRes from 0x1F98/5.
-    let payload_limit = od
-        .read_u16(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_PRES_PAYLOAD_LIMIT)
-        .unwrap_or(36) as usize;
-
-    // Clamp to the absolute maximum allowed by the specification.
-    let payload_limit = payload_limit.min(crate::types::C_DLL_ISOCHR_MAX_PAYL as usize);
-
-    // 3. Pre-allocate a buffer of the fixed payload size. The frame will always have this size.
-    let mut payload = vec![0u8; payload_limit];
-    let mut max_offset_len = 0; // Track the highest byte written to truncate correctly.
-
-    // 4. Read the number of mapped objects from 0x1A00/0.
-    if let Some(ObjectValue::Unsigned8(num_entries)) = od.read(mapping_index, 0).as_deref() {
-        if *num_entries > 0 {
-            trace!(
-                "Building TPDO payload using {:#06X} with {} entries.",
-                mapping_index,
-                num_entries
-            );
-            // 5. Iterate through each mapping entry.
-            for i in 1..=*num_entries {
-                if let Some(ObjectValue::Unsigned64(raw_mapping)) =
-                    od.read(mapping_index, i).as_deref()
-                {
-                    let entry = PdoMappingEntry::from_u64(*raw_mapping);
-
-                    let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length())
-                    else {
-                        warn!(
-                            "[CN] Bit-level TPDO mapping not supported for 0x{:04X}/{}",
-                            entry.index, entry.sub_index
-                        );
-                        continue;
-                    };
-
-                    let end_pos = offset + length;
-
-                    if end_pos > payload_limit {
-                        error!(
-                            "[CN] TPDO mapping for 0x{:04X}/{} (offset {}, len {}) exceeds PRes payload limit {} bytes. [E_PDO_MAP_OVERRUN]",
-                            entry.index, entry.sub_index, offset, length, payload_limit
-                        );
-                        return Err(PowerlinkError::PdoMapOverrun);
-                    }
-                    max_offset_len = max_offset_len.max(end_pos);
-
-                    let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
-                        warn!(
-                            "[CN] TPDO mapping for 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
-                            entry.index, entry.sub_index
-                        );
-                        // The buffer is already zero-filled, so no action needed.
-                        continue;
-                    };
-
-                    let serialized_data = value_cow.serialize();
-                    if serialized_data.len() != length {
-                        warn!(
-                            "[CN] TPDO mapping for 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes. Truncating/Padding.",
-                            entry.index,
-                            entry.sub_index,
-                            length,
-                            serialized_data.len()
-                        );
-                        let copy_len = serialized_data.len().min(length);
-                        payload[offset..offset + copy_len]
-                            .copy_from_slice(&serialized_data[..copy_len]);
-                    } else {
-                        payload[offset..end_pos].copy_from_slice(&serialized_data);
-                    }
-                    trace!(
-                        "[CN] Applied TPDO to PRes: Read {:?} from 0x{:04X}/{}",
-                        value_cow,
-                        entry.index,
-                        entry.sub_index
-                    );
-                } else {
-                    warn!("[CN] Mapping entry {} for TPDO (PRes) is not U64", i);
-                }
-            }
-        }
-    } else {
-        warn!(
-            "[CN] TPDO Mapping object {:#06X} not found or is invalid.",
-            mapping_index
-        );
-    }
-
-    // Even if mappings don't fill the buffer, the payload size is fixed by the limit.
-    // The payload vector is already allocated to this size.
-    trace!("[CN] Built PRes payload with fixed size: {}", payload.len());
-    Ok((payload, pdo_version))
 }

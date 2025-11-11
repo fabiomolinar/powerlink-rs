@@ -1,5 +1,6 @@
 // crates/powerlink-rs/src/hal.rs
 use crate::od::ObjectValue;
+use crate::pdo::PdoError; // Added import for PdoError
 use crate::pdo::PayloadSizeError;
 use crate::types::{InvalidMessageTypeError, NodeIdError};
 use alloc::collections::BTreeMap;
@@ -48,7 +49,7 @@ pub enum PowerlinkError {
     /// A mandatory object was missing or invalid during validation.
     ValidationError(&'static str),
     /// SDO Sequence number was unexpected or connection state mismatch.
-    SdoSequenceError(&'static str), // Added context string
+    SdoSequenceError(&'static str),
     /// SDO command layer received an abort message.
     SdoAborted(u32), // Include abort code
     /// SDO command payload could not be parsed correctly (e.g., ReadByIndexRequest format).
@@ -129,6 +130,22 @@ impl From<PayloadSizeError> for PowerlinkError {
     }
 }
 
+/// Converts a PdoError into a PowerlinkError.
+impl From<PdoError> for PowerlinkError {
+    fn from(err: PdoError) -> Self {
+        match err {
+            PdoError::ObjectNotFound { .. } => PowerlinkError::ObjectNotFound,
+            PdoError::TypeMismatch { .. } => PowerlinkError::TypeMismatch,
+            PdoError::PayloadTooSmall { .. } => PowerlinkError::BufferTooShort,
+            // Convert the String-based error to a static string.
+            // We lose the specific message, but gain the correct error type.
+            PdoError::ConfigurationError(_) => {
+                PowerlinkError::ValidationError("PDO Configuration Error")
+            }
+        }
+    }
+}
+
 impl From<&'static str> for PowerlinkError {
     fn from(s: &'static str) -> Self {
         // Generic conversion from string slice, useful for internal errors
@@ -205,8 +222,10 @@ pub trait ObjectDictionaryStorage {
     fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, PowerlinkError>;
 
     /// Saves the given storable parameters to non-volatile memory.
-    fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>)
-    -> Result<(), PowerlinkError>;
+    fn save(
+        &mut self,
+        parameters: &BTreeMap<(u16, u8), ObjectValue>,
+    ) -> Result<(), PowerlinkError>;
 
     /// Clears all stored parameters from non-volatile memory.
     fn clear(&mut self) -> Result<(), PowerlinkError>;
