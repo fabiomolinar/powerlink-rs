@@ -12,13 +12,14 @@ use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction};
-use crate::od::{Object, ObjectDictionary, ObjectValue};
+use crate::od::{constants, Object, ObjectDictionary, ObjectValue}; // Import constants
 use crate::sdo::SdoTransport;
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
 use crate::sdo::{SdoClient, SdoServer};
+use crate::types::MessageType;
 use crate::types::NodeId;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
@@ -30,13 +31,6 @@ use crate::sdo::udp::deserialize_sdo_udp_payload;
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
 // --- End of imports ---
-
-// Constants for OD access used in this file.
-const OD_IDX_NODE_ASSIGNMENT: u16 = 0x1F81;
-const OD_IDX_CYCLE_TIME: u16 = 0x1006;
-const OD_IDX_CYCLE_TIMING_REC: u16 = 0x1F98;
-const OD_SUBIDX_MULTIPLEX_CYCLE_LEN: u8 = 7;
-const OD_IDX_MULTIPLEX_ASSIGN: u16 = 0x1F9B;
 
 /// Represents a complete POWERLINK Managing Node (MN).
 /// This struct is now a thin wrapper around the MnContext.
@@ -55,9 +49,14 @@ impl<'s> ManagingNode<'s> {
         od.validate_mandatory_objects(true)?;
 
         let nmt_state_machine = MnNmtStateMachine::from_od(&od)?;
-        let cycle_time_us = od.read_u32(OD_IDX_CYCLE_TIME, 0).unwrap_or(0) as u64;
+        let cycle_time_us = od
+            .read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0)
+            .unwrap_or(0) as u64;
         let multiplex_cycle_len = od
-            .read_u8(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_MULTIPLEX_CYCLE_LEN)
+            .read_u8(
+                constants::IDX_NMT_CYCLE_TIMING_REC,
+                constants::SUBIDX_NMT_CYCLE_TIMING_MULT_CYCLE_CNT_U8,
+            )
             .unwrap_or(0);
 
         let mut node_info = BTreeMap::new();
@@ -66,7 +65,9 @@ impl<'s> ManagingNode<'s> {
         let mut async_only_nodes = Vec::new();
         let mut multiplex_assign = BTreeMap::new();
 
-        if let Some(Object::Array(entries)) = od.read_object(OD_IDX_NODE_ASSIGNMENT) {
+        if let Some(Object::Array(entries)) =
+            od.read_object(constants::IDX_NMT_NODE_ASSIGNMENT_AU32)
+        {
             for (i, entry) in entries.iter().enumerate().skip(1) {
                 if let ObjectValue::Unsigned32(assignment) = entry {
                     if (assignment & 1) != 0 {
@@ -77,8 +78,9 @@ impl<'s> ManagingNode<'s> {
                             }
                             if (assignment & (1 << 8)) == 0 {
                                 isochronous_nodes.push(node_id);
-                                let mux_cycle_no =
-                                    od.read_u8(OD_IDX_MULTIPLEX_ASSIGN, node_id.0).unwrap_or(0);
+                                let mux_cycle_no = od
+                                    .read_u8(constants::IDX_NMT_MULTIPLEX_ASSIGN_REC, node_id.0)
+                                    .unwrap_or(0);
                                 multiplex_assign.insert(node_id, mux_cycle_no);
                             } else {
                                 async_only_nodes.push(node_id);
@@ -192,6 +194,19 @@ impl<'s> ManagingNode<'s> {
                 .handle_error(DllError::MultipleMn);
         }
 
+        // --- Peek for ASnd SDO Rx ---
+        if buffer.len() > 17 && // 14 (EthHdr) + 3 (PLHdr) + 1 (SvcID)
+           buffer[14] == MessageType::ASnd as u8 && // MessageType
+           buffer[15] == self.context.nmt_state_machine.node_id.0 && // Dest Node ID
+           buffer[17] == ServiceId::Sdo as u8 // ServiceID
+        {
+            self.context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_SDO_RX,
+            );
+        }
+        // --- END PEEK ---
+
         match deserialize_frame(buffer) {
             Ok(frame) => {
                 // --- Handle SDO ASnd frames before generic processing ---
@@ -277,6 +292,12 @@ impl<'s> ManagingNode<'s> {
             }
         };
 
+        // *** INCREMENT SDO RX COUNTER ***
+        self.context.core.od.increment_counter(
+            constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+            constants::SUBIDX_DIAG_NMT_COUNT_SDO_RX,
+        );
+
         // 2. Define the client info for the SDO server
         let client_info = SdoClientInfo::Udp {
             source_ip,
@@ -341,6 +362,7 @@ impl<'s> Node for ManagingNode<'s> {
             {
                 let action = self.process_ethernet_frame(buffer, current_time_us);
                 if action != NodeAction::NoAction {
+                    // SDO Tx counter (for ASnd) is handled inside process_ethernet_frame
                     return action;
                 }
             }
@@ -350,13 +372,22 @@ impl<'s> Node for ManagingNode<'s> {
         // --- Priority 2: UDP Datagrams ---
         if let Some((buffer, ip, port)) = udp_datagram {
             let action = self.process_udp_datagram(buffer, ip, port, current_time_us);
+            if let NodeAction::SendUdp { .. } = action {
+                // Increment SDO Tx counter for UDP response
+                self.context.core.od.increment_counter(
+                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                );
+            }
             if action != NodeAction::NoAction {
                 return action;
             }
         }
 
         // --- Priority 3: Internal Ticks ---
-        self.tick(current_time_us)
+        let tick_action = self.tick(current_time_us);
+        // SDO Tx counter (for tick-based aborts/ASnd responses) is handled inside scheduler::tick
+        tick_action
     }
 
     #[cfg(not(feature = "sdo-udp"))]
@@ -373,6 +404,7 @@ impl<'s> Node for ManagingNode<'s> {
             {
                 let action = self.process_ethernet_frame(buffer, current_time_us);
                 if action != NodeAction::NoAction {
+                    // SDO Tx counter (for ASnd) is handled inside process_ethernet_frame
                     return action;
                 }
             }
@@ -380,7 +412,9 @@ impl<'s> Node for ManagingNode<'s> {
         }
 
         // --- Priority 2: Internal Ticks ---
-        self.tick(current_time_us)
+        let tick_action = self.tick(current_time_us);
+        // SDO Tx counter (for tick-based aborts/ASnd responses) is handled inside scheduler::tick
+        tick_action
     }
 
     /// Returns the NMT state of the node.

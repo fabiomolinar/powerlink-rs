@@ -8,26 +8,18 @@ use crate::frame::{
 use crate::nmt::NmtStateMachine;
 use crate::nmt::{events::NmtEvent, states::NmtState};
 use crate::node::PdoHandler;
+use crate::od::{constants, ObjectValue}; // Import the new constants module
 use crate::types::NodeId;
 use log::{debug, error, info, trace, warn};
 
-// --- Constants for OD access ---
-const OD_IDX_STARTUP_U32: u16 = 0x1F80;
-const OD_IDX_PRES_PAYLOAD_LIMIT_LIST: u16 = 0x1F8D;
-const OD_IDX_DEVICE_TYPE_LIST: u16 = 0x1F84;
-const OD_IDX_VENDOR_ID_LIST: u16 = 0x1F85;
-const OD_IDX_PRODUCT_CODE_LIST: u16 = 0x1F86;
-const OD_IDX_REVISION_NO_LIST: u16 = 0x1F87;
-const OD_IDX_EXP_SW_DATE_LIST: u16 = 0x1F53;
-const OD_IDX_EXP_SW_TIME_LIST: u16 = 0x1F54;
-const OD_IDX_EXP_CONF_DATE_LIST: u16 = 0x1F26;
-const OD_IDX_EXP_CONF_TIME_LIST: u16 = 0x1F27;
-
-/// Internal function to process a deserialized `PowerlinkFrame`.
-/// The MN primarily *consumes* PRes and ASnd frames.
-/// This function is now called by `ManagingNode::process_powerlink_frame`
-/// and does not handle SDO frames directly anymore.
-pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, current_time_us: u64) {
+/// Processes a `PowerlinkFrame` after it has been identified as
+/// non-SDO or not for the MN. This handles NMT state changes and
+/// DLL state progression based on received frames.
+pub(super) fn process_frame(
+    context: &mut MnContext,
+    frame: PowerlinkFrame,
+    current_time_us: u64,
+) {
     // 1. Update NMT state machine based on the frame type.
     if let Some(event) = frame.nmt_event() {
         if context.nmt_state_machine.current_state() != NmtState::NmtNotActive {
@@ -43,8 +35,19 @@ pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, curr
     // 3. Handle specific frames
     match frame {
         PowerlinkFrame::PRes(pres_frame) => {
-            // Update CN state based on reported NMT state
-            update_cn_state(context, pres_frame.source, pres_frame.nmt_state);
+            // --- Increment Diagnostic Counters ---
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_RX,
+            );
+            // --- End of Diagnostic Counters ---
+
+            trace!("[MN] Received PRes from Node {}", pres_frame.source.0);
+            if let Some(cn_info) = context.node_info.get_mut(&pres_frame.source) {
+                cn_info.nmt_state = pres_frame.nmt_state;
+                cn_info.last_pres_time_us = current_time_us;
+                cn_info.dll_errors = 0; // Clear error count on successful PRes
+            }
 
             // Check if this PRes corresponds to the node we polled
             if context.current_phase == CyclePhase::IsochronousPReq
@@ -77,6 +80,14 @@ pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, curr
             }
         }
         PowerlinkFrame::ASnd(asnd_frame) => {
+            // --- Increment Diagnostic Counters ---
+            // SDO ASnd frames are handled in `main.rs`. This only counts non-SDO ASnd.
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_RX,
+            );
+            // --- End of Diagnostic Counters ---
+
             if context.current_phase == CyclePhase::AsynchronousSoA {
                 trace!(
                     "[MN] Received ASnd from Node {} during Async phase.",
@@ -90,7 +101,8 @@ pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, curr
             }
         }
         _ => {
-            // MN ignores SoC, PReq, and SoA frames it sent itself.
+            // Other frames (SoC, PReq, SoA) are sent by the MN, not received.
+            // SDO ASnd is handled in main.rs
         }
     }
 }
@@ -272,44 +284,51 @@ fn validate_boot_step1_checks(
     let expected_device_type = context
         .core
         .od
-        .read_u32(OD_IDX_DEVICE_TYPE_LIST, node_id.0)
+        .read_u32(
+            constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32,
+            node_id.0,
+        )
         .unwrap_or(0);
     let expected_vendor_id = context
         .core
         .od
-        .read_u32(OD_IDX_VENDOR_ID_LIST, node_id.0)
+        .read_u32(constants::IDX_NMT_MN_VENDOR_ID_LIST_AU32, node_id.0)
         .unwrap_or(0);
     let expected_product_code = context
         .core
         .od
-        .read_u32(OD_IDX_PRODUCT_CODE_LIST, node_id.0)
+        .read_u32(constants::IDX_NMT_MN_PRODUCT_CODE_LIST_AU32, node_id.0)
         .unwrap_or(0);
     let expected_revision_no = context
         .core
         .od
-        .read_u32(OD_IDX_REVISION_NO_LIST, node_id.0)
+        .read_u32(constants::IDX_NMT_MN_REVISION_NO_LIST_AU32, node_id.0)
         .unwrap_or(0);
     let expected_sw_date = context
         .core
         .od
-        .read_u32(OD_IDX_EXP_SW_DATE_LIST, node_id.0)
+        .read_u32(constants::IDX_NMT_MN_EXP_APP_SW_DATE_LIST_AU32, node_id.0)
         .unwrap_or(0);
     let expected_sw_time = context
         .core
         .od
-        .read_u32(OD_IDX_EXP_SW_TIME_LIST, node_id.0)
+        .read_u32(constants::IDX_NMT_MN_EXP_APP_SW_TIME_LIST_AU32, node_id.0)
         .unwrap_or(0);
     let expected_conf_date = context
         .core
         .od
-        .read_u32(OD_IDX_EXP_CONF_DATE_LIST, node_id.0)
+        .read_u32(constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32, node_id.0)
         .unwrap_or(0);
     let expected_conf_time = context
         .core
         .od
-        .read_u32(OD_IDX_EXP_CONF_TIME_LIST, node_id.0)
+        .read_u32(constants::IDX_NMT_MN_EXP_CONF_TIME_LIST_AU32, node_id.0)
         .unwrap_or(0);
-    let startup_flags = context.core.od.read_u32(OD_IDX_STARTUP_U32, 0).unwrap_or(0);
+    let startup_flags = context
+        .core
+        .od
+        .read_u32(constants::IDX_NMT_START_UP_U32, 0)
+        .unwrap_or(0);
 
     // 3. Perform validation checks
     // --- CHECK_IDENTIFICATION (7.4.2.2.1.1) ---
@@ -514,7 +533,7 @@ fn handle_pres_frame(context: &mut MnContext, pres: &PResFrame) {
             let expected_payload_size = context
                 .core
                 .od
-                .read_u16(OD_IDX_PRES_PAYLOAD_LIMIT_LIST, pres.source.0)
+                .read_u16(constants::IDX_NMT_PRES_PAYLOAD_LIMIT_AU16, pres.source.0)
                 .unwrap_or(0) as usize;
 
             // Check payload size. We already checked for timeouts when the PRes was received.

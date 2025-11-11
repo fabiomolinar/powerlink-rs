@@ -4,8 +4,9 @@ use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, M
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
 use crate::nmt::events::NmtCommand;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
+use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
-use crate::od::ObjectDictionary;
+use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
@@ -95,29 +96,63 @@ pub enum CnState {
     Missing,
 }
 
+/// A strongly-typed cache for a CN's identity information.
+/// This data is read from an IdentResponse frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CnIdentity {
+    pub device_type: u32,
+    pub vendor_id: u32,
+    pub product_code: u32,
+    pub revision_no: u32,
+    pub serial_no: u32,
+}
+
 /// A struct holding all state information for a single CN, as tracked by the MN.
+// We can now re-add Copy and Eq because CnIdentity is Copy and Eq.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CnInfo {
-    /// The last known NMT state of the CN.
+    /// The high-level boot-up state of the CN.
     pub state: CnState,
+    /// The last known NMT state reported by the CN in a PRes/StatusResponse.
+    pub nmt_state: NmtState,
     /// The last known EN (Exception New) flag received from the CN.
     pub en_flag: bool,
     /// The last EA (Exception Acknowledge) flag sent *to* the CN by the MN.
     pub ea_flag: bool,
     /// Flag indicating the `CHECK_COMMUNICATION` step has passed.
     pub communication_ok: bool,
+    /// Timestamp of the last successful PRes reception.
+    pub last_pres_time_us: u64,
+    /// Number of consecutive DLL errors (e.g., PRes timeouts).
+    pub dll_errors: u32,
+    /// Cached identity data read from IdentResponse.
+    pub identity: Option<CnIdentity>,
+    /// Current SDO state for this CN.
+    pub sdo_state: SdoState,
 }
 
 impl Default for CnInfo {
     fn default() -> Self {
         Self {
             state: CnState::Unknown,
-            // Both flags start as false, as no error has been signaled or acknowledged.
+            nmt_state: NmtState::NmtNotActive,
             en_flag: false,
             ea_flag: false,
             communication_ok: false,
+            last_pres_time_us: 0,
+            dll_errors: 0,
+            identity: None, // Starts as None
+            sdo_state: SdoState::Idle,
         }
     }
+}
+
+/// Tracks the current SDO state for a CN, as tracked by the MN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+pub enum SdoState {
+    Idle,
+    InProgress,
+    Done,
 }
 
 /// Tracks the current phase within the POWERLINK cycle.

@@ -68,7 +68,11 @@ pub const IDX_NMT_START_UP_U32: u16 = 0x1F80;
 pub const IDX_NMT_NODE_ASSIGNMENT_AU32: u16 = 0x1F81;
 pub const IDX_NMT_FEATURE_FLAGS_U32: u16 = 0x1F82;
 pub const IDX_NMT_EPL_VERSION_U8: u16 = 0x1F83;
-pub const IDX_NMT_MN_NODE_CURR_MAC_ADDR_AU8: u16 = 0x1F84;
+// This was incorrectly named in events.rs. The spec uses 0x1F84 for DeviceTypeIdList
+pub const IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32: u16 = 0x1F84;
+pub const IDX_NMT_MN_VENDOR_ID_LIST_AU32: u16 = 0x1F85;
+pub const IDX_NMT_MN_PRODUCT_CODE_LIST_AU32: u16 = 0x1F86;
+pub const IDX_NMT_MN_REVISION_NO_LIST_AU32: u16 = 0x1F87;
 pub const IDX_NMT_BOOT_TIME_REC: u16 = 0x1F89;
 pub const IDX_NMT_MN_CYCLE_TIMING_REC: u16 = 0x1F8A; // MN-specific cycle timing
 pub const SUBIDX_NMT_MN_CYCLE_TIMING_ASYNC_SLOT_U32: u8 = 2;
@@ -90,6 +94,12 @@ pub const SUBIDX_NMT_CYCLE_TIMING_PRESCALER_U16: u8 = 9;
 pub const IDX_NMT_CN_BASIC_ETH_TIMEOUT_U32: u16 = 0x1F99;
 pub const IDX_NMT_HOST_NAME_VSTR: u16 = 0x1F9A;
 pub const IDX_NMT_MULTIPLEX_ASSIGN_REC: u16 = 0x1F9B;
+
+// 0x1Fxx: CFM (Configuration Management) & PDL (Program Download)
+pub const IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32: u16 = 0x1F26;
+pub const IDX_NMT_MN_EXP_CONF_TIME_LIST_AU32: u16 = 0x1F27;
+pub const IDX_NMT_MN_EXP_APP_SW_DATE_LIST_AU32: u16 = 0x1F53;
+pub const IDX_NMT_MN_EXP_APP_SW_TIME_LIST_AU32: u16 = 0x1F54;
 
 // --- 0x6000 - 0x9FFF: Manufacturer Specific Profile Area ---
 // (Used in io_module example)

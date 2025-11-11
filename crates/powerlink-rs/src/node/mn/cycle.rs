@@ -2,15 +2,11 @@
 use super::payload;
 use super::scheduler;
 use super::state::{CyclePhase, MnContext};
-use crate::frame::DllMsEvent;
+use crate::frame::{DllMsEvent, RequestedServiceId}; // Added RequestedServiceId
 use crate::node::{NodeAction, serialize_frame_action};
+use crate::od::constants; // Import the new constants module
 use crate::types::C_ADR_MN_DEF_NODE_ID;
 use log::debug;
-
-// Constants for OD access used in this file.
-const OD_IDX_MN_PRES_TIMEOUT_LIST: u16 = 0x1F92;
-const OD_IDX_CYCLE_TIMING_REC: u16 = 0x1F98;
-const OD_SUBIDX_ASYNC_SLOT_TIMEOUT: u8 = 2;
 
 /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
 pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64) -> NodeAction {
@@ -23,7 +19,7 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
         let timeout_ns = context
             .core
             .od
-            .read_u32(OD_IDX_MN_PRES_TIMEOUT_LIST, node_id.0)
+            .read_u32(constants::IDX_NMT_MN_CN_PRES_TIMEOUT_AU32, node_id.0)
             .unwrap_or(25000) as u64;
         scheduler::schedule_timeout(
             context,
@@ -32,6 +28,13 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
         );
         let is_multiplexed = context.multiplex_assign.get(&node_id).copied().unwrap_or(0) > 0;
         let frame = payload::build_preq_frame(context, node_id, is_multiplexed);
+
+        // Increment Isochronous Tx counter
+        context.core.od.increment_counter(
+            constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+            constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_TX,
+        );
+
         return serialize_frame_action(frame, context).unwrap_or(
             // TODO: handle error
             NodeAction::NoAction,
@@ -55,7 +58,10 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
         let timeout_ns = context
             .core
             .od
-            .read_u32(OD_IDX_CYCLE_TIMING_REC, OD_SUBIDX_ASYNC_SLOT_TIMEOUT)
+            .read_u32(
+                constants::IDX_NMT_MN_CYCLE_TIMING_REC,
+                constants::SUBIDX_NMT_MN_CYCLE_TIMING_ASYNC_SLOT_U32,
+            )
             .unwrap_or(100_000) as u64;
         scheduler::schedule_timeout(
             context,
@@ -66,6 +72,14 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
         context.current_phase = CyclePhase::AwaitingMnAsyncSend;
     } else {
         context.current_phase = CyclePhase::Idle;
+    }
+
+    // Increment StatusRequest counter if applicable
+    if req_service == RequestedServiceId::StatusRequest {
+        context.core.od.increment_counter(
+            constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+            constants::SUBIDX_DIAG_NMT_COUNT_STATUS_REQ,
+        );
     }
 
     let frame = payload::build_soa_frame(context, req_service, target_node, set_er_flag);
