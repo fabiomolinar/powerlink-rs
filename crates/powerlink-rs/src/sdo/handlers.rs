@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/sdo/handlers.rs
 use log::{error, info, warn};
 
 use crate::PowerlinkError;
@@ -302,25 +303,40 @@ pub(super) fn handle_read_all_by_index(
     od: &ObjectDictionary,
     current_time_us: u64,
 ) -> SdoCommand {
-    match ReadByIndexRequest::from_payload(&command.payload) {
-        Ok(req) if req.sub_index == 0 => {
-            info!("Processing SDO ReadAllByIndex for 0x{:04X}", req.index);
+    // Spec 6.3.2.4.2.1.4 (Table 66): Payload is Index (2 bytes) + reserved (2 bytes)
+    if command.payload.len() < 2 {
+        // Allow at least 2 for index, though 4 is expected
+        return server.abort(command.header.transaction_id, 0x0504_0001); // Command specifier invalid (payload too short)
+    }
+    if command.payload.len() < 4 {
+        warn!(
+            "ReadAllByIndex (TID {}) received payload of {} bytes, expected 4. Proceeding with index...",
+            command.header.transaction_id,
+            command.payload.len()
+        );
+    }
+
+    // The command is only valid for sub-index 0, which is implicit and not in the payload.
+    // We parse the Index from the first 2 bytes.
+    match u16::from_le_bytes(command.payload[0..2].try_into().unwrap()) {
+        index => {
+            info!("Processing SDO ReadAllByIndex for 0x{:04X}", index);
             // Need to handle different OD object types correctly
-            match od.read_object(req.index) {
+            match od.read_object(index) {
                 Some(crate::od::Object::Record(sub_indices))
                 | Some(crate::od::Object::Array(sub_indices)) => {
                     let mut payload = Vec::new();
                     // Iterate elements (sub-index 1 onwards)
                     for i in 0..sub_indices.len() {
                         // Read each sub-index individually
-                        if let Some(value) = od.read(req.index, (i + 1) as u8) {
+                        if let Some(value) = od.read(index, (i + 1) as u8) {
                             payload.extend_from_slice(&value.serialize());
                         } else {
                             // Should not happen if read_object succeeded and length is correct
                             warn!(
                                 "Failed to read sub-index {} during ReadAllByIndex for 0x{:04X}",
                                 i + 1,
-                                req.index
+                                index
                             );
                             // Abort if a sub-index read fails? Or continue with partial data?
                             // Let's abort for consistency.
@@ -341,7 +357,7 @@ pub(super) fn handle_read_all_by_index(
                             total_size: payload.len(),
                             data_buffer: payload,
                             offset: 0,
-                            index: req.index,
+                            index: index,
                             sub_index: 0, // Signifies ReadAll
                             deadline_us: None,
                             retransmissions_left: 0,
@@ -366,14 +382,6 @@ pub(super) fn handle_read_all_by_index(
                 }
             }
         }
-        Ok(_) => {
-            // Sub-index was not 0
-            server.abort(command.header.transaction_id, 0x0609_0011) // Sub-index parameter invalid for ReadAll
-        }
-        Err(PowerlinkError::SdoInvalidCommandPayload) => {
-            server.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
-        }
-        Err(_) => server.abort(command.header.transaction_id, 0x0800_0000), // General error
     }
 }
 

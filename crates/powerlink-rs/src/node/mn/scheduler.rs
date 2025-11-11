@@ -651,19 +651,17 @@ pub(super) fn schedule_timeout(context: &mut MnContext, deadline_us: u64, event:
 
 /// Gets a CN's MAC address from the Object Dictionary.
 pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option<MacAddress> {
-    // This OD entry is defined by the spec for identification, not MACs.
-    // A real implementation would use a dynamic ARP table or a static config
-    // For this test harness, we will assume a static mapping or a different object.
-    // The example `io_module.rs` uses 0x1F84 as a placeholder MAC map, which is incorrect per spec.
-    if let Some(Object::Array(entries)) = context
-        .core
-        .od
-        .read_object(constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32)
-    // This is still 0x1F84, which is Device Type, not MAC list.
-    // This logic is flawed, but matches the example.
-    {
-        // Corrected: Read OD_IDX_MAC_MAP (0x1F84) which stores MACs as OctetString
-        if let Some(ObjectValue::OctetString(mac_bytes)) = entries.get(node_id.0 as usize) {
+    // This helper reads a manufacturer-specific object (0x2100) that maps Node IDs
+    // to MAC addresses. This is used by examples like `io_module` for a static mapping.
+    // A real-world MN might use dynamic ARP or a different configuration method.
+    const OD_IDX_MAC_MAP: u16 = 0x2100;
+
+    if let Some(Object::Array(entries)) = context.core.od.read_object(OD_IDX_MAC_MAP) {
+        // The OD::Array Vec is 0-indexed, mapping to sub-indices 1-N.
+        // So, Node ID 1 is at entries[0].
+        // Node ID 42 is at entries[41].
+        let index = node_id.0 as usize - 1;
+        if let Some(ObjectValue::OctetString(mac_bytes)) = entries.get(index) {
             if mac_bytes.len() >= 6 && mac_bytes[0..6].iter().any(|&b| b != 0) {
                 return Some(MacAddress(mac_bytes[0..6].try_into().unwrap()));
             }

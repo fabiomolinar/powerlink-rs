@@ -1,3 +1,4 @@
+// crates/powerlink-rs-linux/examples/io_module.rs
 //! A full-system example demonstrating a POWERLINK network with one
 //! Managing Node (MN) and one Controlled Node (CN) acting as a simple I/O module.
 //!
@@ -128,7 +129,7 @@ fn get_cn_od(node_id: u8) -> ObjectDictionary<'static> {
         0x1A00, // TPDO1 Mapping
         ObjectEntry {
             object: Object::Array(vec![
-                ObjectValue::Unsigned8(2), // Number of entries
+                // Sub-index 0 (count) is handled by the OD logic, not part of the Vec.
                 ObjectValue::Unsigned64(tpdo1_map_di.to_u64()),
                 ObjectValue::Unsigned64(tpdo1_map_ai1.to_u64()),
             ]),
@@ -140,6 +141,9 @@ fn get_cn_od(node_id: u8) -> ObjectDictionary<'static> {
             pdo_mapping: None,
         },
     );
+    // Manually write the *active* number of entries to sub-index 0
+    od.write(0x1A00, 0, ObjectValue::Unsigned8(2)).unwrap();
+
 
     // RPDO1: Receive outputs from MN to CN (in PReq)
     let rpdo1_map_do = PdoMappingEntry {
@@ -158,7 +162,7 @@ fn get_cn_od(node_id: u8) -> ObjectDictionary<'static> {
         0x1600, // RPDO1 Mapping
         ObjectEntry {
             object: Object::Array(vec![
-                ObjectValue::Unsigned8(2), // Number of entries
+                // Sub-index 0 (count) is handled by the OD logic, not part of the Vec.
                 ObjectValue::Unsigned64(rpdo1_map_do.to_u64()),
                 ObjectValue::Unsigned64(rpdo1_map_ao1.to_u64()),
             ]),
@@ -170,6 +174,8 @@ fn get_cn_od(node_id: u8) -> ObjectDictionary<'static> {
             pdo_mapping: None,
         },
     );
+    // Manually write the *active* number of entries to sub-index 0
+    od.write(0x1600, 0, ObjectValue::Unsigned8(2)).unwrap();
 
     od
 }
@@ -182,8 +188,8 @@ fn get_mn_od(cn_mac: MacAddress) -> ObjectDictionary<'static> {
     add_mandatory_mn_objects(&mut od);
 
     // This object maps Node IDs to MAC addresses.
-    // We only have one CN (Node 42), so we create a map for it.
-    let mut mac_map_entries = vec![ObjectValue::Unsigned8(254)]; // Max entries
+    // We use a manufacturer-specific index (0x2100) for this.
+    let mut mac_map_entries = Vec::with_capacity(254);
     for i in 1..=254 {
         if i == CN_NODE_ID as usize {
             mac_map_entries.push(ObjectValue::OctetString(cn_mac.0.to_vec()));
@@ -192,17 +198,18 @@ fn get_mn_od(cn_mac: MacAddress) -> ObjectDictionary<'static> {
         }
     }
     od.insert(
-        0x1F84, // Using 0x1F84 as a placeholder for a real MAC map
+        0x2100, // Using 0x2100 (manufacturer-specific) for the MAC map
         ObjectEntry {
             object: Object::Array(mac_map_entries),
-            name: "NMT_MNNodeCurrMACAddress_AU8",
-            category: Category::Mandatory,
+            name: "MAN_CNMacAddressList_AOS", // Manufacturer-specific Array of OctetString
+            category: Category::Optional, // Manufacturer-specific objects are not mandatory
             access: Some(AccessType::ReadWrite),
             default_value: None,
             value_range: None,
             pdo_mapping: None,
         },
     );
+
 
     // --- Application Data Objects (to store data from CN) ---
     // Mirror the CN's structure for clarity.
@@ -300,7 +307,6 @@ fn get_mn_od(cn_mac: MacAddress) -> ObjectDictionary<'static> {
         0x1601, // RPDO Mapping for channel 1
         ObjectEntry {
             object: Object::Array(vec![
-                ObjectValue::Unsigned8(2),
                 ObjectValue::Unsigned64(rpdo1_map_di.to_u64()),
                 ObjectValue::Unsigned64(rpdo1_map_ai1.to_u64()),
             ]),
@@ -312,6 +318,8 @@ fn get_mn_od(cn_mac: MacAddress) -> ObjectDictionary<'static> {
             pdo_mapping: None,
         },
     );
+    // Manually write the *active* number of entries to sub-index 0
+    od.write(0x1601, 0, ObjectValue::Unsigned8(2)).unwrap();
 
     // TPDO to send data to CN 42 via PReq
     od.insert(
@@ -346,7 +354,6 @@ fn get_mn_od(cn_mac: MacAddress) -> ObjectDictionary<'static> {
         0x1A01, // TPDO Mapping for channel 1
         ObjectEntry {
             object: Object::Array(vec![
-                ObjectValue::Unsigned8(2),
                 ObjectValue::Unsigned64(tpdo1_map_do.to_u64()),
                 ObjectValue::Unsigned64(tpdo1_map_ao1.to_u64()),
             ]),
@@ -358,6 +365,8 @@ fn get_mn_od(cn_mac: MacAddress) -> ObjectDictionary<'static> {
             pdo_mapping: None,
         },
     );
+    // Manually write the *active* number of entries to sub-index 0
+    od.write(0x1A01, 0, ObjectValue::Unsigned8(2)).unwrap();
 
     od
 }
@@ -740,7 +749,7 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
         },
     );
 
-    let mut node_assignment = vec![ObjectValue::Unsigned8(254)]; // Max sub-index
+    let mut node_assignment = vec![]; // Sub-index 0 is handled by OD logic
     for i in 1..=254 {
         if i == CN_NODE_ID as usize {
             // Bit 0: Node exists, Bit 3: Node is mandatory
@@ -761,13 +770,15 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
             pdo_mapping: None,
         },
     );
+    // Manually set sub-index 0 (count)
+    od.write(0x1F81, 0, ObjectValue::Unsigned8(254)).unwrap();
 
     od.insert(
         0x1F89, // NMT_BootTime_REC
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned32(1_000_000), // MNWaitNotAct_U32 (1 sec)
-                ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp1_U32 (500 ms)
+                ObjectValue::Unsigned32(1_000_000), // 1: MNWaitNotAct_U32 (1 sec)
+                ObjectValue::Unsigned32(500_000),   // 2: MNTimeoutPreOp1_U32 (500 ms)
                 // Add missing sub-indices up to 9
                 ObjectValue::Unsigned32(500_000), // 3: MNWaitPreOp1_U32
                 ObjectValue::Unsigned32(500_000), // 4: MNTimeoutPreOp2_U32
@@ -835,7 +846,7 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
         },
     );
     // Add 0x1F8B for PReq Payload Limits
-    let mut preq_limits = vec![ObjectValue::Unsigned8(254)]; // Max sub-index
+    let mut preq_limits = vec![]; // Sub-index 0 is handled by OD logic
     for i in 1..=254 {
         if i == CN_NODE_ID as usize {
             preq_limits.push(ObjectValue::Unsigned16(36)); // 36 bytes for our CN
@@ -855,8 +866,11 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
             pdo_mapping: None,
         },
     );
+    // Manually set sub-index 0 (count)
+    od.write(0x1F8B, 0, ObjectValue::Unsigned8(254)).unwrap();
+
     // Add 0x1F8D for PRes Payload Limits
-    let mut pres_limits = vec![ObjectValue::Unsigned8(254)]; // Max sub-index
+    let mut pres_limits = vec![]; // Sub-index 0 is handled by OD logic
     for i in 1..=254 {
         if i == CN_NODE_ID as usize {
             pres_limits.push(ObjectValue::Unsigned16(36)); // 36 bytes for our CN
@@ -876,8 +890,11 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
             pdo_mapping: None,
         },
     );
+    // Manually set sub-index 0 (count)
+    od.write(0x1F8D, 0, ObjectValue::Unsigned8(254)).unwrap();
+
     // Add 0x1F92 for PRes Timeouts
-    let mut pres_timeouts = vec![ObjectValue::Unsigned8(254)]; // Max sub-index
+    let mut pres_timeouts = vec![]; // Sub-index 0 is handled by OD logic
     for _ in 1..=254 {
         pres_timeouts.push(ObjectValue::Unsigned32(100_000)); // 100us timeout
     }
@@ -893,6 +910,8 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
             pdo_mapping: None,
         },
     );
+    // Manually set sub-index 0 (count)
+    od.write(0x1F92, 0, ObjectValue::Unsigned8(254)).unwrap();
 }
 
 // Corrected function signatures with lifetimes

@@ -190,12 +190,16 @@ pub struct ReadByIndexRequest {
 
 impl ReadByIndexRequest {
     pub fn from_payload(payload: &[u8]) -> Result<Self, PowerlinkError> {
-        if payload.len() < 3 {
+        // Spec 6.3.2.4.2.1.2 (Table 61) shows:
+        // Index (2 bytes), Sub-Index (1 byte), reserved (1 byte)
+        // Total 4 bytes.
+        if payload.len() < 4 {
             return Err(PowerlinkError::SdoInvalidCommandPayload);
         }
         Ok(Self {
             index: u16::from_le_bytes(payload[0..2].try_into()?),
             sub_index: payload[2],
+            // Ignore payload[3] (reserved)
         })
     }
 }
@@ -228,13 +232,17 @@ pub struct WriteByIndexRequest<'a> {
 
 impl<'a> WriteByIndexRequest<'a> {
     pub fn from_payload(payload: &'a [u8]) -> Result<Self, PowerlinkError> {
-        if payload.len() < 3 {
+        // Spec 6.3.2.4.2.1.1 (Table 59) shows:
+        // Index (2 bytes), Sub-Index (1 byte), reserved (1 byte)
+        // Total 4 bytes before payload data starts.
+        if payload.len() < 4 {
             return Err(PowerlinkError::SdoInvalidCommandPayload);
         }
         Ok(Self {
             index: u16::from_le_bytes(payload[0..2].try_into()?),
             sub_index: payload[2],
-            data: &payload[3..],
+            // Ignore payload[3] (reserved)
+            data: &payload[4..],
         })
     }
 }
@@ -273,14 +281,18 @@ pub struct ReadMultipleParamRequest {
 
 impl ReadMultipleParamRequest {
     pub fn from_payload(payload: &[u8]) -> Result<Self, PowerlinkError> {
-        if payload.len() % 3 != 0 {
+        // Spec 6.3.2.4.2.3.5 (Table 79) shows:
+        // Index (2 bytes), Sub-Index (1 byte), reserved (1 byte)
+        // Total 4 bytes per entry.
+        if payload.len() % 4 != 0 {
             return Err(PowerlinkError::SdoInvalidCommandPayload);
         }
         let entries = payload
-            .chunks_exact(3)
+            .chunks_exact(4)
             .map(|chunk| MultipleParamEntry {
                 index: u16::from_le_bytes(chunk[0..2].try_into().unwrap()),
                 sub_index: chunk[2],
+                // Ignore chunk[3] (reserved)
             })
             .collect();
         Ok(Self { entries })
