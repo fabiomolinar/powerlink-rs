@@ -6,7 +6,7 @@ pub mod pdo_handler;
 pub use cn::ControlledNode;
 use log::{error, info, trace};
 pub use mn::ManagingNode;
-pub use mn::{MnContext, CnInfo, CnState};
+pub use mn::{CnInfo, CnState, MnContext};
 pub use pdo_handler::PdoHandler;
 
 use crate::frame::PowerlinkFrame;
@@ -55,43 +55,42 @@ pub enum NodeAction {
 }
 
 /// A trait that defines the common interface for all POWERLINK nodes (MN and CN).
+///
+/// The application's main loop is responsible for polling the network interface(s)
+/// and passing any received data to the `run_cycle` method.
 pub trait Node {
-    /// Processes a raw byte buffer received from the network at a specific time.
-    /// This buffer could contain an Ethernet frame or a UDP datagram.
-    fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction;
-
-    /// Called periodically by the application to handle time-based events, like timeouts.
-    /// The application is responsible for calling this method, ideally when a deadline
-    /// returned by `next_action_time` has been reached.
-    fn tick(&mut self, current_time_us: u64) -> NodeAction;
-
-    /// Runs one full cycle of the node's logic.
+    /// Runs one full cycle of the node's logic, processing any incoming data
+    /// and handling internal timers.
     ///
-    /// This is the recommended function to call in your main application loop.
+    /// This is the primary function to call in your main application loop.
     /// It handles:
-    /// 1. Processing an incoming raw frame (if any).
-    /// 2. Ticking the node's internal timers.
-    /// 3. Prioritizing the resulting actions.
-    ///
-    /// It correctly implements the required priority, where reactive
-    /// (frame-based) actions always take precedence over proactive
-    /// (timer-based) actions.
+    /// 1. Processing an incoming Ethernet frame (if provided).
+    /// 2. Processing an incoming UDP datagram (if provided and feature is enabled).
+    /// 3. Ticking the node's internal timers if no network data was processed.
+    /// 4. Prioritizing the resulting actions.
     ///
     /// # Arguments
-    /// * `buffer`: The raw byte slice from `interface.receive_frame()`.
-    ///   If no frame was received (e.g., `Ok(0)`), pass an empty slice `&[]`.
+    /// * `ethernet_frame`: A slice containing a received Ethernet frame, or `None`.
+    /// * `udp_datagram`: A tuple with the UDP payload, source IP, and source port, or `None`.
     /// * `current_time_us`: The current timestamp.
     ///
     /// # Returns
     /// The single, highest-priority `NodeAction` to be executed.
-    fn run_cycle(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
-        let frame_action = self.process_raw_frame(buffer, current_time_us);
-        let tick_action = self.tick(current_time_us);
-        if frame_action != NodeAction::NoAction {
-            return frame_action;
-        }
-        tick_action
-    }
+    #[cfg(feature = "sdo-udp")]
+    fn run_cycle(
+        &mut self,
+        ethernet_frame: Option<&[u8]>,
+        udp_datagram: Option<(&[u8], IpAddress, u16)>,
+        current_time_us: u64,
+    ) -> NodeAction;
+
+    /// Runs one full cycle of the node's logic (version without `sdo-udp` feature).
+    #[cfg(not(feature = "sdo-udp"))]
+    fn run_cycle(
+        &mut self,
+        ethernet_frame: Option<&[u8]>,
+        current_time_us: u64,
+    ) -> NodeAction;
 
     /// Returns the current NMT state of the node.
     fn nmt_state(&self) -> NmtState;

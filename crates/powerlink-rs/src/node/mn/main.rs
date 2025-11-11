@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/mn/main.rs
 use super::events;
 use super::scheduler;
 use super::state::{CnInfo, CyclePhase, MnContext};
@@ -22,6 +23,13 @@ use crate::types::NodeId;
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
 use log::{debug, error, info, warn};
+
+// --- Add imports for UDP SDO ---
+#[cfg(feature = "sdo-udp")]
+use crate::sdo::udp::deserialize_sdo_udp_payload;
+#[cfg(feature = "sdo-udp")]
+use crate::types::IpAddress;
+// --- End of imports ---
 
 // Constants for OD access used in this file.
 const OD_IDX_NODE_ASSIGNMENT: u16 = 0x1F81;
@@ -169,59 +177,11 @@ impl<'s> ManagingNode<'s> {
     }
 
     /// Internal function to process a deserialized `PowerlinkFrame`.
-    fn process_powerlink_frame(
+    fn process_ethernet_frame(
         &mut self,
-        frame: PowerlinkFrame,
+        buffer: &[u8],
         current_time_us: u64,
     ) -> NodeAction {
-        // --- Handle SDO ASnd frames before generic processing ---
-        if let PowerlinkFrame::ASnd(ref asnd_frame) = frame {
-            if asnd_frame.destination == self.context.nmt_state_machine.node_id
-                && asnd_frame.service_id == ServiceId::Sdo
-            {
-                debug!("[MN] Received SDO/ASnd for processing.");
-                let sdo_payload = &asnd_frame.payload;
-                let client_info = SdoClientInfo::Asnd {
-                    source_node_id: asnd_frame.source,
-                    source_mac: asnd_frame.eth_header.source_mac,
-                };
-                match self.context.core.sdo_server.handle_request(
-                    sdo_payload,
-                    client_info,
-                    &mut self.context.core.od,
-                    current_time_us,
-                ) {
-                    Ok(response_data) => {
-                        return match self
-                            .context
-                            .asnd_transport
-                            .build_response(response_data, &self.context)
-                        {
-                            Ok(action) => action,
-                            Err(e) => {
-                                error!("Failed to build SDO/ASnd response: {:?}", e);
-                                NodeAction::NoAction
-                            }
-                        };
-                    }
-                    Err(e) => {
-                        error!("SDO server error (ASnd): {:?}", e);
-                        return NodeAction::NoAction;
-                    }
-                }
-            }
-        }
-
-        // If not an SDO frame for us, proceed with general event handling.
-        events::process_frame(&mut self.context, frame, current_time_us);
-        // General event processing does not return an immediate action.
-        NodeAction::NoAction
-    }
-}
-
-impl<'s> Node for ManagingNode<'s> {
-    /// Processes a raw byte buffer received from the network.
-    fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
         if self.nmt_state() == NmtState::NmtNotActive
             && buffer.get(12..14) == Some(&crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes())
             && buffer.get(6..12) != Some(&self.context.core.mac_address.0)
@@ -233,7 +193,50 @@ impl<'s> Node for ManagingNode<'s> {
         }
 
         match deserialize_frame(buffer) {
-            Ok(frame) => self.process_powerlink_frame(frame, current_time_us),
+            Ok(frame) => {
+                // --- Handle SDO ASnd frames before generic processing ---
+                if let PowerlinkFrame::ASnd(ref asnd_frame) = frame {
+                    if asnd_frame.destination == self.context.nmt_state_machine.node_id
+                        && asnd_frame.service_id == ServiceId::Sdo
+                    {
+                        debug!("[MN] Received SDO/ASnd for processing.");
+                        let sdo_payload = &asnd_frame.payload;
+                        let client_info = SdoClientInfo::Asnd {
+                            source_node_id: asnd_frame.source,
+                            source_mac: asnd_frame.eth_header.source_mac,
+                        };
+                        match self.context.core.sdo_server.handle_request(
+                            sdo_payload,
+                            client_info,
+                            &mut self.context.core.od,
+                            current_time_us,
+                        ) {
+                            Ok(response_data) => {
+                                return match self
+                                    .context
+                                    .asnd_transport
+                                    .build_response(response_data, &self.context)
+                                {
+                                    Ok(action) => action,
+                                    Err(e) => {
+                                        error!("Failed to build SDO/ASnd response: {:?}", e);
+                                        NodeAction::NoAction
+                                    }
+                                };
+                            }
+                            Err(e) => {
+                                error!("SDO server error (ASnd): {:?}", e);
+                                return NodeAction::NoAction;
+                            }
+                        }
+                    }
+                }
+
+                // If not an SDO frame for us, proceed with general event handling.
+                events::process_frame(&mut self.context, frame, current_time_us);
+                // General event processing does not return an immediate action.
+                NodeAction::NoAction
+            }
             Err(e) if e != PowerlinkError::InvalidEthernetFrame => {
                 // Log any POWERLINK-specific deserialization errors.
                 warn!("[MN] Error during frame deserialization: {:?}", e);
@@ -249,10 +252,135 @@ impl<'s> Node for ManagingNode<'s> {
         }
     }
 
+    /// Processes a UDP datagram payload for SDO over UDP.
+    #[cfg(feature = "sdo-udp")]
+    fn process_udp_datagram(
+        &mut self,
+        buffer: &[u8],
+        source_ip: IpAddress,
+        source_port: u16,
+        current_time_us: u64,
+    ) -> NodeAction {
+        debug!(
+            "[MN] Received UDP datagram ({} bytes) from {}:{}",
+            buffer.len(),
+            core::net::Ipv4Addr::from(source_ip),
+            source_port
+        );
+
+        // 1. Deserialize the SDO payload from the UDP datagram
+        let (seq_header, cmd) = match deserialize_sdo_udp_payload(buffer) {
+            Ok((seq, cmd)) => (seq, cmd),
+            Err(e) => {
+                warn!("[MN] Failed to deserialize SDO/UDP payload: {:?}", e);
+                return NodeAction::NoAction;
+            }
+        };
+
+        // 2. Define the client info for the SDO server
+        let client_info = SdoClientInfo::Udp {
+            source_ip,
+            source_port,
+        };
+
+        // 3. Re-serialize the SDO payload (SeqHdr + Cmd) for the SdoServer.
+        let mut sdo_payload = vec![0u8; buffer.len()]; // Max possible size
+        let seq_len = seq_header.serialize(&mut sdo_payload).unwrap_or(0);
+        let cmd_len = cmd.serialize(&mut sdo_payload[seq_len..]).unwrap_or(0);
+        let total_sdo_len = seq_len + cmd_len;
+        sdo_payload.truncate(total_sdo_len);
+
+        // 4. Handle the SDO command
+        match self.context.core.sdo_server.handle_request(
+            &sdo_payload,
+            client_info,
+            &mut self.context.core.od,
+            current_time_us,
+        ) {
+            Ok(response_data) => {
+                // 5. Build and return the UDP response action
+                match self
+                    .context
+                    .udp_transport
+                    .build_response(response_data, &self.context)
+                {
+                    Ok(action) => action,
+                    Err(e) => {
+                        error!("[MN] Failed to build SDO/UDP response: {:?}", e);
+                        NodeAction::NoAction
+                    }
+                }
+            }
+            Err(e) => {
+                error!("[MN] SDO server error (UDP): {:?}", e);
+                NodeAction::NoAction
+            }
+        }
+    }
+
     /// The MN's main scheduler tick.
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
         // Delegate almost everything to the scheduler
         scheduler::tick(&mut self.context, current_time_us)
+    }
+}
+
+impl<'s> Node for ManagingNode<'s> {
+    #[cfg(feature = "sdo-udp")]
+    fn run_cycle(
+        &mut self,
+        ethernet_frame: Option<&[u8]>,
+        udp_datagram: Option<(&[u8], IpAddress, u16)>,
+        current_time_us: u64,
+    ) -> NodeAction {
+        // --- Priority 1: Ethernet Frames ---
+        if let Some(buffer) = ethernet_frame {
+            // Check for POWERLINK EtherType
+            if buffer.len() >= 14
+                && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
+            {
+                let action = self.process_ethernet_frame(buffer, current_time_us);
+                if action != NodeAction::NoAction {
+                    return action;
+                }
+            }
+            // Ignore non-POWERLINK Ethernet frames
+        }
+
+        // --- Priority 2: UDP Datagrams ---
+        if let Some((buffer, ip, port)) = udp_datagram {
+            let action = self.process_udp_datagram(buffer, ip, port, current_time_us);
+            if action != NodeAction::NoAction {
+                return action;
+            }
+        }
+
+        // --- Priority 3: Internal Ticks ---
+        self.tick(current_time_us)
+    }
+
+    #[cfg(not(feature = "sdo-udp"))]
+    fn run_cycle(
+        &mut self,
+        ethernet_frame: Option<&[u8]>,
+        current_time_us: u64,
+    ) -> NodeAction {
+        // --- Priority 1: Ethernet Frames ---
+        if let Some(buffer) = ethernet_frame {
+            // Check for POWERLINK EtherType
+            if buffer.len() >= 14
+                && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
+            {
+                let action = self.process_ethernet_frame(buffer, current_time_us);
+                if action != NodeAction::NoAction {
+                    return action;
+                }
+            }
+            // Ignore non-POWERLINK Ethernet frames
+        }
+
+        // --- Priority 2: Internal Ticks ---
+        self.tick(current_time_us)
     }
 
     /// Returns the NMT state of the node.

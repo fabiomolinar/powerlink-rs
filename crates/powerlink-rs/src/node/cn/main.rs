@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/cn/main.rs
 use super::events;
 use super::state::CnContext;
 use crate::PowerlinkError;
@@ -17,7 +18,18 @@ use crate::sdo::{SdoClient, SdoServer};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use log::{error, info, trace, warn};
+use log::{debug, error, info, trace, warn};
+
+// --- Add imports for UDP SDO ---
+#[cfg(feature = "sdo-udp")]
+use crate::sdo::{
+    server::SdoClientInfo,
+    transport::SdoTransport,
+    udp::deserialize_sdo_udp_payload,
+};
+#[cfg(feature = "sdo-udp")]
+use crate::types::IpAddress;
+// --- End of imports ---
 
 const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
 
@@ -108,6 +120,18 @@ impl<'s> ControlledNode<'s> {
 
     /// Processes a POWERLINK Ethernet frame.
     fn process_ethernet_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
+        // Check if we are in BasicEthernet
+        if self.nmt_state() == NmtState::NmtBasicEthernet {
+            info!(
+                "[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1."
+            );
+            // Trigger the NMT transition
+            self.context
+                .nmt_state_machine
+                .process_event(NmtEvent::PowerlinkFrameReceived, &mut self.context.core.od);
+            // Fall through to process the frame that triggered the transition
+        }
+
         match deserialize_frame(buffer) {
             Ok(frame) => events::process_frame(&mut self.context, frame, current_time_us),
             Err(e) if e != PowerlinkError::InvalidEthernetFrame => {
@@ -156,40 +180,136 @@ impl<'s> ControlledNode<'s> {
             _ => NodeAction::NoAction, // Ignore other EtherTypes silently
         }
     }
+
+    /// Processes a UDP datagram payload for SDO over UDP.
+    #[cfg(feature = "sdo-udp")]
+    fn process_udp_datagram(
+        &mut self,
+        buffer: &[u8],
+        source_ip: IpAddress,
+        source_port: u16,
+        current_time_us: u64,
+    ) -> NodeAction {
+        debug!(
+            "[CN] Received UDP datagram ({} bytes) from {}:{}",
+            buffer.len(),
+            core::net::Ipv4Addr::from(source_ip),
+            source_port
+        );
+
+        // 1. Deserialize the SDO payload from the UDP datagram
+        let (seq_header, cmd) = match deserialize_sdo_udp_payload(buffer) {
+            Ok((seq, cmd)) => (seq, cmd),
+            Err(e) => {
+                warn!("[CN] Failed to deserialize SDO/UDP payload: {:?}", e);
+                // Cannot send a response if we can't parse the request
+                return NodeAction::NoAction;
+            }
+        };
+
+        // 2. Define the client info for the SDO server
+        let client_info = SdoClientInfo::Udp {
+            source_ip,
+            source_port,
+        };
+
+        // 3. Re-serialize the SDO payload (SeqHdr + Cmd) for the SdoServer.
+        let mut sdo_payload = vec![0u8; buffer.len()]; // Max possible size
+        let seq_len = seq_header.serialize(&mut sdo_payload).unwrap_or(0);
+        let cmd_len = cmd.serialize(&mut sdo_payload[seq_len..]).unwrap_or(0);
+        let total_sdo_len = seq_len + cmd_len;
+        sdo_payload.truncate(total_sdo_len);
+
+        // 4. Handle the SDO command
+        match self.context.core.sdo_server.handle_request(
+            &sdo_payload,
+            client_info,
+            &mut self.context.core.od,
+            current_time_us,
+        ) {
+            Ok(response_data) => {
+                // 5. Build and return the UDP response action
+                match self
+                    .context
+                    .udp_transport
+                    .build_response(response_data, &self.context)
+                {
+                    Ok(action) => action,
+                    Err(e) => {
+                        error!("[CN] Failed to build SDO/UDP response: {:?}", e);
+                        NodeAction::NoAction
+                    }
+                }
+            }
+            Err(e) => {
+                error!("[CN] SDO server error (UDP): {:?}", e);
+                NodeAction::NoAction
+            }
+        }
+    }
+
+    /// Internal tick handler, moved from the trait implementation.
+    fn tick(&mut self, current_time_us: u64) -> NodeAction {
+        events::process_tick(&mut self.context, current_time_us)
+    }
 }
 
 impl<'s> Node for ControlledNode<'s> {
-    /// Processes a raw byte buffer received from the network at a specific time.
-    /// This now tries to interpret the buffer as either Ethernet or UDP (if enabled).
-    fn process_raw_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
-        // --- Try Ethernet Frame Processing ---
-        // Check length and EtherType
-        if buffer.len() >= 14 && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes() {
-            // Check if we are in BasicEthernet
-            if self.nmt_state() == NmtState::NmtBasicEthernet {
-                info!(
-                    "[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1."
-                );
-                // Trigger the NMT transition
-                self.context
-                    .nmt_state_machine
-                    .process_event(NmtEvent::PowerlinkFrameReceived, &mut self.context.core.od);
-                // Fall through to process the frame that triggered the transition
+    #[cfg(feature = "sdo-udp")]
+    fn run_cycle(
+        &mut self,
+        ethernet_frame: Option<&[u8]>,
+        udp_datagram: Option<(&[u8], IpAddress, u16)>,
+        current_time_us: u64,
+    ) -> NodeAction {
+        // --- Priority 1: Ethernet Frames ---
+        if let Some(buffer) = ethernet_frame {
+            // Check for POWERLINK EtherType
+            if buffer.len() >= 14
+                && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
+            {
+                let action = self.process_ethernet_frame(buffer, current_time_us);
+                if action != NodeAction::NoAction {
+                    return action;
+                }
             }
-            return self.process_ethernet_frame(buffer, current_time_us);
+            // Ignore non-POWERLINK Ethernet frames
         }
 
-        #[cfg(feature = "sdo-udp")]
-        {
-            trace!("Ignoring non-POWERLINK Ethernet frame (potential UDP?).");
+        // --- Priority 2: UDP Datagrams ---
+        if let Some((buffer, ip, port)) = udp_datagram {
+            let action = self.process_udp_datagram(buffer, ip, port, current_time_us);
+            if action != NodeAction::NoAction {
+                return action;
+            }
         }
 
-        trace!("Ignoring unknown frame type or non-PL Ethernet frame.");
-        NodeAction::NoAction
+        // --- Priority 3: Internal Ticks ---
+        self.tick(current_time_us)
     }
 
-    fn tick(&mut self, current_time_us: u64) -> NodeAction {
-        events::process_tick(&mut self.context, current_time_us)
+    #[cfg(not(feature = "sdo-udp"))]
+    fn run_cycle(
+        &mut self,
+        ethernet_frame: Option<&[u8]>,
+        current_time_us: u64,
+    ) -> NodeAction {
+        // --- Priority 1: Ethernet Frames ---
+        if let Some(buffer) = ethernet_frame {
+            // Check for POWERLINK EtherType
+            if buffer.len() >= 14
+                && buffer[12..14] == crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes()
+            {
+                let action = self.process_ethernet_frame(buffer, current_time_us);
+                if action != NodeAction::NoAction {
+                    return action;
+                }
+            }
+            // Ignore non-POWERLINK Ethernet frames
+        }
+
+        // --- Priority 2: Internal Ticks ---
+        self.tick(current_time_us)
     }
 
     fn nmt_state(&self) -> NmtState {
