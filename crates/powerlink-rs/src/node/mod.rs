@@ -119,33 +119,25 @@ pub(super) fn serialize_frame_action<'a>(
     context: &impl NodeContext<'a>,
 ) -> Result<NodeAction, PowerlinkError> {
     let mut buf = vec![0u8; 1518];
-    let eth_header;
 
+    // Use the new helper method to get the header.
+    let eth_header = frame.ethernet_header();
+
+    // Check for invalid frame types based on node type.
     if context.is_cn() {
-        eth_header = match &frame {
-            PowerlinkFrame::PRes(f) => &f.eth_header,
-            PowerlinkFrame::ASnd(f) => &f.eth_header,
-            // Add other frame types if CN might send them (unlikely for responses)
-            _ => {
-                error!(
-                    "[CN] Attempted to serialize unexpected response frame type: {:?}",
-                    frame
-                );
-                return Ok(NodeAction::NoAction); // Return NoAction on unexpected type
-            }
-        };
+        if !matches!(frame, PowerlinkFrame::PRes(_) | PowerlinkFrame::ASnd(_)) {
+            error!(
+                "[CN] Attempted to serialize unexpected response frame type: {:?}",
+                frame
+            );
+            return Ok(NodeAction::NoAction);
+        }
     } else {
-        eth_header = match &frame {
-            PowerlinkFrame::Soc(f) => &f.eth_header,
-            PowerlinkFrame::PReq(f) => &f.eth_header,
-            PowerlinkFrame::SoA(f) => &f.eth_header,
-            PowerlinkFrame::ASnd(f) => &f.eth_header,
-            // PRes is not sent by MN
-            PowerlinkFrame::PRes(_) => {
-                error!("[MN] Attempted to serialize a PRes frame, which is invalid for an MN.");
-                return Ok(NodeAction::NoAction);
-            }
-        };
+        // is_mn()
+        if matches!(frame, PowerlinkFrame::PRes(_)) {
+            error!("[MN] Attempted to serialize a PRes frame, which is invalid for an MN.");
+            return Ok(NodeAction::NoAction);
+        }
     }
 
     CodecHelpers::serialize_eth_header(eth_header, &mut buf);

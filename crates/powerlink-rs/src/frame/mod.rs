@@ -9,7 +9,7 @@ pub mod error;
 pub mod ms_state_machine;
 pub mod poll;
 
-pub use basic::EthernetHeader;
+pub use basic::{EthernetHeader, MacAddress}; // Added MacAddress
 // Make frame types public so other modules (like `node`) can use them.
 pub use codec::{Codec, deserialize_frame};
 pub use control::{ASndFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame};
@@ -32,6 +32,17 @@ pub enum PowerlinkFrame {
 }
 
 impl PowerlinkFrame {
+    /// Returns a reference to the inner EthernetHeader.
+    pub fn ethernet_header(&self) -> &EthernetHeader {
+        match self {
+            PowerlinkFrame::Soc(frame) => &frame.eth_header,
+            PowerlinkFrame::PReq(frame) => &frame.eth_header,
+            PowerlinkFrame::PRes(frame) => &frame.eth_header,
+            PowerlinkFrame::SoA(frame) => &frame.eth_header,
+            PowerlinkFrame::ASnd(frame) => &frame.eth_header,
+        }
+    }
+
     /// Serializes the frame into the provided buffer.
     /// This serializes *only* the POWERLINK frame section (after Eth header).
     pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
