@@ -12,12 +12,12 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
     - [x] 4.2.4 Cycle State Machines (MN and CN)
     - [x] 4.7 DLL Error Handling
     - [ ] *Gap: Advanced/optional features like full multiplexed slot scheduling optimization.*
-  - **Chapter 5 (Network/Transport Layer): 80%**
+  - **Chapter 5 (Network/Transport Layer): 95%**
     - [x] SDO over UDP/IP HAL (`send_udp`/`receive_udp` in `NetworkInterface`)
     - [x] Platform implementations (Linux/Windows) for UDP sockets
     - [x] Core SDO/UDP serialization logic (`sdo/udp.rs`)
     - [x] Core `UdpTransport` implementation
-    - [ ] *Gap: Integration of `receive_udp` into the main `Node` processing loop to feed the `SdoServer`.*
+    - [x] Integration of `receive_udp` into the main `Node::run_cycle` processing loop.
   - **Chapter 6 (Application Layer): 90%**
     - [x] 6.1 Basic Data Types (`NetTime`, `RelativeTime`)
     - [x] 6.2 Object Dictionary Structure
@@ -29,8 +29,9 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
     - [x] 7.1 NMT State Machines (Common, MN, CN)
     - [x] 7.4 MN Boot-up (full validation sequence)
     - [ ] *Gap: Full implementation of `7.3 NMT Services` beyond boot-up commands (e.g., NMT Guard Services, NMT Info Services).*
-  - **Chapter 8 (Diagnostics): 0%**
+  - **Chapter 8 (Diagnostics): 20%**
     - (Planned via `powerlink-rs-monitor` crate)
+    - [x] Core implementation of diagnostic counters (OD 0x1101, 0x1102)
     - [ ] **Non-standard**, integrated web application (in-process channel)
     - [ ] **Standard-compliant** tool (out-of-process SDO)
   - **Chapter 9 (Routing): 0%**
