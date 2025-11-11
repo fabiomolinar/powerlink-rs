@@ -6,6 +6,7 @@ mod predefined;
 mod storage;
 mod value;
 pub mod utils;
+pub mod constants;
 
 pub use entry::{AccessType, Category, Object, ObjectEntry, PdoMapping, ValueRange};
 pub use value::ObjectValue;
@@ -14,7 +15,7 @@ use crate::hal::ObjectDictionaryStorage;
 use crate::{NodeId, PowerlinkError};
 use alloc::{borrow::Cow, collections::BTreeMap, vec::Vec};
 use core::fmt;
-use log::{error, trace};
+use log::{error, trace, warn}; // Added warn
 
 /// The main Object Dictionary structure.
 pub struct ObjectDictionary<'a> {
@@ -99,7 +100,11 @@ impl<'a> ObjectDictionary<'a> {
                 }
                 Object::Array(values) | Object::Record(values) => {
                     if sub_index == 0 {
-                        Some(Cow::Owned(ObjectValue::Unsigned8(values.len() as u8)))
+                        // Sub-index 0 for Array/Record is the entry count.
+                        // Per spec 6.2.1.1, this is an UNSIGNED8.
+                        // Find the highest valid sub-index (1-254) defined.
+                        let count = values.len().min(254) as u8;
+                        Some(Cow::Owned(ObjectValue::Unsigned8(count)))
                     } else {
                         values.get(sub_index as usize - 1).map(Cow::Borrowed)
                     }
@@ -201,7 +206,8 @@ impl<'a> ObjectDictionary<'a> {
                     "PDO mapping validation successful for {:#06X}, enabling {} entries.",
                     index, new_num_entries
                 );
-                return self.write_internal(index, sub_index, value, false);
+                // After validation, we still need to write the new entry count.
+                // We fall through to write_internal.
             } else {
                 error!(
                     "Type mismatch writing to PDO mapping {:#06X}/0: Expected U8.",
@@ -226,6 +232,38 @@ impl<'a> ObjectDictionary<'a> {
             }
         }
         None
+    }
+
+    /// Atomically increments an UNSIGNED32 counter in the Object Dictionary.
+    /// This is used for diagnostic counters (e.g., 0x1101, 0x1102).
+    pub(super) fn increment_counter(&mut self, index: u16, sub_index: u8) {
+        let entry = self.entries.get_mut(&index);
+
+        let Some(entry) = entry else {
+            warn!(
+                "Attempted to increment non-existent diagnostic counter {:#06X}/{}",
+                index, sub_index
+            );
+            return;
+        };
+
+        let object_value = match &mut entry.object {
+            Object::Variable(val) if sub_index == 0 => Some(val),
+            Object::Record(vals) if sub_index > 0 => vals.get_mut(sub_index as usize - 1),
+            _ => None,
+        };
+
+        match object_value {
+            Some(ObjectValue::Unsigned32(val)) => {
+                *val = val.wrapping_add(1);
+            }
+            _ => {
+                warn!(
+                    "Attempted to increment diagnostic counter {:#06X}/{} which is not a U32",
+                    index, sub_index
+                );
+            }
+        }
     }
 
     /// Internal write function with an option to bypass access checks.
@@ -268,12 +306,21 @@ impl<'a> ObjectDictionary<'a> {
                     }
                     Object::Array(values) | Object::Record(values) => {
                         if sub_index == 0 {
+                            // Writing to sub-index 0 (NumberOfEntries) is allowed for PDO mapping.
                             if is_pdo_mapping_index0 {
-                                trace!(
-                                    "Allowing write to sub-index 0 for PDO mapping object {:#06X}",
-                                    index
-                                );
-                                Ok(())
+                                if let ObjectValue::Unsigned8(new_count) = value {
+                                    // The actual value is not stored here.
+                                    // The count is derived from the Vec.len() during read.
+                                    // This write is only to trigger validation.
+                                    trace!(
+                                        "Write to PDO mapping {:#06X}/0 processed ({} entries).",
+                                        index,
+                                        new_count
+                                    );
+                                    Ok(())
+                                } else {
+                                    Err(PowerlinkError::TypeMismatch)
+                                }
                             } else {
                                 error!(
                                     "Attempted write to sub-index 0 of non-PDO Array/Record {:#06X}",

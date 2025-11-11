@@ -4,18 +4,18 @@ use super::state::CnContext;
 use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler};
-use crate::frame::{DllError, NmtAction, deserialize_frame};
+use crate::frame::{DllError, NmtAction, deserialize_frame, ServiceId};
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction};
-use crate::od::ObjectDictionary;
+use crate::od::{constants, ObjectDictionary}; // Import constants
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
 use crate::sdo::{SdoClient, SdoServer};
-use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -30,8 +30,6 @@ use crate::sdo::{
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
 // --- End of imports ---
-
-const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
 
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct is a thin wrapper around a context object that holds all state.
@@ -132,6 +130,23 @@ impl<'s> ControlledNode<'s> {
             // Fall through to process the frame that triggered the transition
         }
 
+        // --- Peek for ASnd SDO Rx ---
+        // We peek here to increment the counter before passing it to the full
+        // deserializer and SDO server.
+        // We already know EtherType is 0x88AB from run_cycle.
+        // Check for ASnd (0x06), Dest=Self, and SDO Service (0x05)
+        if buffer.len() > 17 && // 14 (EthHdr) + 3 (PLHdr) + 1 (SvcID)
+           buffer[14] == MessageType::ASnd as u8 && // MessageType
+           buffer[15] == self.context.nmt_state_machine.node_id.0 && // Dest Node ID
+           buffer[17] == ServiceId::Sdo as u8 // ServiceID
+        {
+            self.context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_SDO_RX,
+            );
+        }
+        // --- END PEEK ---
+
         match deserialize_frame(buffer) {
             Ok(frame) => events::process_frame(&mut self.context, frame, current_time_us),
             Err(e) if e != PowerlinkError::InvalidEthernetFrame => {
@@ -153,14 +168,14 @@ impl<'s> ControlledNode<'s> {
                         .context
                         .core
                         .od
-                        .read_u8(OD_IDX_ERROR_REGISTER, 0)
+                        .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
                         .unwrap_or(0);
                     let new_err_reg = current_err_reg | 0b1;
                     self.context
                         .core
                         .od
                         .write_internal(
-                            OD_IDX_ERROR_REGISTER,
+                            constants::IDX_NMT_ERROR_REGISTER_U8,
                             0,
                             crate::od::ObjectValue::Unsigned8(new_err_reg),
                             false,
@@ -206,6 +221,12 @@ impl<'s> ControlledNode<'s> {
                 return NodeAction::NoAction;
             }
         };
+
+        // *** INCREMENT SDO RX COUNTER ***
+        self.context.core.od.increment_counter(
+            constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+            constants::SUBIDX_DIAG_NMT_COUNT_SDO_RX,
+        );
 
         // 2. Define the client info for the SDO server
         let client_info = SdoClientInfo::Udp {
@@ -270,6 +291,7 @@ impl<'s> Node for ControlledNode<'s> {
             {
                 let action = self.process_ethernet_frame(buffer, current_time_us);
                 if action != NodeAction::NoAction {
+                    // SDO Tx counter (for ASnd) is handled inside events::process_frame
                     return action;
                 }
             }
@@ -279,13 +301,22 @@ impl<'s> Node for ControlledNode<'s> {
         // --- Priority 2: UDP Datagrams ---
         if let Some((buffer, ip, port)) = udp_datagram {
             let action = self.process_udp_datagram(buffer, ip, port, current_time_us);
+            if let NodeAction::SendUdp { .. } = action {
+                // Increment SDO Tx counter for UDP response
+                self.context.core.od.increment_counter(
+                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                );
+            }
             if action != NodeAction::NoAction {
                 return action;
             }
         }
 
         // --- Priority 3: Internal Ticks ---
-        self.tick(current_time_us)
+        let tick_action = self.tick(current_time_us);
+        // SDO Tx counter (for tick-based aborts) is handled inside events::process_tick
+        tick_action
     }
 
     #[cfg(not(feature = "sdo-udp"))]
@@ -302,6 +333,7 @@ impl<'s> Node for ControlledNode<'s> {
             {
                 let action = self.process_ethernet_frame(buffer, current_time_us);
                 if action != NodeAction::NoAction {
+                    // SDO Tx counter (for ASnd) is handled inside events::process_frame
                     return action;
                 }
             }
@@ -309,7 +341,9 @@ impl<'s> Node for ControlledNode<'s> {
         }
 
         // --- Priority 2: Internal Ticks ---
-        self.tick(current_time_us)
+        let tick_action = self.tick(current_time_us);
+        // SDO Tx counter (for tick-based aborts) is handled inside events::process_tick
+        tick_action
     }
 
     fn nmt_state(&self) -> NmtState {

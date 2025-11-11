@@ -10,15 +10,11 @@ use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, PdoHandler, serialize_frame_action};
+use crate::od::constants; // Import the new constants module
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use log::{debug, error, info, trace, warn};
-
-// Constants for OD access
-const OD_IDX_CYCLE_TIME: u16 = 0x1006;
-const OD_IDX_LOSS_SOC_TOLERANCE: u16 = 0x1C14;
-const OD_IDX_ERROR_REGISTER: u16 = 0x1001;
 
 /// Processes a deserialized `PowerlinkFrame`.
 pub(super) fn process_frame(
@@ -27,10 +23,14 @@ pub(super) fn process_frame(
     current_time_us: u64,
 ) -> NodeAction {
     // --- Special handling for SDO ASnd frames ---
+    // (This is handled in main.rs's process_raw_frame/process_udp_datagram
+    // to increment SdoRx counters before passing to SdoServer)
     if let PowerlinkFrame::ASnd(ref asnd_frame) = frame {
         if asnd_frame.destination == context.nmt_state_machine.node_id
             && asnd_frame.service_id == ServiceId::Sdo
         {
+            // SDO Rx logic is in main.rs, which has already incremented SdoRx.
+            // We just need to handle the SDO Server logic here.
             debug!("Received SDO/ASnd frame for processing.");
             let sdo_payload = &asnd_frame.payload;
             let client_info = SdoClientInfo::Asnd {
@@ -66,8 +66,15 @@ pub(super) fn process_frame(
             };
         } else if asnd_frame.destination == context.nmt_state_machine.node_id {
             trace!("Received non-SDO ASnd frame: {:?}", asnd_frame);
+            // Increment general AsyncRx counter for non-SDO ASnd frames
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_RX,
+            );
         } else {
-            return NodeAction::NoAction; // ASnd not for us
+            // ASnd not for us, but it's still an AsyncRx frame on the network.
+            // We only count frames destined for us.
+            return NodeAction::NoAction;
         }
     }
 
@@ -76,36 +83,48 @@ pub(super) fn process_frame(
         trace!("SoC received at time {}", current_time_us);
         context.last_soc_reception_time_us = current_time_us;
         context.soc_timeout_check_active = true;
+
+        // Increment Isochronous Cycle counter
+        context.core.od.increment_counter(
+            constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+            constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_CYC,
+        );
+
         if context.dll_error_manager.on_cycle_complete() {
             info!("[CN] All DLL errors cleared, resetting Generic Error bit.");
             let current_err_reg = context
                 .core
                 .od
-                .read_u8(OD_IDX_ERROR_REGISTER, 0)
+                .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
                 .unwrap_or(0);
             let new_err_reg = current_err_reg & !0b1;
             context
                 .core
                 .od
                 .write_internal(
-                    OD_IDX_ERROR_REGISTER,
+                    constants::IDX_NMT_ERROR_REGISTER_U8,
                     0,
                     crate::od::ObjectValue::Unsigned8(new_err_reg),
                     false,
                 )
                 .unwrap_or_else(|e| error!("[CN] Failed to clear Error Register: {:?}", e));
             context.error_status_changed = true;
+            // Increment Static Error Bit Field Changed counter
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_ERR_STATISTICS_REC,
+                constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
+            );
         }
 
         let cycle_time_opt = context
             .core
             .od
-            .read_u32(OD_IDX_CYCLE_TIME, 0)
+            .read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0)
             .map(|v| v as u64);
         let tolerance_opt = context
             .core
             .od
-            .read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)
+            .read_u32(constants::IDX_DLL_CN_LOSS_OF_SOC_TOL_U32, 0)
             .map(|v| v as u64);
 
         if let (Some(cycle_time_us), Some(tolerance_ns)) = (cycle_time_opt, tolerance_opt) {
@@ -133,6 +152,36 @@ pub(super) fn process_frame(
             );
             context.soc_timeout_check_active = false;
         }
+    }
+
+    // Increment Isochronous/Asynchronous Rx counters for other frames
+    match &frame {
+        PowerlinkFrame::PReq(_) => {
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_RX,
+            );
+        }
+        PowerlinkFrame::PRes(_) => {
+            // Count PRes cross-traffic
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_RX,
+            );
+        }
+        PowerlinkFrame::SoA(soa_frame) => {
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_RX,
+            );
+            if soa_frame.req_service_id == RequestedServiceId::StatusRequest {
+                context.core.od.increment_counter(
+                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                    constants::SUBIDX_DIAG_NMT_COUNT_STATUS_REQ,
+                );
+            }
+        }
+        _ => {} // SoC and ASnd already handled
     }
 
     // --- Handle EA/ER flags ---
@@ -171,6 +220,11 @@ pub(super) fn process_frame(
                         );
                         context.en_flag = false;
                         context.emergency_queue.clear();
+                        // Increment ER counter
+                        context.core.od.increment_counter(
+                            constants::IDX_DIAG_ERR_STATISTICS_REC,
+                            constants::SUBIDX_DIAG_ERR_STATS_ER_POS_EDGE,
+                        );
                     }
                     context.ec_flag = soa.flags.er;
                     trace!(
@@ -233,20 +287,33 @@ pub(super) fn process_frame(
     {
         for error in errors {
             warn!("DLL state machine reported error: {:?}", error);
+            // Increment history write counter for every error handled
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_ERR_STATISTICS_REC,
+                constants::SUBIDX_DIAG_ERR_STATS_HIST_WRITE,
+            );
+
             let (nmt_action, signaled) = context.dll_error_manager.handle_error(error);
             if signaled {
                 context.error_status_changed = true;
                 let current_err_reg = context
                     .core
                     .od
-                    .read_u8(OD_IDX_ERROR_REGISTER, 0)
+                    .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
                     .unwrap_or(0);
                 let new_err_reg = current_err_reg | 0b1;
+                if current_err_reg != new_err_reg {
+                    // Only increment if the value actually changed
+                    context.core.od.increment_counter(
+                        constants::IDX_DIAG_ERR_STATISTICS_REC,
+                        constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
+                    );
+                }
                 context
                     .core
                     .od
                     .write_internal(
-                        OD_IDX_ERROR_REGISTER,
+                        constants::IDX_NMT_ERROR_REGISTER_U8,
                         0,
                         crate::od::ObjectValue::Unsigned8(new_err_reg),
                         false,
@@ -275,10 +342,20 @@ pub(super) fn process_frame(
                 if context.emergency_queue.len() < context.emergency_queue.capacity() {
                     context.emergency_queue.push_back(error_entry);
                     info!("[CN] New error queued: {:?}", error_entry);
+                    // Increment emergency write counter
+                    context.core.od.increment_counter(
+                        constants::IDX_DIAG_ERR_STATISTICS_REC,
+                        constants::SUBIDX_DIAG_ERR_STATS_EMCY_WRITE,
+                    );
                 } else {
                     warn!(
                         "[CN] Emergency queue full, dropping error: {:?}",
                         error_entry
+                    );
+                    // Increment emergency overflow counter
+                    context.core.od.increment_counter(
+                        constants::IDX_DIAG_ERR_STATISTICS_REC,
+                        constants::SUBIDX_DIAG_ERR_STATS_EMCY_OVERFLOW,
                     );
                 }
             }
@@ -331,6 +408,11 @@ pub(super) fn process_frame(
             "New error detected or acknowledged, toggling EN flag to: {}",
             context.en_flag
         );
+        // Increment EN flag toggle counter
+        context.core.od.increment_counter(
+            constants::IDX_DIAG_ERR_STATISTICS_REC,
+            constants::SUBIDX_DIAG_ERR_STATS_EN_EDGE,
+        );
     }
 
     // --- Generate Response ---
@@ -346,6 +428,10 @@ pub(super) fn process_frame(
                         | NmtState::NmtOperational
                         | NmtState::NmtCsStopped => match soa_frame.req_service_id {
                             RequestedServiceId::IdentRequest => {
+                                context.core.od.increment_counter(
+                                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                                    constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
+                                );
                                 Some(payload::build_ident_response(
                                     context.core.mac_address,
                                     context.nmt_state_machine.node_id,
@@ -354,6 +440,10 @@ pub(super) fn process_frame(
                                 ))
                             }
                             RequestedServiceId::StatusRequest => {
+                                context.core.od.increment_counter(
+                                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                                    constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
+                                );
                                 Some(payload::build_status_response(
                                     context.core.mac_address,
                                     context.nmt_state_machine.node_id,
@@ -366,6 +456,10 @@ pub(super) fn process_frame(
                             }
                             RequestedServiceId::NmtRequestInvite => {
                                 context.pending_nmt_requests.pop().map(|(cmd, tgt)| {
+                                    context.core.od.increment_counter(
+                                        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                                        constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
+                                    );
                                     payload::build_nmt_request(
                                         context.core.mac_address,
                                         context.nmt_state_machine.node_id,
@@ -380,6 +474,11 @@ pub(super) fn process_frame(
                                 .sdo_client
                                 .pop_pending_request()
                                 .map(|sdo_payload| {
+                                    // Increment SDO Tx counter
+                                    context.core.od.increment_counter(
+                                        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                                        constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                                    );
                                     PowerlinkFrame::ASnd(ASndFrame::new(
                                         context.core.mac_address,
                                         soa_frame.eth_header.source_mac,
@@ -402,15 +501,22 @@ pub(super) fn process_frame(
                     match current_nmt_state {
                         NmtState::NmtPreOperational2
                         | NmtState::NmtReadyToOperate
-                        | NmtState::NmtOperational => Some(payload::build_pres_response(
-                            context.core.mac_address,
-                            context.nmt_state_machine.node_id,
-                            current_nmt_state,
-                            &context.core.od,
-                            &context.core.sdo_client,
-                            &context.pending_nmt_requests,
-                            context.en_flag,
-                        )),
+                        | NmtState::NmtOperational => {
+                            // Increment Isochronous Tx counter
+                            context.core.od.increment_counter(
+                                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                                constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_TX,
+                            );
+                            Some(payload::build_pres_response(
+                                context.core.mac_address,
+                                context.nmt_state_machine.node_id,
+                                current_nmt_state,
+                                &context.core.od,
+                                &context.core.sdo_client,
+                                &context.pending_nmt_requests,
+                                context.en_flag,
+                            ))
+                        }
                         _ => None,
                     }
                 } else {
@@ -448,11 +554,23 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
         Ok(Some(response_data)) => {
             // SDO server generated a response (e.g., abort). Build the action.
             let build_result = match response_data.client_info {
-                SdoClientInfo::Asnd { .. } => context
-                    .asnd_transport
-                    .build_response(response_data, context),
+                SdoClientInfo::Asnd { .. } => {
+                    // Increment SDO Tx counter
+                    context.core.od.increment_counter(
+                        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                        constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                    );
+                    context
+                        .asnd_transport
+                        .build_response(response_data, context)
+                }
                 #[cfg(feature = "sdo-udp")]
                 SdoClientInfo::Udp { .. } => {
+                    // Increment SDO Tx counter
+                    context.core.od.increment_counter(
+                        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                        constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                    );
                     context.udp_transport.build_response(response_data, context)
                 }
             };
@@ -524,6 +642,11 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
             .process_event(DllCsEvent::SocTimeout, current_nmt_state)
         {
             for error in errors {
+                // Increment history write counter
+                context.core.od.increment_counter(
+                    constants::IDX_DIAG_ERR_STATISTICS_REC,
+                    constants::SUBIDX_DIAG_ERR_STATS_HIST_WRITE,
+                );
                 let (nmt_action, signaled) = context.dll_error_manager.handle_error(error);
                 if signaled {
                     context.error_status_changed = true;
@@ -531,14 +654,21 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                     let current_err_reg = context
                         .core
                         .od
-                        .read_u8(OD_IDX_ERROR_REGISTER, 0)
+                        .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
                         .unwrap_or(0);
                     let new_err_reg = current_err_reg | 0b1; // Set Generic Error
+                    if current_err_reg != new_err_reg {
+                        // Increment static error change counter
+                        context.core.od.increment_counter(
+                            constants::IDX_DIAG_ERR_STATISTICS_REC,
+                            constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
+                        );
+                    }
                     context
                         .core
                         .od
                         .write_internal(
-                            OD_IDX_ERROR_REGISTER,
+                            constants::IDX_NMT_ERROR_REGISTER_U8,
                             0,
                             crate::od::ObjectValue::Unsigned8(new_err_reg),
                             false,
@@ -561,12 +691,12 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
             let cycle_time_opt = context
                 .core
                 .od
-                .read_u32(OD_IDX_CYCLE_TIME, 0)
+                .read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0)
                 .map(|v| v as u64);
             let tolerance_opt = context
                 .core
                 .od
-                .read_u32(OD_IDX_LOSS_SOC_TOLERANCE, 0)
+                .read_u32(constants::IDX_DLL_CN_LOSS_OF_SOC_TOL_U32, 0)
                 .map(|v| v as u64);
 
             if let (Some(cycle_time_us), Some(tolerance_ns)) = (cycle_time_opt, tolerance_opt) {
