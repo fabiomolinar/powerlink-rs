@@ -7,7 +7,7 @@ This document describes the foundational architectural decisions of the `powerli
 The project utilizes a Rust **workspace** to achieve clear separation between the core protocol logic and platform-specific network communication.
 
 1. **The Core Crate (`powerlink-rs`):** This is defined as the **"Platform-agnostic core logic for Ethernet POWERLINK Rust implementation"**. It contains the fundamental protocol state machines and data structures necessary to implement the standard (e.g., NMT cycle logic, frame parsing/generation). It is set as the default member of the workspace.
-2. **I/O Driver Crates (`powerlink-io-*`):** These separate crates handle the low-level, raw Ethernet input/output (I/O) for different operating systems and embedded environments. Current planned drivers include `powerlink-io-linux`, `powerlink-io-windows`, and `powerlink-io-embedded`.
+2. **I/O Driver Crates (`powerlink-rs-*`):** These separate crates handle the low-level, raw Ethernet input/output (I/O) for different operating systems and embedded environments. Current planned drivers include `powerlink-rs-linux`, `powerlink-rs-windows`, and `powerlink-rs-embedded`.
 
 ## Resource Management and Portability (The `no_std` Core)
 
@@ -15,7 +15,7 @@ To ensure the implementation can run across diverse targets, including embedded 
 
 - **Platform Independence:** The overall project aims for a platform-independent implementation, supporting environments like Windows, Linux, macOS, and embedded targets.
 - **`no_std` Compatibility:** The core logic within the `powerlink-rs` crate is designed to support `no_std` environments (environments without the Rust standard library).
-- **Feature Flag Strategy:** Cross-platform compilation is managed via feature flags. The platform-specific I/O crates (like `powerlink-io-windows`) explicitly enable the **`std` feature** of the core `powerlink-rs` crate when standard library functionality (such as OS sockets) is required for those platforms..
+- **Feature Flag Strategy:** Cross-platform compilation is managed via feature flags. The platform-specific I/O crates (like `powerlink-rs-windows`) explicitly enable the **`std` feature** of the core `powerlink-rs` crate when standard library functionality (such as OS sockets) is required for those platforms..
 - **alloc:** At least for now, we are relying on alloc for dynamic memory allocation. This may change on the future.
 
 ## Crate independence
@@ -27,7 +27,7 @@ To the extent possible, this crate will try to avoid adding other crates as depe
 To decouple the core protocol logic from the physical network interface, a Hardware Abstraction Layer (HAL) approach is mandated.
 
 - **HAL Trait Definition:** The core `powerlink-rs` crate defines a Rust trait for low-level I/O, abstracting functions such as `send_frame` and `receive_frame`.
-- **Platform Implementation:** The platform-specific crates (e.g., `powerlink-io-windows`) are responsible for implementing this **core HAL**, utilizing platform-native APIs (such as raw sockets or specialized bindings like WinPcap/Npcap on Windows) to handle raw Ethernet packet interaction.
+- **Platform Implementation:** The platform-specific crates (e.g., `powerlink-rs-windows`) are responsible for implementing this **core HAL**, utilizing platform-native APIs (such as raw sockets or specialized bindings like WinPcap/Npcap on Windows) to handle raw Ethernet packet interaction.
 
 ## Internal Protocol Layering and Code Modules
 

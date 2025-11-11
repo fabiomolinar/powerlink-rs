@@ -3,7 +3,7 @@ services:
     container_name: powerlink-cn-io
     build:
       context: ../../../.. # Workspace root
-      dockerfile: ./crates/powerlink-io-linux/examples/io_module_resources/Dockerfile
+      dockerfile: ./crates/powerlink-rs-linux/examples/io_module_resources/Dockerfile
     environment:
       POWERLINK_ROLE: "CN"
       RUST_LOG: info
@@ -23,7 +23,7 @@ services:
     container_name: powerlink-mn-controller
     build:
       context: ../../../.. # Workspace root
-      dockerfile: ./crates/powerlink-io-linux/examples/io_module_resources/Dockerfile
+      dockerfile: ./crates/powerlink-rs-linux/examples/io_module_resources/Dockerfile
     environment:
       POWERLINK_ROLE: "MN"
       RUST_LOG: info

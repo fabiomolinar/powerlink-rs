@@ -12,7 +12,7 @@ WORKDIR /app
 COPY ../../../.. .
 
 # Build the specific example binary from the correct package
-RUN cargo build --package powerlink-io-linux --example io_module
+RUN cargo build --package powerlink-rs-linux --example io_module
 
 # Stage 2: Create the minimal runtime image
 FROM --platform=linux/amd64 debian:bookworm-slim

@@ -1,5 +1,5 @@
 # Stage 1: Build the test binary using the nightly Rust toolchain on Debian Bookworm
-# Use the official rustlang image for nightly on bookworm, specifying amd64 platform
+# Use the official rustlang/rust image for nightly on bookworm, specifying amd64 platform
 FROM --platform=linux/amd64 rustlang/rust:nightly-bookworm as builder
 
 # Install necessary build dependencies
@@ -23,7 +23,7 @@ RUN rustup target add x86_64-unknown-linux-gnu
 # We specify the package and the test name.
 # Removed --ignored flag as it's not valid for `cargo test --no-run`
 RUN cargo test \
-    --package powerlink-io-linux \
+    --package powerlink-rs-linux \
     --test loopback_test \
     --target x86_64-unknown-linux-gnu \
     --no-run
@@ -52,4 +52,3 @@ RUN chmod +x /usr/local/bin/powerlink-loopback-test
 # Define the default command to run when the container starts.
 # This can be overridden by docker-compose.
 ENTRYPOINT ["/usr/local/bin/powerlink-loopback-test"]
-

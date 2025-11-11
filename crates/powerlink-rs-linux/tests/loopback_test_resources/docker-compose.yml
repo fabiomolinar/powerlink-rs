@@ -1,10 +1,9 @@
-# Orchestrates the MN and CN containers for integration testing.
 services:
   cn:
     container_name: powerlink-cn
     build:
       context: ../../../.. # Workspace root relative to this file
-      dockerfile: ./crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
+      dockerfile: ./crates/powerlink-rs-linux/tests/loopback_test_resources/Dockerfile
     environment:
       POWERLINK_TEST_ROLE: "CN" # Role for the test binary
       POWERLINK_CN_NODE_ID: "42" # Define the CN Node ID here
@@ -24,7 +23,7 @@ services:
     container_name: powerlink-mn
     build:
       context: ../../../.. # Workspace root relative to this file
-      dockerfile: ./crates/powerlink-io-linux/tests/loopback_test_resources/Dockerfile
+      dockerfile: ./crates/powerlink-rs-linux/tests/loopback_test_resources/Dockerfile
     environment:
       POWERLINK_TEST_ROLE: "MN" # Role for the test binary
       POWERLINK_CN_NODE_ID: "42" # Pass CN Node ID to MN as well
