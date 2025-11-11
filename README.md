@@ -6,41 +6,57 @@ Robust, reliable, and platform-independent Rust implementation of the Ethernet P
 
 ## Coverage
 
+This section tracks the implementation status against the **EPSG 301 V1.5.1 Communication Profile Specification**.
+
 - **EPSG 301 (Communication Profile Specification):**
-  - **Chapter 4 (Data Link Layer): 90%**
-    - [x] 4.6 Frame Structures (SoC, PReq, PRes, SoA, ASnd)
-    - [x] 4.2.4 Cycle State Machines (MN and CN)
-    - [x] 4.7 DLL Error Handling
-    - [ ] *Gap: Advanced/optional features like full multiplexed slot scheduling optimization.*
-  - **Chapter 5 (Network/Transport Layer): 95%**
-    - [x] SDO over UDP/IP HAL (`send_udp`/`receive_udp` in `NetworkInterface`)
-    - [x] Platform implementations (Linux/Windows) for UDP sockets
-    - [x] Core SDO/UDP serialization logic (`sdo/udp.rs`)
-    - [x] Core `UdpTransport` implementation
-    - [x] Integration of `receive_udp` into the main `Node::run_cycle` processing loop.
-  - **Chapter 6 (Application Layer): 90%**
-    - [x] 6.1 Basic Data Types (`NetTime`, `RelativeTime`)
-    - [x] 6.2 Object Dictionary Structure
-    - [x] 6.3 Service Data Objects (SDO) via ASnd
-    - [x] 6.4 Process Data Objects (PDO) with mapping, validation, and error handling
-    - [x] 6.5 Error Signaling
-    - [ ] *Gap: Full implementation of application services like Configuration Management (CFM) and Program Download (PDL) logic.*
-  - **Chapter 7 (NMT): 90%**
-    - [x] 7.1 NMT State Machines (Common, MN, CN)
-    - [x] 7.4 MN Boot-up (full validation sequence)
-    - [ ] *Gap: Full implementation of `7.3 NMT Services` beyond boot-up commands (e.g., NMT Guard Services, NMT Info Services).*
-  - **Chapter 8 (Diagnostics): 20%**
-    - (Planned via `powerlink-rs-monitor` crate)
-    - [x] Core implementation of diagnostic counters (OD 0x1101, 0x1102)
-    - [ ] **Non-standard**, integrated web application (in-process channel)
-    - [ ] **Standard-compliant** tool (out-of-process SDO)
+  - **Chapter 4 (Data Link Layer): 95%**
+    - `[x]` 4.6 Frame Structures (SoC, PReq, PRes, SoA, ASnd)
+    - `[x]` 4.2.4.5 CN Cycle State Machine (DLL_CS)
+    - `[x]` 4.2.4.6 MN Cycle State Machine (DLL_MS)
+    - `[x]` 4.7 DLL Error Handling & Counters (CN/MN)
+    - `[x]` 4.2.5 Recognizing Active Nodes (IdentRequest/Response)
+    - `[~]` 4.2.4.1.1.1 Multiplexed Timeslots (Basic support implemented; complex scheduling not yet optimized)
+  - **Chapter 5 (Network/Transport Layer): 80%**
+    - `[x]` 5.1 IP Addressing (Logic assumes 192.168.100.x subnet)
+    - `[x]` 5.2 POWERLINK compliant UDP/IP format (for SDO)
+    - `[x]` SDO over UDP/IP HAL (`NetworkInterface` trait)
+    - `[x]` Core SDO/UDP serialization (`sdo/udp.rs`)
+    - `[x]` Integration of `receive_udp` into `Node::run_cycle`
+    - `[ ]` 5.1.3 Address Resolution (ARP) (Currently relies on static MAC maps in examples)
+    - `[ ]` 5.1.4 Hostname (OD `0x1F9A` exists but no NMT services use it)
+  - **Chapter 6 (Application Layer): 85%**
+    - `[x]` 6.1 Basic Data Types & Encoding (in `types.rs`, `od/value.rs`)
+    - `[x]` 6.2 Object Dictionary Structure (in `od/` module)
+    - `[x]` 6.3.2 Service Data Objects (SDO) via ASnd
+    - `[x]` 6.3.2 Service Data Objects (SDO) via UDP/IP
+    - `[x]` 6.4 Process Data Objects (PDO) (Mapping, validation, error handling)
+    - `[x]` 6.5 Error Signaling (EN/EA/ER/EC flags, StatusResponse)
+    - `[ ]` 6.3.3 SDO Embedded in PDO
+    - `[ ]` 6.6 Program Download (PDL) (MN logic to send firmware via SDO is missing)
+    - `[ ]` 6.7 Configuration Management (CFM) (MN logic to send configuration via SDO is missing)
+  - **Chapter 7 (Network Management): 90%**
+    - `[x]` 7.1 NMT State Machines (Common, MN, CN)
+    - `[x]` 7.3.1 NMT State Command Services (StartNode, StopNode, Resets)
+    - `[x]` 7.3.3 NMT Response Services (IdentResponse, StatusResponse)
+    - `[x]` 7.3.6 Request NMT Services by a CN (ASnd NMTRequest)
+    - `[x]` 7.3.5 NMT Guard Services (SoC/PRes timeouts, Consumer Heartbeat)
+    - `[x]` 7.4 MN Boot-up Sequence (Full validation: 7.4.2.2.1.1 - 7.4.2.2.1.3)
+    - `[ ]` 7.3.4 NMT Info Services (MN publishing `NMTPublish...` frames)
+    - `[ ]` 7.3.2 NMT Managing Command Services (e.g., `NMTNetHostNameSet`)
+  - **Chapter 8 (Diagnostics): 50%**
+    - `[x]` 8.1 Diagnostic OD Entries (`0x1101`, `0x1102`) (Counters are incremented)
+    - `[~]` `powerlink-rs-monitor` (In-process web monitor, in development)
   - **Chapter 9 (Routing): 0%**
-- **EPSG 302-A (High Availability)**: 0% (for the future)
-- **EPSG 302-B (Multiple ASnd)**: 0% (for the future)
-- **EPSG 302-C (PollResponse Chaining)**: 0% (for the future)
-- **EPSG 302-D (Multiple PReq/PRes)**: 0% (for the future)
-- **EPSG 302-E (Dynamic Node Allocation)**: 0% (for the future)
-- **EPSG 311 (Device Description)**: 0% (for the future)
+    - `[ ]` 9.1 Routing Type 1
+    - `[ ]` 9.2 Routing Type 2
+  - **Chapter 10 (Indicators): 0%**
+    - `[ ]` (Hardware-specific, outside core library scope)
+- **EPSG 302 (Extensions): 0%**
+  - `[ ]` EPSG 302-A (High Availability)
+  - `[ ]` EPSG 302-B (Multiple ASnd)
+  - `[ ]` EPSG 302-C (PollResponse Chaining)
+  - `[ ]` EPSG 302-D (Multiple PReq/PRes)
+  - `[ ]` EPSG 302-E (Dynamic Node Allocation)
 
 ## Testing
 
@@ -83,7 +99,7 @@ To aid in debugging these complex integration tests, a dedicated `powerlink-rs-m
     - CN Response Logic: Ensure `ControlledNode` reacts correctly to MN frames (SoC, PReq, SoA) according to its NMT/DLL state.
     - DLL Error Handling Integration: Ensure DLL error counters correctly trigger the specified NMT state changes.
   - Success Metric: A simulated MN/CN pair can successfully transition to the NMT_CS_OPERATIONAL state and maintain a stable POWERLINK cycle.
-  - Status: **Completed**. The core logic for both MN and CN NMT/DLL state machines and the full MN boot-up validation sequence (Chapter 7.4) is now implemented.
+  - Status: **Completed**.
 - Phase 7: Debugging and Monitoring (`powerlink-rs-monitor`):
   - Focus: Implement a dedicated `powerlink-rs-monitor` crate. This tool will provide a web-based GUI for real-time diagnostics.
   - Key features:
@@ -98,7 +114,7 @@ To aid in debugging these complex integration tests, a dedicated `powerlink-rs-m
     - Test NMT command handling (e.g., `StopNode`, `ResetNode`).
     - Test DLL error handling scenarios (e.g., PRes timeouts).
   - Success Metric: All integration tests pass, demonstrating a stable and conformant basic network operation.
-  - Status: **In development**. With Phase 6 complete, the immediate focus is on expanding the Docker-based integration tests to validate the full boot-up sequence, PDO exchange, and error handling.
+  - Status: **In development**. The immediate focus is on expanding the Docker-based integration tests to validate the full boot-up sequence, PDO exchange, and error handling.
 - Future (post DS-301):
   - Microcontroller Support: Implement a `no_std` I/O module targeting a specific embedded MAC/PHY driver using the traits defined in Phase 4.
   - Configuration Files: Implement parsers for the `XML` Device Description (`XDD`) and `XML` Device Configuration (`XDC`) files (defined by EPSG DS-311).
