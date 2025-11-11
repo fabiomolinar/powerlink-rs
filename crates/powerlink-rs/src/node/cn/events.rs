@@ -14,6 +14,7 @@ use crate::od::constants; // Import the new constants module
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use alloc::vec::Vec; // Import Vec
 use log::{debug, error, info, trace, warn};
 
 /// Processes a deserialized `PowerlinkFrame`.
@@ -169,12 +170,20 @@ pub(super) fn process_frame(
                 constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_RX,
             );
         }
-        PowerlinkFrame::PRes(_) => {
+        PowerlinkFrame::PRes(pres_frame) => {
             // Count PRes cross-traffic
             context.core.od.increment_counter(
                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                 constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_RX,
             );
+            // --- Heartbeat Consumer Check ---
+            // A PRes frame is a heartbeat for its source node.
+            if let Some((_timeout, last_seen)) = context
+                .heartbeat_consumers
+                .get_mut(&pres_frame.source)
+            {
+                *last_seen = current_time_us;
+            }
         }
         PowerlinkFrame::SoA(soa_frame) => {
             context.core.od.increment_counter(
@@ -585,6 +594,76 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     }
 
     let current_nmt_state = context.nmt_state_machine.current_state();
+
+    // --- Heartbeat Consumer Check ---
+    if current_nmt_state >= NmtState::NmtPreOperational2 {
+        let mut timed_out_nodes = Vec::new();
+        for (node_id, (timeout_us, last_seen_us)) in &mut context.heartbeat_consumers {
+            if *last_seen_us == 0 {
+                // First tick in a valid state, initialize last_seen_us to now
+                *last_seen_us = current_time_us;
+            } else if *timeout_us > 0 && (current_time_us - *last_seen_us > *timeout_us) {
+                // Timeout detected!
+                warn!(
+                    "[CN] Heartbeat timeout for Node {}! Last seen {}us ago (timeout is {}us).",
+                    node_id.0,
+                    current_time_us - *last_seen_us,
+                    *timeout_us
+                );
+                timed_out_nodes.push(*node_id);
+                // Reset last_seen to prevent continuous error reporting every tick
+                *last_seen_us = current_time_us;
+            }
+        }
+
+        // Handle errors outside the mutable borrow
+        for node_id in timed_out_nodes {
+            // We report the error, which will trigger the threshold counter
+            let (nmt_action, signaled) =
+                context
+                    .dll_error_manager
+                    .handle_error(DllError::HeartbeatTimeout { node_id });
+
+            if signaled {
+                context.error_status_changed = true;
+                // Update Error Register (0x1001)
+                let current_err_reg = context
+                    .core
+                    .od
+                    .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
+                    .unwrap_or(0);
+                let new_err_reg = current_err_reg | 0b1; // Set Generic Error
+                if current_err_reg != new_err_reg {
+                    // Increment static error change counter
+                    context.core.od.increment_counter(
+                        constants::IDX_DIAG_ERR_STATISTICS_REC,
+                        constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
+                    );
+                }
+                context
+                    .core
+                    .od
+                    .write_internal(
+                        constants::IDX_NMT_ERROR_REGISTER_U8,
+                        0,
+                        crate::od::ObjectValue::Unsigned8(new_err_reg),
+                        false,
+                    )
+                    .unwrap_or_else(|e| {
+                        error!("[CN] Failed to update Error Register: {:?}", e)
+                    });
+            }
+            if nmt_action != NmtAction::None {
+                context
+                    .nmt_state_machine
+                    .process_event(NmtEvent::Error, &mut context.core.od);
+                context.soc_timeout_check_active = false;
+                // If an NMT reset is triggered, stop further tick processing.
+                return NodeAction::NoAction;
+            }
+        }
+    }
+
     // Check if a deadline is set and if it has passed
     let deadline_passed = context
         .next_tick_us

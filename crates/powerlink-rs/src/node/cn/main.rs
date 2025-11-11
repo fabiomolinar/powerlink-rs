@@ -10,13 +10,13 @@ use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction};
-use crate::od::{ObjectDictionary, constants}; // Import constants
+use crate::od::{Object, ObjectDictionary, ObjectValue, constants}; // Import constants
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
 use crate::sdo::{SdoClient, SdoServer};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeMap, VecDeque}; // Import BTreeMap
 use alloc::vec::Vec;
 use log::{error, info, warn, debug};
 
@@ -57,6 +57,39 @@ impl<'s> ControlledNode<'s> {
         // read critical parameters from the fully configured OD.
         let nmt_state_machine = CnNmtStateMachine::from_od(&od)?;
 
+        // --- Parse Heartbeat Configuration (OD 0x1016) ---
+        let mut heartbeat_consumers = BTreeMap::new();
+        if let Some(Object::Array(entries)) =
+            od.read_object(constants::IDX_NMT_CONSUMER_HEARTBEAT_TIME_AU32)
+        {
+            // Sub-index 0 is NumberOfEntries, actual entries start at sub-index 1.
+            // The `entries` Vec maps to sub-indices 1..N.
+            for hb_value in entries {
+                if let ObjectValue::Unsigned32(hb_description) = hb_value {
+                    // Spec 7.2.1.5.4, Table 120: HeartbeatDescription
+                    let heartbeat_time_ms = (hb_description & 0xFFFF) as u16;
+                    let node_id_val = ((hb_description >> 16) & 0xFF) as u8;
+
+                    if heartbeat_time_ms > 0 && node_id_val > 0 {
+                        if let Ok(node_id) = NodeId::try_from(node_id_val) {
+                            let timeout_us = (heartbeat_time_ms as u64) * 1000;
+                            // Initialize last_seen_us to 0. It will be set on the first tick or frame.
+                            heartbeat_consumers.insert(node_id, (timeout_us, 0));
+                            info!(
+                                "[CN] Added heartbeat consumer: Node {} with timeout {}ms",
+                                node_id.0, heartbeat_time_ms
+                            );
+                        } else {
+                            warn!(
+                                "[CN] Invalid Node ID {} in heartbeat configuration (0x1016).",
+                                node_id_val
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // --- Instantiate CoreNodeContext ---
         let core_context = CoreNodeContext {
             od,
@@ -79,6 +112,7 @@ impl<'s> ControlledNode<'s> {
                 udp_transport: UdpTransport,
                 pending_nmt_requests: Vec::new(),
                 emergency_queue: VecDeque::with_capacity(10), // Default capacity for 10 errors
+                heartbeat_consumers, // Add the new map
                 last_soc_reception_time_us: 0,
                 soc_timeout_check_active: false,
                 next_tick_us: None,

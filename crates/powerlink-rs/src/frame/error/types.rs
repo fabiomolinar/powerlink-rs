@@ -57,6 +57,8 @@ pub enum DllError {
     PdoMapVersion { node_id: NodeId },
     /// Corresponds to `E_PDO_SHORT_RX` (Section 6.4.8.1.2)
     PdoPayloadShort { node_id: NodeId },
+    /// A consumer heartbeat timeout occurred for a monitored node. (Spec 7.3.5.1)
+    HeartbeatTimeout { node_id: NodeId },
 }
 
 impl DllError {
@@ -80,6 +82,9 @@ impl DllError {
             DllError::SoCJitter => 0x8235,              // E_DLL_JITTER_TH
             DllError::PdoMapVersion { .. } => 0x8211,   // E_PDO_MAP_VERS
             DllError::PdoPayloadShort { .. } => 0x8210, // E_PDO_SHORT_RX
+            // No specific code for heartbeat, use a custom one in the 82xx protocol range
+            DllError::HeartbeatTimeout { .. } => 0x8250, // E_NMT_HEARTBEAT_TH (Custom)
+
             // The following are internal or MN-specific and don't have direct CN error codes.
             // A generic code could be used if necessary.
             _ => 0x8000, // Generic internal error, for logging purposes

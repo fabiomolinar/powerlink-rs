@@ -66,6 +66,7 @@ pub struct CnErrorCounters {
     pub loss_of_preq: ThresholdCounter,
     pub soc_jitter: ThresholdCounter,
     pub crc_errors: ThresholdCounter,
+    pub heartbeat_timeout: ThresholdCounter,
     // Cumulative counters do not reset.
     pub loss_of_link_cumulative: u32,
 }
@@ -80,6 +81,7 @@ impl CnErrorCounters {
             crc_errors: ThresholdCounter::new(15),
             collision: ThresholdCounter::new(15),
             soc_jitter: ThresholdCounter::new(15),
+            heartbeat_timeout: ThresholdCounter::new(15), // Added heartbeat counter
             loss_of_link_cumulative: 0,
         }
     }
@@ -91,6 +93,7 @@ impl CnErrorCounters {
             || self.crc_errors.is_active()
             || self.collision.is_active()
             || self.soc_jitter.is_active()
+            || self.heartbeat_timeout.is_active() // Added heartbeat check
     }
 }
 
@@ -110,6 +113,7 @@ impl ErrorCounters for CnErrorCounters {
         self.crc_errors.decrement();
         self.collision.decrement();
         self.soc_jitter.decrement();
+        self.heartbeat_timeout.decrement(); // Added heartbeat decrement
 
         let is_still_active = self.is_any_active();
 
@@ -149,6 +153,11 @@ impl ErrorCounters for CnErrorCounters {
             DllError::SoCJitter => {
                 self.soc_jitter.increment();
                 self.soc_jitter.check_and_reset()
+            }
+            // Added handler for HeartbeatTimeout
+            DllError::HeartbeatTimeout { .. } => {
+                self.heartbeat_timeout.increment();
+                self.heartbeat_timeout.check_and_reset()
             }
             DllError::LossOfLink => {
                 self.loss_of_link_cumulative = self.loss_of_link_cumulative.saturating_add(1);

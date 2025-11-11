@@ -14,7 +14,7 @@ use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
 use crate::types::NodeId;
-use alloc::collections::VecDeque;
+use alloc::collections::{BTreeMap, VecDeque}; // Import BTreeMap
 use alloc::vec; // Import vec
 use alloc::vec::Vec;
 use log::{error, trace, warn}; // Import log levels
@@ -35,6 +35,8 @@ pub struct CnContext<'s> {
     pub pending_nmt_requests: Vec<(NmtCommand, NodeId)>,
     /// Queue for detailed error/event entries to be reported in StatusResponse.
     pub emergency_queue: VecDeque<ErrorEntry>,
+    /// Map of nodes to monitor via heartbeat, mapping NodeId -> (Timeout in us, LastSeen time in us).
+    pub heartbeat_consumers: BTreeMap<NodeId, (u64, u64)>,
     /// Timestamp of the last successfully received SoC frame (microseconds).
     pub last_soc_reception_time_us: u64,
     /// Flag indicating if the SoC timeout check is currently active.
