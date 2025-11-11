@@ -21,7 +21,7 @@ use powerlink_rs::{
         command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation},
         sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader},
     },
-    types::{C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId, IpAddress}, // Import IpAddress
+    types::{C_ADR_MN_DEF_NODE_ID, EPLVersion, IpAddress, NodeId}, // Import IpAddress
 };
 use powerlink_rs_linux::LinuxPnetInterface;
 use std::{

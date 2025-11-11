@@ -1,7 +1,7 @@
 // crates/powerlink-rs/src/hal.rs
 use crate::od::ObjectValue;
-use crate::pdo::PdoError; // Added import for PdoError
 use crate::pdo::PayloadSizeError;
+use crate::pdo::PdoError; // Added import for PdoError
 use crate::types::{InvalidMessageTypeError, NodeIdError};
 use alloc::collections::BTreeMap;
 use core::array::TryFromSliceError;
@@ -222,10 +222,8 @@ pub trait ObjectDictionaryStorage {
     fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, PowerlinkError>;
 
     /// Saves the given storable parameters to non-volatile memory.
-    fn save(
-        &mut self,
-        parameters: &BTreeMap<(u16, u8), ObjectValue>,
-    ) -> Result<(), PowerlinkError>;
+    fn save(&mut self, parameters: &BTreeMap<(u16, u8), ObjectValue>)
+    -> Result<(), PowerlinkError>;
 
     /// Clears all stored parameters from non-volatile memory.
     fn clear(&mut self) -> Result<(), PowerlinkError>;

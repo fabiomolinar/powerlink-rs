@@ -3,9 +3,8 @@ use log::{error, info, warn};
 use crate::PowerlinkError;
 use crate::od::ObjectDictionary;
 use crate::sdo::command::{
-    CommandLayerHeader, ReadByIndexRequest, ReadByNameRequest,
-    ReadMultipleParamRequest, SdoCommand, Segmentation, WriteByIndexRequest,
-    WriteByNameRequest
+    CommandLayerHeader, ReadByIndexRequest, ReadByNameRequest, ReadMultipleParamRequest,
+    SdoCommand, Segmentation, WriteByIndexRequest, WriteByNameRequest,
 };
 use crate::sdo::state::{SdoServerState, SdoTransferState};
 

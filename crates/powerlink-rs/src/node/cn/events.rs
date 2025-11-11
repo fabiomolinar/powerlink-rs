@@ -213,8 +213,7 @@ pub(super) fn process_frame(
                     } else {
                         trace!(
                             "Received mismatched EA flag ({}, EN is {}) from MN in PReq.",
-                            preq.flags.ea,
-                            context.en_flag
+                            preq.flags.ea, context.en_flag
                         );
                     }
                 }
@@ -236,8 +235,7 @@ pub(super) fn process_frame(
                     context.ec_flag = soa.flags.er;
                     trace!(
                         "Processed SoA flags: ER={}, EC set to {}",
-                        soa.flags.er,
-                        context.ec_flag
+                        soa.flags.er, context.ec_flag
                     );
                     if soa.flags.ea == context.en_flag {
                         trace!(
@@ -247,8 +245,7 @@ pub(super) fn process_frame(
                     } else {
                         trace!(
                             "Received mismatched EA flag ({}, EN is {}) from MN in SoA.",
-                            soa.flags.ea,
-                            context.en_flag
+                            soa.flags.ea, context.en_flag
                         );
                     }
                 }
@@ -266,7 +263,7 @@ pub(super) fn process_frame(
                 && asnd.service_id == ServiceId::NmtCommand =>
         {
             asnd.payload
-                .get(0)
+                .first()
                 .and_then(|&b| NmtCommand::try_from(b).ok())
                 .map(|cmd| match cmd {
                     NmtCommand::StartNode => NmtEvent::StartNode,
@@ -395,14 +392,12 @@ pub(super) fn process_frame(
                     );
                 }
             }
-            PowerlinkFrame::PRes(pres_frame) => {
-                context.consume_pdo_payload(
-                    pres_frame.source,
-                    &pres_frame.payload,
-                    pres_frame.pdo_version,
-                    pres_frame.flags.rd,
-                )
-            }
+            PowerlinkFrame::PRes(pres_frame) => context.consume_pdo_payload(
+                pres_frame.source,
+                &pres_frame.payload,
+                pres_frame.pdo_version,
+                pres_frame.flags.rd,
+            ),
             _ => {}
         }
     }
@@ -593,7 +588,7 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     // Check if a deadline is set and if it has passed
     let deadline_passed = context
         .next_tick_us
-        .map_or(false, |deadline| current_time_us >= deadline);
+        .is_some_and(|deadline| current_time_us >= deadline);
 
     // --- Handle NmtNotActive Timeout Setup ---
     if current_nmt_state == NmtState::NmtNotActive && context.next_tick_us.is_none() {

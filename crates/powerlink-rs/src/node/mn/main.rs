@@ -12,7 +12,7 @@ use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction};
-use crate::od::{constants, Object, ObjectDictionary, ObjectValue}; // Import constants
+use crate::od::{Object, ObjectDictionary, ObjectValue, constants}; // Import constants
 use crate::sdo::SdoTransport;
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::AsndTransport;
@@ -179,11 +179,7 @@ impl<'s> ManagingNode<'s> {
     }
 
     /// Internal function to process a deserialized `PowerlinkFrame`.
-    fn process_ethernet_frame(
-        &mut self,
-        buffer: &[u8],
-        current_time_us: u64,
-    ) -> NodeAction {
+    fn process_ethernet_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
         if self.nmt_state() == NmtState::NmtNotActive
             && buffer.get(12..14) == Some(&crate::types::C_DLL_ETHERTYPE_EPL.to_be_bytes())
             && buffer.get(6..12) != Some(&self.context.core.mac_address.0)
@@ -198,7 +194,8 @@ impl<'s> ManagingNode<'s> {
         if buffer.len() > 17 && // 14 (EthHdr) + 3 (PLHdr) + 1 (SvcID)
            buffer[14] == MessageType::ASnd as u8 && // MessageType
            buffer[15] == self.context.nmt_state_machine.node_id.0 && // Dest Node ID
-           buffer[17] == ServiceId::Sdo as u8 // ServiceID
+           buffer[17] == ServiceId::Sdo as u8
+        // ServiceID
         {
             self.context.core.od.increment_counter(
                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
@@ -396,11 +393,7 @@ impl<'s> Node for ManagingNode<'s> {
     }
 
     #[cfg(not(feature = "sdo-udp"))]
-    fn run_cycle(
-        &mut self,
-        ethernet_frame: Option<&[u8]>,
-        current_time_us: u64,
-    ) -> NodeAction {
+    fn run_cycle(&mut self, ethernet_frame: Option<&[u8]>, current_time_us: u64) -> NodeAction {
         // --- Priority 1: Ethernet Frames ---
         if let Some(buffer) = ethernet_frame {
             // Check for POWERLINK EtherType

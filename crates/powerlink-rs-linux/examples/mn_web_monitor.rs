@@ -4,23 +4,20 @@
 //! It demonstrates the 'in-process' monitoring mode, where the node
 //! and the web server run in the same application but in different
 //! threads, communicating via an RT-safe channel.
-//! 
+//!
 //! This example can be ran with docker by running:
 //! `docker-compose -f crates/powerlink-rs-linux/examples/mn_web_monitor_resources/docker-compose.yml up --build`
 
 use crossbeam_channel::{self, Sender};
 use log::{error, info, trace};
 use powerlink_rs::{
-    node::{mn::ManagingNode, Node, NodeAction},
-    od::utils::new_mn_default,
-    types::{C_ADR_MN_DEF_NODE_ID, NodeId, IpAddress}, // Import IpAddress
     NetworkInterface,
+    node::{Node, NodeAction, mn::ManagingNode},
+    od::utils::new_mn_default,
+    types::{C_ADR_MN_DEF_NODE_ID, IpAddress, NodeId}, // Import IpAddress
 };
 use powerlink_rs_linux::LinuxPnetInterface;
-use powerlink_rs_monitor::{
-    model::DiagnosticSnapshot,
-    start_in_process_monitor,
-};
+use powerlink_rs_monitor::{model::DiagnosticSnapshot, start_in_process_monitor};
 use std::{
     env, process, thread,
     time::{Duration, Instant},
@@ -60,10 +57,7 @@ async fn main() {
 
 /// Helper function to create the network interface.
 /// This will enable pcap logging if the PCAP_FILE_PATH env var is set.
-fn create_interface(
-    interface_name: &str,
-    node_id: u8,
-) -> Result<LinuxPnetInterface, String> {
+fn create_interface(interface_name: &str, node_id: u8) -> Result<LinuxPnetInterface, String> {
     // Check if the "pcap" feature is enabled at compile time
     #[cfg(feature = "pcap")]
     {
@@ -120,11 +114,11 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
         };
 
         // 2. Poll for UDP datagrams
-        let udp_info: Option<(&[u8], IpAddress, u16)> =
-            match interface.receive_udp(&mut udp_buffer) {
-                Ok(Some((size, ip, port))) => Some((&udp_buffer[..size], ip, port)),
-                _ => None, // Pass None on error or no data
-            };
+        let udp_info: Option<(&[u8], IpAddress, u16)> = match interface.receive_udp(&mut udp_buffer)
+        {
+            Ok(Some((size, ip, port))) => Some((&udp_buffer[..size], ip, port)),
+            _ => None, // Pass None on error or no data
+        };
 
         // 3. Run the node's full cycle with all available inputs
         // Since `powerlink-rs-linux` enables `sdo-udp`, we *must* use the 3-argument version.

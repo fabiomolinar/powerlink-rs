@@ -86,11 +86,7 @@ pub trait Node {
 
     /// Runs one full cycle of the node's logic (version without `sdo-udp` feature).
     #[cfg(not(feature = "sdo-udp"))]
-    fn run_cycle(
-        &mut self,
-        ethernet_frame: Option<&[u8]>,
-        current_time_us: u64,
-    ) -> NodeAction;
+    fn run_cycle(&mut self, ethernet_frame: Option<&[u8]>, current_time_us: u64) -> NodeAction;
 
     /// Returns the current NMT state of the node.
     fn nmt_state(&self) -> NmtState;

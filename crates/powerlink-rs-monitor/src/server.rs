@@ -2,13 +2,13 @@
 
 use crate::model::DiagnosticSnapshot;
 use axum::{
+    Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::{Html, IntoResponse},
     routing::get,
-    Router,
 };
 use log::{error, info, trace};
 use std::net::SocketAddr;

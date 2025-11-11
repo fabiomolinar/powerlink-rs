@@ -8,10 +8,10 @@ use crate::frame::{
     ASndFrame, DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId, SocFrame,
 };
 use crate::nmt::events::{NmtCommand, NmtEvent};
-use crate::nmt::{states::NmtState, NmtStateMachine};
+use crate::nmt::{NmtStateMachine, states::NmtState};
 use crate::node::mn::state::{CnInfo, CnState, CyclePhase};
-use crate::node::{serialize_frame_action, NodeAction};
-use crate::od::{constants, Object, ObjectValue}; // Import constants
+use crate::node::{NodeAction, serialize_frame_action};
+use crate::od::{Object, ObjectValue, constants}; // Import constants
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
@@ -170,7 +170,7 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             context
                 .node_info
                 .get(node_id)
-                .map_or(false, |info| info.communication_ok) // This field will be added in state.rs
+                .is_some_and(|info| info.communication_ok) // This field will be added in state.rs
         });
 
         if all_mandatory_comm_checked {

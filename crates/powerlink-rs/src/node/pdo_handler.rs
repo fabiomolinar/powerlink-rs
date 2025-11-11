@@ -1,8 +1,8 @@
 // crates/powerlink-rs/src/node/pdo_handler.rs
 use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler};
-use crate::od::{constants, ObjectDictionary, ObjectValue}; // Import constants
-use crate::pdo::{error::PdoError, PDOVersion, PdoMappingEntry}; // Import PdoError from new module
-use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
+use crate::od::{ObjectDictionary, ObjectValue, constants}; // Import constants
+use crate::pdo::{PDOVersion, PdoMappingEntry}; // Import PdoError from new module
+use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use log::{error, trace, warn};
 
 /// A trait for handling Process Data Object (PDO) logic.
@@ -95,9 +95,8 @@ pub trait PdoHandler<'s> {
                 .read_u8(comm_param_index, constants::SUBIDX_PDO_COMM_PARAM_NODEID_U8)
             {
                 // PReq from MN is mapped to NodeID 0 in OD; PRes is mapped to the source CN's ID.
-                let matches_source =
-                    (source_node_id.0 == C_ADR_MN_DEF_NODE_ID && node_id_val == 0)
-                        || (source_node_id.0 != 0 && node_id_val == source_node_id.0);
+                let matches_source = (source_node_id.0 == C_ADR_MN_DEF_NODE_ID && node_id_val == 0)
+                    || (source_node_id.0 != 0 && node_id_val == source_node_id.0);
 
                 if matches_source {
                     // Found the correct communication parameter object
@@ -163,9 +162,7 @@ pub trait PdoHandler<'s> {
                 }
                 trace!(
                     "Applying RPDO mapping {:#06X} with {} entries for Node {}",
-                    mapping_index,
-                    num_entries,
-                    source_node_id.0
+                    mapping_index, num_entries, source_node_id.0
                 );
                 for i in 1..=num_entries {
                     if let Some(entry_cow) = self.od().read(mapping_index, i) {
@@ -249,9 +246,7 @@ pub trait PdoHandler<'s> {
 
                 trace!(
                     "Applying RPDO: Writing {:?} to 0x{:04X}/{}",
-                    value,
-                    entry.index,
-                    entry.sub_index
+                    value, entry.index, entry.sub_index
                 );
                 if let Err(e) = self
                     .od()

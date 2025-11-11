@@ -13,7 +13,7 @@ use serde::Serialize;
 // --- Imports from the powerlink-rs core crate ---
 use powerlink_rs::{
     frame::error::MnErrorCounters as CoreMnErrorCounters,
-    node::{CnState, mn::{MnContext}},
+    node::{CnState, mn::MnContext},
     od::ObjectDictionary,
 };
 // -------------------------------------------------

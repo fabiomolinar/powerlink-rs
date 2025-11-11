@@ -107,8 +107,8 @@ impl LinuxPnetInterface {
         // Now, create and add the pcap writer
         let file = File::create(pcap_filename)
             .map_err(|e| format!("Failed to create pcap file: {}", e))?;
-        let writer = Savefile::new(file)
-            .map_err(|e| format!("Failed to create pcap writer: {}", e))?;
+        let writer =
+            Savefile::new(file).map_err(|e| format!("Failed to create pcap writer: {}", e))?;
 
         interface.pcap_writer = Some(Mutex::new(writer));
 

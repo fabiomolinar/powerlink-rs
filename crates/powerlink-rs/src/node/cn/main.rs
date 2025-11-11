@@ -4,13 +4,13 @@ use super::state::CnContext;
 use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler};
-use crate::frame::{DllError, NmtAction, deserialize_frame, ServiceId};
+use crate::frame::{DllError, NmtAction, ServiceId, deserialize_frame};
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction};
-use crate::od::{constants, ObjectDictionary}; // Import constants
+use crate::od::{ObjectDictionary, constants}; // Import constants
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
@@ -18,14 +18,12 @@ use crate::sdo::{SdoClient, SdoServer};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use log::{debug, error, info, trace, warn};
+use log::{error, info, warn, debug};
 
 // --- Add imports for UDP SDO ---
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::{
-    server::SdoClientInfo,
-    transport::SdoTransport,
-    udp::deserialize_sdo_udp_payload,
+    server::SdoClientInfo, transport::SdoTransport, udp::deserialize_sdo_udp_payload,
 };
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
@@ -138,7 +136,8 @@ impl<'s> ControlledNode<'s> {
         if buffer.len() > 17 && // 14 (EthHdr) + 3 (PLHdr) + 1 (SvcID)
            buffer[14] == MessageType::ASnd as u8 && // MessageType
            buffer[15] == self.context.nmt_state_machine.node_id.0 && // Dest Node ID
-           buffer[17] == ServiceId::Sdo as u8 // ServiceID
+           buffer[17] == ServiceId::Sdo as u8
+        // ServiceID
         {
             self.context.core.od.increment_counter(
                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
@@ -320,11 +319,7 @@ impl<'s> Node for ControlledNode<'s> {
     }
 
     #[cfg(not(feature = "sdo-udp"))]
-    fn run_cycle(
-        &mut self,
-        ethernet_frame: Option<&[u8]>,
-        current_time_us: u64,
-    ) -> NodeAction {
+    fn run_cycle(&mut self, ethernet_frame: Option<&[u8]>, current_time_us: u64) -> NodeAction {
         // --- Priority 1: Ethernet Frames ---
         if let Some(buffer) = ethernet_frame {
             // Check for POWERLINK EtherType
@@ -341,9 +336,8 @@ impl<'s> Node for ControlledNode<'s> {
         }
 
         // --- Priority 2: Internal Ticks ---
-        let tick_action = self.tick(current_time_us);
-        // SDO Tx counter (for tick-based aborts) is handled inside events::process_tick
-        tick_action
+        self.tick(current_time_us);
+        
     }
 
     fn nmt_state(&self) -> NmtState {

@@ -1,6 +1,7 @@
 // crates/powerlink-rs/src/node/mn/payload.rs
 use super::scheduler;
 use super::state::MnContext;
+use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
 use crate::frame::control::{SoAFlags, SocFlags};
@@ -8,12 +9,11 @@ use crate::frame::poll::PReqFlags;
 use crate::frame::{
     ASndFrame, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame,
 };
-use crate::nmt::events::NmtCommand;
 use crate::nmt::NmtStateMachine;
+use crate::nmt::events::NmtCommand;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId};
-use crate::PowerlinkError;
 use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, trace, warn};
@@ -115,7 +115,7 @@ pub(super) fn build_preq_frame(
             let ea_flag = context
                 .node_info
                 .get(&target_node_id)
-                .map_or(false, |info| info.ea_flag);
+                .is_some_and(|info| info.ea_flag);
 
             let flags = PReqFlags {
                 rd: rd_flag,
@@ -189,8 +189,7 @@ pub(super) fn build_tpdo_payload(
         if *num_entries > 0 {
             trace!(
                 "Building MN TPDO for channel {} with {} entries.",
-                channel_index,
-                num_entries
+                channel_index, num_entries
             );
             for i in 1..=*num_entries {
                 let Some(entry_cow) = od.read(mapping_index, i) else {
@@ -210,7 +209,8 @@ pub(super) fn build_tpdo_payload(
 
                 let entry = PdoMappingEntry::from_u64(raw_mapping);
 
-                let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length()) else {
+                let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length())
+                else {
                     warn!(
                         "[MN] Bit-level TPDO mapping not supported for PReq 0x{:04X}/{}",
                         entry.index, entry.sub_index
@@ -274,8 +274,7 @@ pub(super) fn build_soa_frame(
 ) -> PowerlinkFrame {
     trace!(
         "[MN] Building SoA frame with service {:?} for Node {}",
-        req_service,
-        target_node.0
+        req_service, target_node.0
     );
     let epl_version = EPLVersion(
         context

@@ -8,18 +8,14 @@ use crate::frame::{
 use crate::nmt::NmtStateMachine;
 use crate::nmt::{events::NmtEvent, states::NmtState};
 use crate::node::PdoHandler;
-use crate::od::{constants, ObjectValue}; // Import the new constants module
+use crate::od::constants; // Import the new constants module
 use crate::types::NodeId;
 use log::{debug, error, info, trace, warn};
 
 /// Processes a `PowerlinkFrame` after it has been identified as
 /// non-SDO or not for the MN. This handles NMT state changes and
 /// DLL state progression based on received frames.
-pub(super) fn process_frame(
-    context: &mut MnContext,
-    frame: PowerlinkFrame,
-    current_time_us: u64,
-) {
+pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, current_time_us: u64) {
     // 1. Update NMT state machine based on the frame type.
     if let Some(event) = frame.nmt_event() {
         if context.nmt_state_machine.current_state() != NmtState::NmtNotActive {
@@ -181,7 +177,10 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
                     // Perform BOOT_STEP1: CHECK_IDENTIFICATION, CHECK_SOFTWARE, CHECK_CONFIGURATION
                     // This call now takes &context and does not conflict.
                     if validate_boot_step1_checks(context, node_id, &frame.payload) {
-                        info!("[MN] Node {} successfully identified and validated.", node_id.0);
+                        info!(
+                            "[MN] Node {} successfully identified and validated.",
+                            node_id.0
+                        );
 
                         // Re-acquire mutable borrow to update state
                         if let Some(info_mut) = context.node_info.get_mut(&node_id) {
@@ -261,11 +260,7 @@ fn validate_boot_step1_checks(
     // Helper macro to read a U32 LE from a specific offset in the payload
     macro_rules! read_payload_u32 {
         ($offset:expr) => {
-            u32::from_le_bytes(
-                payload[$offset..$offset + 4]
-                    .try_into()
-                    .unwrap_or_default(),
-            )
+            u32::from_le_bytes(payload[$offset..$offset + 4].try_into().unwrap_or_default())
         };
     }
 
@@ -284,10 +279,7 @@ fn validate_boot_step1_checks(
     let expected_device_type = context
         .core
         .od
-        .read_u32(
-            constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32,
-            node_id.0,
-        )
+        .read_u32(constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32, node_id.0)
         .unwrap_or(0);
     let expected_vendor_id = context
         .core
@@ -361,10 +353,7 @@ fn validate_boot_step1_checks(
         return false;
     }
 
-    trace!(
-        "[MN] CHECK_IDENTIFICATION passed for Node {}.",
-        node_id.0
-    );
+    trace!("[MN] CHECK_IDENTIFICATION passed for Node {}.", node_id.0);
 
     // --- CHECK_SOFTWARE (7.4.2.2.1.2) ---
     // Check NMT_StartUp_U32.Bit10 (Software Version Check)
@@ -408,7 +397,11 @@ fn validate_boot_step1_checks(
         if received_conf_date != expected_conf_date || received_conf_time != expected_conf_time {
             error!(
                 "[MN] CHECK_CONFIGURATION failed for Node {}: Config date/time mismatch. Expected {}/{}, got {}/{}. [E_NMT_BPO1_CF_VERIFY]",
-                node_id.0, expected_conf_date, expected_conf_time, received_conf_date, received_conf_time
+                node_id.0,
+                expected_conf_date,
+                expected_conf_time,
+                received_conf_date,
+                received_conf_time
             );
             // TODO: In the future, trigger configuration download (SDO) logic here.
             // For now, we fail the boot-up step.

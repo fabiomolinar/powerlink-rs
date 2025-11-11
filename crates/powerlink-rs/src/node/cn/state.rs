@@ -1,5 +1,6 @@
 // crates/powerlink-rs/src/node/cn/state.rs
 use crate::ErrorHandler;
+use crate::PowerlinkError; // Import PowerlinkError
 use crate::frame::DllCsStateMachine;
 use crate::frame::error::{
     CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler,
@@ -7,13 +8,12 @@ use crate::frame::error::{
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtCommand;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
-use crate::od::{constants, ObjectDictionary, ObjectValue}; // Import constants
-use crate::pdo::{error::PdoError, PDOVersion, PdoMappingEntry}; // Import PDO types
+use crate::od::{ObjectDictionary, ObjectValue, constants}; // Import constants
+use crate::pdo::{PDOVersion, PdoMappingEntry, error::PdoError}; // Import PDO types
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
 use crate::types::NodeId;
-use crate::PowerlinkError; // Import PowerlinkError
 use alloc::collections::VecDeque;
 use alloc::vec; // Import vec
 use alloc::vec::Vec;
@@ -84,9 +84,7 @@ impl<'s> CnContext<'s> {
     ///
     /// Returns the payload `Vec` and the `PDOVersion` for this mapping.
     /// Returns an error if the configuration is invalid.
-    pub(super) fn build_tpdo_payload(
-        &self,
-    ) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
+    pub(super) fn build_tpdo_payload(&self) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
         // 1. Get the TPDO mapping (1A00h for a CN's PRes).
         let mapping_index = constants::IDX_TPDO_MAPPING_PARAM_REC_START; // 0x1A00
         let comm_param_index = constants::IDX_TPDO_COMM_PARAM_REC_START; // 0x1800
@@ -126,8 +124,7 @@ impl<'s> CnContext<'s> {
             if *num_entries > 0 {
                 trace!(
                     "Building TPDO payload using {:#06X} with {} entries.",
-                    mapping_index,
-                    num_entries
+                    mapping_index, num_entries
                 );
                 // 6. Iterate through each mapping entry.
                 for i in 1..=*num_entries {
@@ -138,7 +135,10 @@ impl<'s> CnContext<'s> {
                         if let Err(e) = self.apply_tpdo_mapping_entry(&entry, &mut payload) {
                             // On error (e.g., buffer too small, type mismatch),
                             // we must stop and return an error.
-                            error!("[PDO] Failed to apply TPDO mapping entry for {:#06X}/{}: {:?}. Invalidating TPDO.", entry.index, entry.sub_index, e);
+                            error!(
+                                "[PDO] Failed to apply TPDO mapping entry for {:#06X}/{}: {:?}. Invalidating TPDO.",
+                                entry.index, entry.sub_index, e
+                            );
                             return Err(e.into());
                         }
                         // Track the max byte written to truncate later if needed
@@ -212,7 +212,10 @@ impl<'s> CnContext<'s> {
             // the length specified in the mapping
             warn!(
                 "TPDO serialize mismatch for 0x{:04X}/{}: mapping length is {} bytes, but value serialized {} bytes.",
-                entry.index, entry.sub_index, length, bytes_to_pack.len()
+                entry.index,
+                entry.sub_index,
+                length,
+                bytes_to_pack.len()
             );
             return Err(PdoError::TypeMismatch {
                 index: entry.index,

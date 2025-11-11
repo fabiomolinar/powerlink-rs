@@ -5,11 +5,11 @@ use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
 use crate::nmt::NmtStateMachine;
 use crate::nmt::events::NmtCommand;
 use crate::nmt::states::NmtState;
-use crate::od::{constants, ObjectValue}; // Import constants
+use crate::od::constants; // Import constants
 use crate::pdo::PDOVersion;
 use crate::sdo::SdoClient;
 use crate::types::C_ADR_MN_DEF_NODE_ID;
-use crate::{od::ObjectDictionary, types::NodeId, PowerlinkError};
+use crate::{od::ObjectDictionary, types::NodeId};
 use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;

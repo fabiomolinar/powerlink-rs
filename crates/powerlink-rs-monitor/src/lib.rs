@@ -42,16 +42,14 @@ const BROADCAST_CHANNEL_CAPACITY: usize = 32;
 pub async fn start_in_process_monitor(
     receiver: Receiver<DiagnosticSnapshot>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     // 1. Define the web server address.
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), DEFAULT_MONITOR_PORT);
 
     // 2. Create the tokio broadcast channel.
     // This channel will distribute snapshots from the bridge task to all
     // connected WebSocket clients.
-    let (snapshot_tx, _) =
-        broadcast::channel::<DiagnosticSnapshot>(BROADCAST_CHANNEL_CAPACITY);
-    
+    let (snapshot_tx, _) = broadcast::channel::<DiagnosticSnapshot>(BROADCAST_CHANNEL_CAPACITY);
+
     // 3. Spawn the blocking task to bridge the channels.
     // This is the most critical part. We use `spawn_blocking` to move
     // the blocking `receiver.recv()` call off of the async runtime,
@@ -66,7 +64,10 @@ pub async fn start_in_process_monitor(
             if let Err(e) = bridge_tx.send(snapshot) {
                 // This typically means all WebSocket clients (and the server)
                 // have disconnected.
-                error!("Failed to broadcast snapshot (no receivers?): {}. Shutting down bridge.", e);
+                error!(
+                    "Failed to broadcast snapshot (no receivers?): {}. Shutting down bridge.",
+                    e
+                );
                 break;
             }
         }
@@ -76,7 +77,7 @@ pub async fn start_in_process_monitor(
     // 4. Start the web server.
     // This will run indefinitely, serving the root page and WebSocket connections.
     server::start_web_server(addr, snapshot_tx).await;
-    
+
     Ok(())
 }
 
@@ -96,12 +97,12 @@ pub async fn start_standalone_monitor(
     // 1. Create the OD for the diagnostic node
     let mut od = ObjectDictionary::new(None);
     // ... (populate OD with mandatory objects for a CN, Node ID 253) ...
-    
+
     // 2. Create the ControlledNode instance
     // let mut node = ControlledNode::new(od, interface.local_mac_address().into())?;
 
     // 3. Spawn the web server (e.g., axum) in a separate async task
-    
+
     // 4. Run the node's main loop in this task
     // loop {
     //     ... call node.tick() and node.process_raw_frame() ...
