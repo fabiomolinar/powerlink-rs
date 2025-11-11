@@ -1,4 +1,4 @@
-// crates/powerlink-io-linux/tests/loopback_test.rs
+// crates/powerlink-rs-linux/tests/loopback_test.rs
 #![cfg(target_os = "linux")]
 
 use log::{debug, error, info, trace, warn};
@@ -17,12 +17,11 @@ use powerlink_rs::{
     },
     nmt::{flags::FeatureFlags, states::NmtState},
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
-    // Removed unused imports PReqFrame and PDOVersion
     sdo::{
         command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation},
         sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader},
     },
-    types::{C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId},
+    types::{C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId, IpAddress}, // Import IpAddress
 };
 use powerlink_rs_linux::LinuxPnetInterface;
 use std::{
@@ -401,7 +400,9 @@ fn run_cn_logic(interface_name: &str) {
 
     info!("[CN] Initial NMT state: {:?}", node.nmt_state());
 
-    let mut buffer = [0u8; 1518];
+    let mut eth_buffer = [0u8; 1518];
+    // This crate (`powerlink-rs-linux`) enables the `sdo-udp` feature
+    let mut udp_buffer = [0u8; 1500];
     let start_time = Instant::now();
 
     // The main loop is driven by network events or timeouts.
@@ -412,51 +413,59 @@ fn run_cn_logic(interface_name: &str) {
         }
 
         let current_time_us = start_time.elapsed().as_micros() as u64;
-        let action;
 
-        // The pnet interface is configured with a read timeout.
-        // - Ok(bytes > 0) means a frame was received.
-        // - Ok(0) or Err(IoError) means a timeout occurred, which is our signal to call tick().
-        match cn_interface.receive_frame(&mut buffer) {
-            Ok(bytes) => {
-                if bytes > 0 {
-                    trace!("[CN] Received {} bytes.", bytes);
-                    let received_slice = &buffer[..bytes];
-
-                    if bytes >= 12 && received_slice[6..12] == cn_mac {
-                        trace!("[CN] Ignoring received frame from self.");
-                        continue;
-                    }
-
-                    action = node.process_raw_frame(received_slice, current_time_us);
-                    debug!(
-                        "[CN] NMT state after processing frame: {:?}",
-                        node.nmt_state()
-                    );
+        // 1. Poll for Ethernet frames
+        let eth_slice = match cn_interface.receive_frame(&mut eth_buffer) {
+            Ok(bytes) if bytes > 0 => {
+                if bytes >= 12 && eth_buffer[6..12] == cn_mac {
+                    trace!("[CN] Ignoring received frame from self.");
+                    None // Ignore self-sent frames
                 } else {
-                    // bytes == 0, means timeout.
-                    action = node.tick(current_time_us);
-                    debug!("[CN] NMT state after tick: {:?}", node.nmt_state());
+                    Some(&eth_buffer[..bytes])
                 }
             }
-            Err(PowerlinkError::IoError) => {
-                // This can also indicate a timeout in some pnet backends, treat it like Ok(0).
-                action = node.tick(current_time_us);
-            }
-            Err(e) => {
-                error!("[CN] Receive error: {:?}", e);
-                action = NodeAction::NoAction;
-            }
-        }
+            _ => None,
+        };
+
+        // 2. Poll for UDP datagrams
+        let udp_info: Option<(&[u8], IpAddress, u16)> =
+            match cn_interface.receive_udp(&mut udp_buffer) {
+                Ok(Some((size, ip, port))) => Some((&udp_buffer[..size], ip, port)),
+                _ => None,
+            };
+
+        // 3. Call the single run_cycle function
+        // We use the 3-argument version because `sdo-udp` is enabled
+        let action = node.run_cycle(eth_slice, udp_info, current_time_us);
 
         // Execute any action returned by the node.
-        if let NodeAction::SendFrame(response) = action {
-            info!("[CN] Sending response ({} bytes)...", response.len());
-            if let Err(e) = cn_interface.send_frame(&response) {
-                error!("[CN] Failed to send response: {:?}", e);
+        match action {
+            NodeAction::SendFrame(response) => {
+                info!("[CN] Sending response ({} bytes)...", response.len());
+                if let Err(e) = cn_interface.send_frame(&response) {
+                    error!("[CN] Failed to send response: {:?}", e);
+                }
+            }
+            NodeAction::SendUdp {
+                dest_ip,
+                dest_port,
+                data,
+            } => {
+                info!(
+                    "[CN] Sending UDP ({} bytes) to {}:{}...",
+                    data.len(),
+                    core::net::Ipv4Addr::from(dest_ip),
+                    dest_port
+                );
+                if let Err(e) = cn_interface.send_udp(dest_ip, dest_port, &data) {
+                    error!("[CN] Failed to send UDP response: {:?}", e);
+                }
+            }
+            NodeAction::NoAction => {
+                // No action, sleep to prevent busy-looping
+                thread::sleep(Duration::from_millis(1));
             }
         }
-        // No need for a separate sleep, the receive timeout manages the loop rate.
     }
 }
 
@@ -520,7 +529,6 @@ fn run_mn_logic(interface_name: &str, test_to_run: &str) {
         "ASnd(IdentResponse)",
         |frame| match frame {
             // Closure now takes a reference
-            // Remove 'ref' here due to Rust 2021 match ergonomics
             PowerlinkFrame::ASnd(asnd)
                 if asnd.source == NodeId(cn_node_id)
                     && asnd.destination == NodeId(C_ADR_MN_DEF_NODE_ID)
@@ -603,7 +611,6 @@ fn run_sdo_test_logic(
         "ASnd(SDO Init ACK)",
         |frame| match frame {
             // Closure now takes a reference
-            // Remove 'ref' here due to Rust 2021 match ergonomics
             PowerlinkFrame::ASnd(asnd) if asnd.service_id == ServiceId::Sdo => {
                 // SDO Payload starts at offset 0 (Seq Header) of ASnd payload
                 SequenceLayerHeader::deserialize(&asnd.payload[0..4])
@@ -672,7 +679,6 @@ fn run_sdo_test_logic(
         "ASnd(SDO Data Response)",
         |frame| match frame {
             // Closure now takes a reference
-            // Remove 'ref' here due to Rust 2021 match ergonomics
             PowerlinkFrame::ASnd(asnd) if asnd.service_id == ServiceId::Sdo => {
                 // SDO Payload starts at offset 0 (Seq Header) of ASnd payload
                 SequenceLayerHeader::deserialize(&asnd.payload[0..4])

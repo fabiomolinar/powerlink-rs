@@ -1,4 +1,3 @@
-// crates/powerlink-io-linux/examples/io_module.rs
 //! A full-system example demonstrating a POWERLINK network with one
 //! Managing Node (MN) and one Controlled Node (CN) acting as a simple I/O module.
 //!
@@ -21,13 +20,13 @@ use powerlink_rs::{
     node::{ManagingNode, Node, NodeAction}, // Corrected import
     od::{AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping},
     pdo::PdoMappingEntry,
-    types::C_ADR_MN_DEF_NODE_ID,
+    types::{C_ADR_MN_DEF_NODE_ID, IpAddress}, // Import IpAddress for UDP
 };
 use powerlink_rs_linux::LinuxPnetInterface;
 use std::{
     env, thread,
     time::{Duration, Instant},
-}; // Removed unused debug, trace, warn
+};
 
 // --- Common Configuration (Moved to top level) ---
 
@@ -371,7 +370,9 @@ fn run_cn_logic(interface_name: &str) {
     let (mut interface, mut node) =
         setup_cn_node(interface_name, CN_NODE_ID, od).expect("Failed to setup CN");
 
-    let mut buffer = [0u8; 1518];
+    let mut eth_buffer = [0u8; 1518];
+    // The `sdo-udp` feature is enabled for this example
+    let mut udp_buffer = [0u8; 1500];
     let start_time = Instant::now();
     let mut digital_input_counter: u8 = 0;
 
@@ -397,29 +398,43 @@ fn run_cn_logic(interface_name: &str) {
         }
 
         // --- Network Stack Logic ---
-        let action;
-        match interface.receive_frame(&mut buffer) {
-            Ok(0) => {
-                // Timeout
-                action = node.tick(current_time_us);
+        // 1. Poll for Ethernet frames
+        let eth_slice = match interface.receive_frame(&mut eth_buffer) {
+            Ok(bytes) if bytes > 0 => Some(&eth_buffer[..bytes]),
+            _ => None,
+        };
+
+        // 2. Poll for UDP datagrams
+        let udp_info: Option<(&[u8], IpAddress, u16)> =
+            match interface.receive_udp(&mut udp_buffer) {
+                Ok(Some((size, ip, port))) => Some((&udp_buffer[..size], ip, port)),
+                _ => None,
+            };
+
+        // 3. Call the single run_cycle function
+        let action = node.run_cycle(eth_slice, udp_info, current_time_us);
+
+        // 4. Execute the returned action
+        match action {
+            NodeAction::SendFrame(frame) => {
+                if let Err(e) = interface.send_frame(&frame) {
+                    error!("[CN] Failed to send frame: {:?}", e);
+                }
             }
-            Ok(bytes) => {
-                action = node.process_raw_frame(&buffer[..bytes], current_time_us);
+            NodeAction::SendUdp {
+                dest_ip,
+                dest_port,
+                data,
+            } => {
+                if let Err(e) = interface.send_udp(dest_ip, dest_port, &data) {
+                    error!("[CN] Failed to send UDP: {:?}", e);
+                }
             }
-            Err(PowerlinkError::IoError) => {
-                action = node.tick(current_time_us);
-            }
-            Err(e) => {
-                error!("[CN] Receive error: {:?}", e);
-                action = NodeAction::NoAction;
+            NodeAction::NoAction => {
+                // Nothing to do
             }
         }
 
-        if let NodeAction::SendFrame(response) = action {
-            if let Err(e) = interface.send_frame(&response) {
-                error!("[CN] Failed to send frame: {:?}", e);
-            }
-        }
         // Small sleep to prevent busy-looping if receive_frame returns immediately
         thread::sleep(Duration::from_micros(100));
     }
@@ -434,6 +449,9 @@ fn run_mn_logic(interface_name: &str, cn_mac: MacAddress) {
 
     let start_time = Instant::now();
     let mut last_log_time = Instant::now();
+    let mut eth_buffer = [0u8; 1518];
+    // The `sdo-udp` feature is enabled for this example
+    let mut udp_buffer = [0u8; 1500];
 
     loop {
         let current_time_us = start_time.elapsed().as_micros() as u64;
@@ -443,26 +461,44 @@ fn run_mn_logic(interface_name: &str, cn_mac: MacAddress) {
             if current_time_us < deadline {
                 let wait_time = (deadline - current_time_us).min(1000); // Wait at most 1ms
                 thread::sleep(Duration::from_micros(wait_time));
-                continue;
+                // Continue to poll interfaces even while waiting for tick
             }
         }
 
-        let action = node.tick(current_time_us);
-        if let NodeAction::SendFrame(frame) = action {
-            if let Err(e) = interface.send_frame(&frame) {
-                error!("[MN] Failed to send frame: {:?}", e);
-            }
-        }
+        // 1. Poll for Ethernet frames
+        let eth_slice = match interface.receive_frame(&mut eth_buffer) {
+            Ok(bytes) if bytes > 0 => Some(&eth_buffer[..bytes]),
+            _ => None,
+        };
 
-        // Non-blocking receive for PRes/ASnd
-        let mut buffer = [0u8; 1518];
-        // In a real app, this should be truly non-blocking. Here we use a very short timeout.
-        interface
-            .set_read_timeout(Duration::from_micros(100))
-            .unwrap();
-        if let Ok(bytes) = interface.receive_frame(&mut buffer) {
-            if bytes > 0 {
-                node.process_raw_frame(&buffer[..bytes], current_time_us);
+        // 2. Poll for UDP datagrams
+        let udp_info: Option<(&[u8], IpAddress, u16)> =
+            match interface.receive_udp(&mut udp_buffer) {
+                Ok(Some((size, ip, port))) => Some((&udp_buffer[..size], ip, port)),
+                _ => None,
+            };
+
+        // 3. Call the single run_cycle function
+        let action = node.run_cycle(eth_slice, udp_info, current_time_us);
+
+        // 4. Execute the returned action
+        match action {
+            NodeAction::SendFrame(frame) => {
+                if let Err(e) = interface.send_frame(&frame) {
+                    error!("[MN] Failed to send frame: {:?}", e);
+                }
+            }
+            NodeAction::SendUdp {
+                dest_ip,
+                dest_port,
+                data,
+            } => {
+                if let Err(e) = interface.send_udp(dest_ip, dest_port, &data) {
+                    error!("[MN] Failed to send UDP: {:?}", e);
+                }
+            }
+            NodeAction::NoAction => {
+                // Nothing to do
             }
         }
 
@@ -605,6 +641,42 @@ fn add_mandatory_cn_objects(od: &mut ObjectDictionary, node_id: u8) {
             pdo_mapping: None,
         },
     );
+    // Add 0x1F8C for NMT state
+    od.insert(
+        0x1F8C, // NMT_CurrNMTState_U8
+        ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned8(0)),
+            name: "NMT_CurrNMTState_U8",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadOnly),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: Some(PdoMapping::No),
+        },
+    );
+    // Add 0x1F98 for CycleTiming
+    od.insert(
+        0x1F98, // NMT_CycleTiming_REC (needed for PresActPayloadLimit)
+        ObjectEntry {
+            object: Object::Record(vec![
+                ObjectValue::Unsigned16(1490),  // 1: IsochrTxMaxPayload_U16
+                ObjectValue::Unsigned16(1490),  // 2: IsochrRxMaxPayload_U16
+                ObjectValue::Unsigned32(10000), // 3: PresMaxLatency_U32 (10 us)
+                ObjectValue::Unsigned16(36),    // 4: PreqActPayloadLimit_U16 (36 bytes default)
+                ObjectValue::Unsigned16(36),    // 5: PresActPayloadLimit_U16 (36 bytes default)
+                ObjectValue::Unsigned32(20000), // 6: AsndMaxLatency_U32 (20 us)
+                ObjectValue::Unsigned8(0),      // 7: MultiplCycleCnt_U8
+                ObjectValue::Unsigned16(300),   // 8: AsyncMTU_U16
+                ObjectValue::Unsigned16(2),     // 9: Prescaler_U16
+            ]),
+            name: "NMT_CycleTiming_REC",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadWriteStore),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
 }
 
 // Add mandatory objects required for a basic MN
@@ -692,6 +764,14 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
             object: Object::Record(vec![
                 ObjectValue::Unsigned32(1_000_000), // MNWaitNotAct_U32 (1 sec)
                 ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp1_U32 (500 ms)
+                // Add missing sub-indices up to 9
+                ObjectValue::Unsigned32(500_000), // 3: MNWaitPreOp1_U32
+                ObjectValue::Unsigned32(500_000), // 4: MNTimeoutPreOp2_U32
+                ObjectValue::Unsigned32(500_000), // 5: MNTimeoutReadyToOp_U32
+                ObjectValue::Unsigned32(500_000), // 6: MNIdentificationTimeout_U32
+                ObjectValue::Unsigned32(500_000), // 7: MNSoftwareTimeout_U32
+                ObjectValue::Unsigned32(500_000), // 8: MNConfigurationTimeout_U32
+                ObjectValue::Unsigned32(500_000), // 9: MNStartCNTimeout_U32
             ]),
             name: "NMT_BootTime_REC",
             category: Category::Mandatory,
@@ -730,6 +810,78 @@ fn add_mandatory_mn_objects(od: &mut ObjectDictionary) {
                 ObjectValue::Unsigned16(2),     // 9: Prescaler_U16
             ]),
             name: "NMT_CycleTiming_REC",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadWriteStore),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
+    // Add 0x1F8C for NMT state
+    od.insert(
+        0x1F8C, // NMT_CurrNMTState_U8
+        ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned8(0)),
+            name: "NMT_CurrNMTState_U8",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadOnly),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: Some(PdoMapping::No),
+        },
+    );
+    // Add 0x1F8B for PReq Payload Limits
+    let mut preq_limits = vec![ObjectValue::Unsigned8(254)]; // Max sub-index
+    for i in 1..=254 {
+        if i == CN_NODE_ID as usize {
+            preq_limits.push(ObjectValue::Unsigned16(36)); // 36 bytes for our CN
+        } else {
+            preq_limits.push(ObjectValue::Unsigned16(36)); // 36 bytes default
+        }
+    }
+    od.insert(
+        0x1F8B, // NMT_MNPReqPayloadLimitList_AU16
+        ObjectEntry {
+            object: Object::Array(preq_limits),
+            name: "NMT_MNPReqPayloadLimitList_AU16",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadWriteStore),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
+    // Add 0x1F8D for PRes Payload Limits
+    let mut pres_limits = vec![ObjectValue::Unsigned8(254)]; // Max sub-index
+    for i in 1..=254 {
+        if i == CN_NODE_ID as usize {
+            pres_limits.push(ObjectValue::Unsigned16(36)); // 36 bytes for our CN
+        } else {
+            pres_limits.push(ObjectValue::Unsigned16(36)); // 36 bytes default
+        }
+    }
+    od.insert(
+        0x1F8D, // NMT_PresPayloadLimitList_AU16
+        ObjectEntry {
+            object: Object::Array(pres_limits),
+            name: "NMT_PresPayloadLimitList_AU16",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadWriteStore),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
+    // Add 0x1F92 for PRes Timeouts
+    let mut pres_timeouts = vec![ObjectValue::Unsigned8(254)]; // Max sub-index
+    for _ in 1..=254 {
+        pres_timeouts.push(ObjectValue::Unsigned32(100_000)); // 100us timeout
+    }
+    od.insert(
+        0x1F92, // NMT_MNCNPResTimeout_AU32
+        ObjectEntry {
+            object: Object::Array(pres_timeouts),
+            name: "NMT_MNCNPResTimeout_AU32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWriteStore),
             default_value: None,

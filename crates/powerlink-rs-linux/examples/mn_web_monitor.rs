@@ -13,7 +13,7 @@ use log::{error, info, trace};
 use powerlink_rs::{
     node::{mn::ManagingNode, Node, NodeAction},
     od::utils::new_mn_default,
-    types::{C_ADR_MN_DEF_NODE_ID, NodeId},
+    types::{C_ADR_MN_DEF_NODE_ID, NodeId, IpAddress}, // Import IpAddress
     NetworkInterface,
 };
 use powerlink_rs_linux::LinuxPnetInterface;
@@ -104,25 +104,33 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
         .map_err(|e| format!("Failed to create ManagingNode: {:?}", e))?;
 
     // --- 4. Run Real-Time Loop ---
-    let mut buffer = [0u8; 1518];
+    let mut eth_buffer = [0u8; 1518];
+    // This example is part of `powerlink-rs-linux`, which enables `sdo-udp`
+    let mut udp_buffer = [0u8; 1500]; // Buffer for UDP datagrams
     let start_time = Instant::now();
     info!("[RT-Thread] Starting real-time node loop...");
 
     loop {
         let current_time_us = start_time.elapsed().as_micros() as u64;
 
-        // Receive frames
-        let buffer_slice = match interface.receive_frame(&mut buffer) {
-            Ok(bytes) if bytes > 0 => &buffer[..bytes],
-            _ => &[], // Pass an empty slice on error or timeout
+        // 1. Poll for Ethernet frames
+        let eth_slice = match interface.receive_frame(&mut eth_buffer) {
+            Ok(bytes) if bytes > 0 => Some(&eth_buffer[..bytes]),
+            _ => None, // Pass None on error or timeout
         };
 
-        // Run the node's full cycle
-        // This single call handles frame processing, ticking,
-        // and action prioritization.
-        let action = node.run_cycle(buffer_slice, current_time_us);
+        // 2. Poll for UDP datagrams
+        let udp_info: Option<(&[u8], IpAddress, u16)> =
+            match interface.receive_udp(&mut udp_buffer) {
+                Ok(Some((size, ip, port))) => Some((&udp_buffer[..size], ip, port)),
+                _ => None, // Pass None on error or no data
+            };
 
-        // Execute node actions
+        // 3. Run the node's full cycle with all available inputs
+        // Since `powerlink-rs-linux` enables `sdo-udp`, we *must* use the 3-argument version.
+        let action = node.run_cycle(eth_slice, udp_info, current_time_us);
+
+        // 4. Execute node actions
         match action {
             NodeAction::SendFrame(frame) => {
                 trace!("[RT-Thread] Sending frame ({} bytes)", frame.len());
@@ -130,11 +138,23 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
                     error!("[RT-Thread] Send error: {:?}", e);
                 }
             }
+            NodeAction::SendUdp {
+                dest_ip,
+                dest_port,
+                data,
+            } => {
+                trace!(
+                    "[RT-Thread] Sending UDP ({} bytes) to {}:{}",
+                    data.len(),
+                    core::net::Ipv4Addr::from(dest_ip),
+                    dest_port
+                );
+                if let Err(e) = interface.send_udp(dest_ip, dest_port, &data) {
+                    error!("[RT-Thread] UDP Send error: {:?}", e);
+                }
+            }
             NodeAction::NoAction => {
                 // Nothing to do
-            }
-            _ => {
-                // SDO or UDP actions (not handled in this simple example)
             }
         }
 
@@ -143,6 +163,7 @@ fn run_realtime_node(snapshot_tx: Sender<DiagnosticSnapshot>) -> Result<(), Stri
         let _ = snapshot_tx.try_send(snapshot); // Ignore error if channel is full
 
         // In a real application, we would sleep until `node.next_tick_us()`
+        // For this example, a small sleep is fine to yield CPU.
         thread::sleep(Duration::from_micros(100));
     }
 }
