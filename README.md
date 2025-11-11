@@ -60,7 +60,7 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
 
 ## Testing
 
-Some integration tests requiring access to the network layer. `#[ignore]` is used with these tests as they require root privileges, so these are ignored by default. They can still be ran, for example with Linux, by using `sudo` and using the full path to the cargo executable (example: `sudo -E /home/<user_name>/.cargo/bin/cargo test --package powerlink-rs-linux --test loopback_test -- test_cn_responds_to_preq_on_loopback --exact --show-output --ignored`).
+Some integration tests requiring access to the network layer. `#[ignore]` is used with these tests as they require root privileges, so these are ignored by default. They can still be ran, for example with Linux, by using `sudo` and using the full path to the cargo executable (example: `sudo -E /home/<user_name>/.cargo/bin/cargo test --package powerlink-rs-linux --test loopback_test -- test_cn_responds_to_preq_on_loopback --exact --show-output --ignored`). Another way to handle this is by running the tests within Docker containers.
 
 To aid in debugging these complex integration tests, a dedicated `powerlink-rs-monitor` crate is planned. This tool will provide a web-based GUI to visualize the NMT state, error counters, and other diagnostic data in real-time. It is designed to run alongside the node (either in-process for development or as a separate diagnostic node) and will be the primary tool for observing test behavior, supplementing raw `.pcap` logs.
 
