@@ -11,12 +11,8 @@ use log::{debug, error, info, trace, warn};
 /// This is a custom object, not defined by the spec, but used in the examples.
 pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option<MacAddress> {
     const IDX_MAN_CN_MAC_ADDRESS_LIST: u16 = 0x2100;
-    
-    match context
-        .core
-        .od
-        .read(IDX_MAN_CN_MAC_ADDRESS_LIST, node_id.0)
-    {
+
+    match context.core.od.read(IDX_MAN_CN_MAC_ADDRESS_LIST, node_id.0) {
         Some(cow) => match &*cow {
             ObjectValue::OctetString(bytes) => {
                 if bytes.len() == 6 {
@@ -54,7 +50,6 @@ pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option
         }
     }
 }
-
 
 /// Determines the highest priority asynchronous action to be taken.
 /// The priority is:
@@ -408,8 +403,7 @@ pub(super) fn has_more_isochronous_nodes(context: &MnContext, current_multiplex_
 pub(super) fn schedule_timeout(context: &mut MnContext, deadline_us: u64, event: DllMsEvent) {
     trace!(
         "[MN] Scheduling timeout event {:?} for {}us",
-        event,
-        deadline_us
+        event, deadline_us
     );
     context.pending_timeout_event = Some(event);
     // Only set if this deadline is sooner than any existing one

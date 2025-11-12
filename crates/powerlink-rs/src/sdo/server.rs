@@ -1,7 +1,5 @@
 use crate::frame::basic::MacAddress;
-use crate::sdo::command::{
-    DefaultSdoHandler, SdoCommandHandler,
-};
+use crate::sdo::command::{DefaultSdoHandler, SdoCommandHandler};
 use crate::sdo::sequence_handler::SdoSequenceHandler;
 use crate::sdo::state::SdoServerState;
 use crate::sdo::transport::SdoResponseData;
@@ -11,7 +9,7 @@ use crate::{PowerlinkError, od::ObjectDictionary};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use log::trace; 
+use log::trace;
 
 /// Holds transport-specific information about the SDO client.
 /// This must derive Ord to be used as a BTreeMap key.

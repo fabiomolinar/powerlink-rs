@@ -1,7 +1,5 @@
 use crate::frame::basic::MacAddress;
-use crate::frame::control::{
-    IdentResponsePayload, StaticErrorBitField, StatusResponsePayload,
-}; // Added new payload structs
+use crate::frame::control::{IdentResponsePayload, StaticErrorBitField, StatusResponsePayload}; // Added new payload structs
 use crate::frame::error::ErrorEntry;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
@@ -27,7 +25,7 @@ pub(super) fn build_ident_response(
     node_id: NodeId,
     od: &ObjectDictionary,
     soa: &crate::frame::SoAFrame,
-    sdo_client: &SdoClient, // Added
+    sdo_client: &SdoClient,                        // Added
     pending_nmt_requests: &[(NmtCommand, NodeId)], // Added
 ) -> PowerlinkFrame {
     debug!("Building IdentResponse for SoA from node {}", soa.source.0);
@@ -79,7 +77,7 @@ pub(super) fn build_status_response(
     ec_flag: bool,
     emergency_queue: &mut VecDeque<ErrorEntry>,
     soa: &crate::frame::SoAFrame,
-    sdo_client: &SdoClient, // Added
+    sdo_client: &SdoClient,                        // Added
     pending_nmt_requests: &[(NmtCommand, NodeId)], // Added
 ) -> PowerlinkFrame {
     debug!("Building StatusResponse for SoA from node {}", soa.source.0);
@@ -148,7 +146,9 @@ pub(super) fn build_status_response(
             payload_buf.fill(0);
             // Re-serialize with empty entries
             payload_struct.error_entries = Vec::new();
-            payload_struct.serialize(&mut payload_buf).unwrap_or(14 + 20)
+            payload_struct
+                .serialize(&mut payload_buf)
+                .unwrap_or(14 + 20)
         }
     };
     payload_buf.truncate(payload_len);

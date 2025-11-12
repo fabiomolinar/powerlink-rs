@@ -5,12 +5,12 @@
 //! SDO transfers (like segmented downloads for CFM/PDL) to multiple CNs
 //! simultaneously.
 
+use crate::PowerlinkError;
 use crate::od::ObjectDictionary;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::{OD_IDX_SDO_RETRIES, OD_IDX_SDO_TIMEOUT};
 use crate::types::NodeId;
-use crate::PowerlinkError;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
@@ -156,7 +156,10 @@ impl SdoClientConnection {
         }
 
         // ACK is valid. Clear timeout and retransmission buffer.
-        trace!("SDO Client: Received valid ACK for Seq {}.", last_seq.send_sequence_number);
+        trace!(
+            "SDO Client: Received valid ACK for Seq {}.",
+            last_seq.send_sequence_number
+        );
         self.last_sent_command = None;
         self.deadline_us = None;
         self.retries_left = 0;
@@ -187,8 +190,7 @@ impl SdoClientConnection {
 
         // --- 3. Handle Server Aborts ---
         if cmd.header.is_aborted {
-            let abort_code =
-                u32::from_le_bytes(cmd.payload[0..4].try_into().unwrap_or_default());
+            let abort_code = u32::from_le_bytes(cmd.payload[0..4].try_into().unwrap_or_default());
             error!(
                 "SDO Client: Server at Node {} aborted transfer (TID {}) with code {:#010X}",
                 self.target_node_id.0, cmd.header.transaction_id, abort_code
@@ -444,7 +446,7 @@ impl SdoClientConnection {
     fn get_next_download_segment(&mut self) -> (SdoCommand, bool) {
         let is_initiate = self.offset == 0;
         let remaining = self.total_size.saturating_sub(self.offset);
-        
+
         let (header_data_len, data_only_len) = if is_initiate {
             // For initiate, the "payload" is the whole buffer: [index/subindex(4), data...]
             (self.total_size, self.total_size - 4)
@@ -658,7 +660,10 @@ impl SdoClientManager {
         if let Some(conn) = self.connections.get_mut(&source_node) {
             conn.handle_response(&seq_header, &cmd);
             if conn.is_closed() {
-                debug!("SDO connection to Node {} closed after response.", source_node.0);
+                debug!(
+                    "SDO connection to Node {} closed after response.",
+                    source_node.0
+                );
                 self.connections.remove(&source_node);
             }
         } else {

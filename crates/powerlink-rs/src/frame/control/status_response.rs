@@ -28,7 +28,9 @@ impl StaticErrorBitField {
     /// Creates a new `StaticErrorBitField` by reading from the Object Dictionary.
     pub fn new(od: &ObjectDictionary) -> Self {
         Self {
-            error_register: od.read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0).unwrap_or(0),
+            error_register: od
+                .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
+                .unwrap_or(0),
             // TODO: Populate specific_errors from OD if defined
             specific_errors: [0; 7],
         }
@@ -104,8 +106,9 @@ impl StatusResponsePayload {
     /// Returns the total number of bytes written.
     pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
         // Calculate required size: Header + Entries + Terminator
-        let required_size =
-            STATUS_PAYLOAD_HEADER_SIZE + (self.error_entries.len() * ERROR_ENTRY_SIZE) + ERROR_ENTRY_SIZE;
+        let required_size = STATUS_PAYLOAD_HEADER_SIZE
+            + (self.error_entries.len() * ERROR_ENTRY_SIZE)
+            + ERROR_ENTRY_SIZE;
 
         if buffer.len() < required_size {
             return Err(PowerlinkError::BufferTooShort);
@@ -115,16 +118,15 @@ impl StatusResponsePayload {
         buffer[..STATUS_PAYLOAD_HEADER_SIZE].fill(0);
 
         // Octet 0: EN/EC Flags
-        buffer[0] = (if self.en_flag { 1 << 5 } else { 0 })
-            | (if self.ec_flag { 1 << 4 } else { 0 });
+        buffer[0] =
+            (if self.en_flag { 1 << 5 } else { 0 }) | (if self.ec_flag { 1 << 4 } else { 0 });
         // Octet 1: PR/RS Flags
         buffer[1] = (self.pr as u8) << 3 | self.rs.get();
         // Octet 2: NMTState
         buffer[2] = self.nmt_state as u8;
         // Octets 3-5 are reserved (already 0)
         // Octets 6-13: StaticErrorBitField
-        self.static_error_bit_field
-            .serialize(&mut buffer[6..14])?;
+        self.static_error_bit_field.serialize(&mut buffer[6..14])?;
 
         // Octets 14..: Error Entries
         let mut offset = STATUS_PAYLOAD_HEADER_SIZE;

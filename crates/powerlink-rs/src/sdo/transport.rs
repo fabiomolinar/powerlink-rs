@@ -7,7 +7,6 @@ use crate::sdo::sequence::SequenceLayerHeader;
 use crate::sdo::server::SdoClientInfo;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::udp::serialize_sdo_udp_payload;
-use alloc::vec;
 use log::info;
 
 /// Encapsulates the data required to construct an SDO response,

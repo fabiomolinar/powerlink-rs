@@ -2,8 +2,8 @@ use super::scheduler;
 use super::state::{AsyncRequest, CnState, CyclePhase, MnContext};
 use crate::frame::{
     ASndFrame, DllMsEvent, PResFrame, PowerlinkFrame, ServiceId,
-    error::{DllError, NmtAction},
     control::{IdentResponsePayload, StatusResponsePayload},
+    error::{DllError, NmtAction},
 };
 use crate::nmt::NmtStateMachine;
 use crate::nmt::{events::NmtEvent, states::NmtState};

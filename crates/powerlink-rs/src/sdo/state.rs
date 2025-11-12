@@ -1,8 +1,8 @@
 // crates/powerlink-rs/src/sdo/state.rs
 use crate::od::ObjectDictionary;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
-use crate::{PowerlinkError, od::ObjectValue};
 use crate::sdo::{OD_IDX_SDO_RETRIES, OD_IDX_SDO_TIMEOUT};
+use crate::{PowerlinkError, od::ObjectValue};
 use alloc::vec::Vec;
 use log::{debug, error, info};
 

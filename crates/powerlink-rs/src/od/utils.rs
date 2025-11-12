@@ -5,7 +5,7 @@ use super::{
     entry::ObjectEntry,
     {AccessType, Category, Object, ObjectValue, PdoMapping},
 };
-use crate::{nmt::flags::FeatureFlags,types::NodeId};
+use crate::{nmt::flags::FeatureFlags, types::NodeId};
 use alloc::vec;
 
 /// Creates a minimal, compliant Object Dictionary for a POWERLINK

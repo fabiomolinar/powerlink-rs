@@ -144,7 +144,6 @@ fn get_cn_od(node_id: u8) -> ObjectDictionary<'static> {
     // Manually write the *active* number of entries to sub-index 0
     od.write(0x1A00, 0, ObjectValue::Unsigned8(2)).unwrap();
 
-
     // RPDO1: Receive outputs from MN to CN (in PReq)
     let rpdo1_map_do = PdoMappingEntry {
         index: IDX_DIGITAL_OUTPUTS,
@@ -202,14 +201,13 @@ fn get_mn_od(cn_mac: MacAddress) -> ObjectDictionary<'static> {
         ObjectEntry {
             object: Object::Array(mac_map_entries),
             name: "MAN_CNMacAddressList_AOS", // Manufacturer-specific Array of OctetString
-            category: Category::Optional, // Manufacturer-specific objects are not mandatory
+            category: Category::Optional,     // Manufacturer-specific objects are not mandatory
             access: Some(AccessType::ReadWrite),
             default_value: None,
             value_range: None,
             pdo_mapping: None,
         },
     );
-
 
     // --- Application Data Objects (to store data from CN) ---
     // Mirror the CN's structure for clarity.

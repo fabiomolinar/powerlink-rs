@@ -1,5 +1,6 @@
 // crates/powerlink-rs/src/node/mn/cycle.rs
 use super::state::{CnInfo, CyclePhase, MnContext};
+use crate::PowerlinkError;
 use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId};
 use crate::nmt::NmtStateMachine;
 use crate::nmt::events::NmtCommand;
@@ -7,7 +8,6 @@ use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::{Object, ObjectDictionary, ObjectValue, constants};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
-use crate::PowerlinkError;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace};
@@ -16,10 +16,10 @@ use super::events; // Import events
 use super::payload;
 use super::scheduler;
 use crate::frame::ASndFrame; // Import ASndFrame
+use crate::frame::ServiceId;
 use crate::sdo::asnd::serialize_sdo_asnd_payload; // Import SDO ASnd serializer
 use crate::sdo::command::SdoCommand; // Import SdoCommand
-use crate::sdo::sequence::SequenceLayerHeader; // Import SequenceLayerHeader
-use crate::frame::ServiceId; // Import ServiceId
+use crate::sdo::sequence::SequenceLayerHeader; // Import SequenceLayerHeader // Import ServiceId
 
 /// Parses the MN's OD configuration to build its internal node lists.
 /// This function was missing from the provided context.
@@ -41,26 +41,28 @@ pub(super) fn parse_mn_node_lists(
     let mut async_only_nodes = Vec::new();
     let mut multiplex_assign = BTreeMap::new();
 
-    if let Some(Object::Array(entries)) =
-        od.read_object(constants::IDX_NMT_NODE_ASSIGNMENT_AU32)
-    {
+    if let Some(Object::Array(entries)) = od.read_object(constants::IDX_NMT_NODE_ASSIGNMENT_AU32) {
         // Sub-index 0 is NumberOfEntries. Real entries start at 1.
         for (i, entry) in entries.iter().enumerate() {
             let sub_index = i as u8 + 1;
             if let ObjectValue::Unsigned32(assignment) = entry {
-                if (assignment & 1) != 0 { // Bit 0: Node exists
+                if (assignment & 1) != 0 {
+                    // Bit 0: Node exists
                     if let Ok(node_id) = NodeId::try_from(sub_index) {
                         node_info.insert(node_id, CnInfo::default());
-                        if (assignment & (1 << 3)) != 0 { // Bit 3: Node is mandatory
+                        if (assignment & (1 << 3)) != 0 {
+                            // Bit 3: Node is mandatory
                             mandatory_nodes.push(node_id);
                         }
-                        if (assignment & (1 << 8)) == 0 { // Bit 8: 0=Isochronous
+                        if (assignment & (1 << 8)) == 0 {
+                            // Bit 8: 0=Isochronous
                             isochronous_nodes.push(node_id);
                             let mux_cycle_no = od
                                 .read_u8(constants::IDX_NMT_MULTIPLEX_ASSIGN_REC, node_id.0)
                                 .unwrap_or(0);
                             multiplex_assign.insert(node_id, mux_cycle_no);
-                        } else { // 1=Async-only
+                        } else {
+                            // 1=Async-only
                             async_only_nodes.push(node_id);
                         }
                     }
@@ -90,7 +92,6 @@ pub(super) fn parse_mn_node_lists(
         multiplex_assign,
     ))
 }
-
 
 /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
 pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64) -> NodeAction {

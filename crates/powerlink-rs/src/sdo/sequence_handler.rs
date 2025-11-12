@@ -1,6 +1,7 @@
 // crates/powerlink-rs/src/sdo/sequence_handler.rs
 use crate::hal::PowerlinkError;
 use crate::od::ObjectDictionary;
+use crate::sdo::OD_IDX_SDO_TIMEOUT;
 use crate::sdo::command::{
     CommandId, CommandLayerHeader, SdoCommand, SdoCommandHandler, Segmentation,
 };
@@ -9,7 +10,6 @@ use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader}
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::state::SdoServerState;
 use crate::sdo::transport::SdoResponseData;
-use crate::sdo::OD_IDX_SDO_TIMEOUT;
 use alloc::vec::Vec;
 use core::mem;
 use log::{debug, error, info, trace, warn};

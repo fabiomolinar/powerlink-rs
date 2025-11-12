@@ -59,8 +59,7 @@ pub(super) fn handle_read_by_index(
                         // Store state *if* not complete
                         if !is_last {
                             // Use handler to access state
-                            *handler.state_mut() =
-                                SdoServerState::SegmentedUpload(transfer_state);
+                            *handler.state_mut() = SdoServerState::SegmentedUpload(transfer_state);
                         }
                         // Return the first segment
                         response_command
@@ -144,18 +143,17 @@ pub(super) fn handle_write_by_index(
                         return handler.abort(command.header.transaction_id, 0x0607_0010); // Type mismatch/length error
                     }
                     let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
-                    *handler.state_mut() =
-                        SdoServerState::SegmentedDownload(SdoTransferState {
-                            transaction_id: command.header.transaction_id,
-                            total_size,
-                            data_buffer: req.data.to_vec(), // Store first segment's data
-                            offset: req.data.len(),         // Track bytes received
-                            index: req.index,
-                            sub_index: req.sub_index,
-                            deadline_us: Some(current_time_us + timeout_ms * 1000),
-                            retransmissions_left: 0, // Not applicable for server download
-                            last_sent_segment: None, // Not applicable for server download
-                        });
+                    *handler.state_mut() = SdoServerState::SegmentedDownload(SdoTransferState {
+                        transaction_id: command.header.transaction_id,
+                        total_size,
+                        data_buffer: req.data.to_vec(), // Store first segment's data
+                        offset: req.data.len(),         // Track bytes received
+                        index: req.index,
+                        sub_index: req.sub_index,
+                        deadline_us: Some(current_time_us + timeout_ms * 1000),
+                        retransmissions_left: 0, // Not applicable for server download
+                        last_sent_segment: None, // Not applicable for server download
+                    });
                     SdoCommand {
                         header: response_header, // Send ACK response
                         data_size: None,
@@ -179,8 +177,7 @@ pub(super) fn handle_write_by_index(
                         transfer_state.transaction_id, command.header.transaction_id
                     );
                     // Put state back before aborting
-                    *handler.state_mut() =
-                        SdoServerState::SegmentedDownload(transfer_state);
+                    *handler.state_mut() = SdoServerState::SegmentedDownload(transfer_state);
                     return handler.abort(command.header.transaction_id, 0x0800_0000); // General error
                 }
 
@@ -197,8 +194,7 @@ pub(super) fn handle_write_by_index(
                     }
                     Ok(false) => {
                         // More segments needed
-                        *handler.state_mut() =
-                            SdoServerState::SegmentedDownload(transfer_state);
+                        *handler.state_mut() = SdoServerState::SegmentedDownload(transfer_state);
                         SdoCommand {
                             header: response_header, // Send ACK for segment
                             data_size: None,
@@ -373,8 +369,7 @@ pub(super) fn handle_read_all_by_index(
                         let (response_command, is_last) =
                             transfer_state.get_next_upload_segment(od, current_time_us);
                         if !is_last {
-                            *handler.state_mut() =
-                                SdoServerState::SegmentedUpload(transfer_state);
+                            *handler.state_mut() = SdoServerState::SegmentedUpload(transfer_state);
                         }
                         response_command
                     }
@@ -461,8 +456,7 @@ pub(super) fn handle_read_multiple_params(
                 let (response_command, is_last) =
                     transfer_state.get_next_upload_segment(od, current_time_us);
                 if !is_last {
-                    *handler.state_mut() =
-                        SdoServerState::SegmentedUpload(transfer_state);
+                    *handler.state_mut() = SdoServerState::SegmentedUpload(transfer_state);
                 }
                 response_command
             }
