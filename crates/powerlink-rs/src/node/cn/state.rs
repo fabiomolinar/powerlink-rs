@@ -1,6 +1,5 @@
-// crates/powerlink-rs/src/node/cn/state.rs
 use crate::ErrorHandler;
-use crate::PowerlinkError; // Import PowerlinkError
+use crate::PowerlinkError;
 use crate::frame::DllCsStateMachine;
 use crate::frame::error::{
     CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler,
@@ -8,16 +7,16 @@ use crate::frame::error::{
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtCommand;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
-use crate::od::{ObjectDictionary, ObjectValue, constants}; // Import constants
-use crate::pdo::{PDOVersion, PdoMappingEntry, error::PdoError}; // Import PDO types
+use crate::od::{ObjectValue, constants};
+use crate::pdo::{PDOVersion, PdoMappingEntry, error::PdoError};
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
 use crate::types::NodeId;
-use alloc::collections::{BTreeMap, VecDeque}; // Import BTreeMap
-use alloc::vec; // Import vec
+use alloc::collections::{BTreeMap, VecDeque};
+use alloc::vec;
 use alloc::vec::Vec;
-use log::{error, trace, warn}; // Import log levels
+use log::{error, trace, warn};
 
 /// Holds the complete state for a Controlled Node.
 pub struct CnContext<'s> {
@@ -53,10 +52,6 @@ pub struct CnContext<'s> {
 
 // Implement the PdoHandler trait for ControlledNode
 impl<'s> PdoHandler<'s> for CnContext<'s> {
-    fn od(&mut self) -> &mut ObjectDictionary<'s> {
-        &mut self.core.od
-    }
-
     fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
         &mut self.dll_error_manager
     }
@@ -86,7 +81,7 @@ impl<'s> CnContext<'s> {
     ///
     /// Returns the payload `Vec` and the `PDOVersion` for this mapping.
     /// Returns an error if the configuration is invalid.
-    pub(super) fn build_tpdo_payload(&self) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
+    pub(super) fn build_tpdo_payload(&mut self) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
         // 1. Get the TPDO mapping (1A00h for a CN's PRes).
         let mapping_index = constants::IDX_TPDO_MAPPING_PARAM_REC_START; // 0x1A00
         let comm_param_index = constants::IDX_TPDO_COMM_PARAM_REC_START; // 0x1800
@@ -120,38 +115,53 @@ impl<'s> CnContext<'s> {
         let mut max_offset_len = 0; // Track the highest byte written.
 
         // 5. Read the number of mapped objects from 0x1A00/0.
-        if let Some(ObjectValue::Unsigned8(num_entries)) =
-            self.core.od.read(mapping_index, 0).as_deref()
-        {
-            if *num_entries > 0 {
-                trace!(
-                    "Building TPDO payload using {:#06X} with {} entries.",
-                    mapping_index, num_entries
-                );
-                // 6. Iterate through each mapping entry.
-                for i in 1..=*num_entries {
-                    if let Some(ObjectValue::Unsigned64(raw_mapping)) =
-                        self.core.od.read(mapping_index, i).as_deref()
-                    {
-                        let entry = PdoMappingEntry::from_u64(*raw_mapping);
-                        if let Err(e) = self.apply_tpdo_mapping_entry(&entry, &mut payload) {
-                            // On error (e.g., buffer too small, type mismatch),
-                            // we must stop and return an error.
-                            error!(
-                                "[PDO] Failed to apply TPDO mapping entry for {:#06X}/{}: {:?}. Invalidating TPDO.",
-                                entry.index, entry.sub_index, e
-                            );
-                            return Err(e.into());
-                        }
-                        // Track the max byte written to truncate later if needed
-                        // (though PRes payload is fixed size)
-                        max_offset_len = max_offset_len.max(
-                            entry.byte_offset().unwrap_or(0) + entry.byte_length().unwrap_or(0),
-                        );
-                    } else {
-                        warn!("[CN] Mapping entry {} for TPDO (PRes) is not U64", i);
-                    }
+        // We need to read this before the mutable borrow for apply_tpdo_mapping_entry
+        let num_entries = self
+            .core
+            .od
+            .read(mapping_index, 0)
+            .and_then(|cow| match *cow {
+                ObjectValue::Unsigned8(num) => Some(num),
+                _ => None,
+            })
+            .unwrap_or(0);
+
+        if num_entries > 0 {
+            trace!(
+                "Building TPDO payload using {:#06X} with {} entries.",
+                mapping_index, num_entries
+            );
+            // 6. Iterate through each mapping entry.
+            // We need to read mapping entries *before* the loop, as apply_tpdo_mapping_entry
+            // takes &mut self, which borrows all of `self`.
+            let mut mapping_entries = Vec::new();
+            for i in 1..=num_entries {
+                if let Some(ObjectValue::Unsigned64(raw_mapping)) =
+                    self.core.od.read(mapping_index, i).as_deref()
+                {
+                    mapping_entries.push(PdoMappingEntry::from_u64(*raw_mapping));
+                } else {
+                    warn!("[CN] Mapping entry {} for TPDO (PRes) is not U64", i);
+                    // Add a dummy entry to keep indices correct, though it will fail
+                    mapping_entries.push(PdoMappingEntry::from_u64(0));
                 }
+            }
+
+            for entry in &mapping_entries {
+                if let Err(e) = self.apply_tpdo_mapping_entry(entry, &mut payload) {
+                    // On error (e.g., buffer too small, type mismatch),
+                    // we must stop and return an error.
+                    error!(
+                        "[PDO] Failed to apply TPDO mapping entry for {:#06X}/{}: {:?}. Invalidating TPDO.",
+                        entry.index, entry.sub_index, e
+                    );
+                    return Err(e.into());
+                }
+                // Track the max byte written to truncate later if needed
+                // (though PRes payload is fixed size)
+                max_offset_len = max_offset_len.max(
+                    entry.byte_offset().unwrap_or(0) + entry.byte_length().unwrap_or(0),
+                );
             }
         } else {
             warn!(
@@ -168,7 +178,7 @@ impl<'s> CnContext<'s> {
     /// Helper for `build_tpdo_payload` to apply a single mapping entry.
     /// Returns a Result to indicate if processing should stop.
     fn apply_tpdo_mapping_entry(
-        &self,
+        &mut self,
         entry: &PdoMappingEntry,
         payload_buffer: &mut [u8],
     ) -> Result<(), PdoError> {
@@ -195,6 +205,42 @@ impl<'s> CnContext<'s> {
         }
 
         let data_slice = &mut payload_buffer[offset..offset + length];
+
+        // --- SDO-in-PDO LOGIC ---
+        // Check if this mapping points to an SDO container object
+        match entry.index {
+            // SDO Server Channel (0x1200 - 0x127F): This is a container for a response.
+            0x1200..=0x127F => {
+                trace!(
+                    "[SDO-PDO] Server: Building response for TPDO channel {:#06X}",
+                    entry.index
+                );
+                let response_payload = self.core.embedded_sdo_server.get_pending_response(
+                    entry.index,
+                    length,
+                );
+                data_slice.copy_from_slice(&response_payload);
+                return Ok(()); // SDO handled, skip standard data read
+            }
+            // SDO Client Channel (0x1280 - 0x12FF): This is a container for a request.
+            0x1280..=0x12FF => {
+                trace!(
+                    "[SDO-PDO] Client: Building request for TPDO channel {:#06X}",
+                    entry.index
+                );
+                let request_payload = self.core.embedded_sdo_client.get_pending_request(
+                    entry.index,
+                    length,
+                );
+                data_slice.copy_from_slice(&request_payload);
+                return Ok(()); // SDO handled, skip standard data read
+            }
+            // Standard Data Object
+            _ => {
+                // Fall through to standard OD read logic
+            }
+        }
+        // --- END SDO-in-PDO LOGIC ---
 
         // Read the value from the OD
         let Some(value) = self.core.od.read(entry.index, entry.sub_index) else {

@@ -1,5 +1,7 @@
 use crate::frame::basic::MacAddress;
-use crate::frame::control::{IdentResponsePayload, StaticErrorBitField, StatusResponsePayload}; // Added new payload structs
+use crate::frame::control::{
+    IdentResponsePayload, StaticErrorBitField, StatusResponsePayload,
+};
 use crate::frame::error::ErrorEntry;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
@@ -25,8 +27,8 @@ pub(super) fn build_ident_response(
     node_id: NodeId,
     od: &ObjectDictionary,
     soa: &crate::frame::SoAFrame,
-    sdo_client: &SdoClient,                        // Added
-    pending_nmt_requests: &[(NmtCommand, NodeId)], // Added
+    sdo_client: &SdoClient,
+    pending_nmt_requests: &[(NmtCommand, NodeId)],
 ) -> PowerlinkFrame {
     debug!("Building IdentResponse for SoA from node {}", soa.source.0);
 
@@ -77,8 +79,8 @@ pub(super) fn build_status_response(
     ec_flag: bool,
     emergency_queue: &mut VecDeque<ErrorEntry>,
     soa: &crate::frame::SoAFrame,
-    sdo_client: &SdoClient,                        // Added
-    pending_nmt_requests: &[(NmtCommand, NodeId)], // Added
+    sdo_client: &SdoClient,
+    pending_nmt_requests: &[(NmtCommand, NodeId)],
 ) -> PowerlinkFrame {
     debug!("Building StatusResponse for SoA from node {}", soa.source.0);
 
@@ -146,9 +148,7 @@ pub(super) fn build_status_response(
             payload_buf.fill(0);
             // Re-serialize with empty entries
             payload_struct.error_entries = Vec::new();
-            payload_struct
-                .serialize(&mut payload_buf)
-                .unwrap_or(14 + 20)
+            payload_struct.serialize(&mut payload_buf).unwrap_or(14 + 20)
         }
     };
     payload_buf.truncate(payload_len);
@@ -197,9 +197,7 @@ pub(super) fn build_nmt_request(
 
 /// Builds a `PRes` frame in response to being polled by a `PReq`.
 pub(super) fn build_pres_response(
-    context: &CnContext, // Use the full context
-    sdo_client: &SdoClient,
-    pending_nmt_requests: &[(NmtCommand, NodeId)],
+    context: &mut CnContext,
     en_flag: bool,
 ) -> PowerlinkFrame {
     let node_id = context.nmt_state_machine.node_id();
@@ -208,7 +206,7 @@ pub(super) fn build_pres_response(
 
     debug!("Building PRes in response to PReq for node {}", node_id.0);
 
-    // Call the new inherent method on CnContext
+    // Call the new inherent method on CnContext, which is now mutable
     let (payload, pdo_version, payload_is_valid) = match context.build_tpdo_payload() {
         Ok((payload, version)) => (payload, version, true),
         Err(e) => {
@@ -234,13 +232,13 @@ pub(super) fn build_pres_response(
 
     // Check for pending SDO/NMT requests to set RS and PR flags.
     // NMT requests (PR=7) have higher priority than generic SDO requests (PR=3).
-    let (rs_count, pr_flag) = if !pending_nmt_requests.is_empty() {
+    let (rs_count, pr_flag) = if !context.pending_nmt_requests.is_empty() {
         (
-            pending_nmt_requests.len().min(7) as u8,
+            context.pending_nmt_requests.len().min(7) as u8,
             crate::frame::PRFlag::PrioNmtRequest,
         )
     } else {
-        sdo_client.pending_request_count_and_priority()
+        context.core.sdo_client.pending_request_count_and_priority()
     };
 
     let flags = PResFlags {

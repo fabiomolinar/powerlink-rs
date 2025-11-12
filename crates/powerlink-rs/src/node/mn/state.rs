@@ -5,7 +5,6 @@ use crate::nmt::events::NmtCommand;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
-use crate::od::ObjectDictionary;
 use crate::sdo::client_manager::SdoClientManager;
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
@@ -56,10 +55,6 @@ pub struct MnContext<'s> {
 }
 
 impl<'s> PdoHandler<'s> for MnContext<'s> {
-    fn od(&mut self) -> &mut ObjectDictionary<'s> {
-        &mut self.core.od
-    }
-
     fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
         &mut self.dll_error_manager
     }

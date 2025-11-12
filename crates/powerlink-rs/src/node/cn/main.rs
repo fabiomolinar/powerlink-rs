@@ -14,19 +14,18 @@ use crate::od::{Object, ObjectDictionary, ObjectValue, constants}; // Import con
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
-use crate::sdo::{SdoClient, SdoServer};
+use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer}; // Added embedded
+use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
+use alloc::collections::{BTreeMap, VecDeque}; // Import BTreeMap
+use alloc::vec::Vec;
+use log::{error, info, warn, debug};
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::{
     server::SdoClientInfo, transport::SdoTransport, udp::deserialize_sdo_udp_payload,
 };
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
-use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
-use alloc::collections::{BTreeMap, VecDeque}; // Import BTreeMap
-use alloc::vec::Vec;
-#[cfg(feature = "sdo-udp")]
-use log::debug;
-use log::{error, info, warn};
+
 
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct is a thin wrapper around a context object that holds all state.
@@ -95,6 +94,8 @@ impl<'s> ControlledNode<'s> {
             mac_address,
             sdo_server: SdoServer::new(),
             sdo_client: SdoClient::new(),
+            embedded_sdo_server: EmbeddedSdoServer::new(),
+            embedded_sdo_client: EmbeddedSdoClient::new(),
         };
 
         let mut node = Self {
@@ -111,7 +112,7 @@ impl<'s> ControlledNode<'s> {
                 udp_transport: UdpTransport,
                 pending_nmt_requests: Vec::new(),
                 emergency_queue: VecDeque::with_capacity(10), // Default capacity for 10 errors
-                heartbeat_consumers,                          // Add the new map
+                heartbeat_consumers, // Add the new map
                 last_soc_reception_time_us: 0,
                 soc_timeout_check_active: false,
                 next_tick_us: None,

@@ -14,8 +14,7 @@ use crate::frame::basic::MacAddress;
 use crate::frame::codec::CodecHelpers;
 use crate::nmt::states::NmtState;
 use crate::od::ObjectDictionary;
-use crate::sdo::SdoClient;
-use crate::sdo::SdoServer;
+use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer}; // Added embedded managers
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
 use crate::{NodeId, PowerlinkError};
@@ -28,12 +27,37 @@ pub struct CoreNodeContext<'s> {
     pub mac_address: MacAddress,
     pub sdo_server: SdoServer,
     pub sdo_client: SdoClient,
+    pub embedded_sdo_server: EmbeddedSdoServer,
+    pub embedded_sdo_client: EmbeddedSdoClient,
 }
 
 impl<'s> CoreNodeContext<'s> {
     /// Queues an SDO request payload to be sent to a specific target node.
     pub fn queue_sdo_request(&mut self, target_node_id: NodeId, payload: Vec<u8>) {
         self.sdo_client.queue_request(target_node_id, payload);
+    }
+
+    /// Queues an embedded SDO Read request to be sent via a TPDO container.
+    pub fn queue_embedded_sdo_read(
+        &mut self,
+        channel_index: u16,
+        index: u16,
+        sub_index: u8,
+    ) -> Result<(), PowerlinkError> {
+        self.embedded_sdo_client
+            .queue_read(channel_index, index, sub_index)
+    }
+
+    /// Queues an embedded SDO Write to be sent via a TPDO container.
+    pub fn queue_embedded_sdo_write(
+        &mut self,
+        channel_index: u16,
+        index: u16,
+        sub_index: u8,
+        data: Vec<u8>,
+    ) -> Result<(), PowerlinkError> {
+        self.embedded_sdo_client
+            .queue_write(channel_index, index, sub_index, data)
     }
 }
 

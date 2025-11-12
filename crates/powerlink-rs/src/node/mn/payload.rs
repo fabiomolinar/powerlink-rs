@@ -11,7 +11,7 @@ use crate::frame::{
 };
 use crate::nmt::NmtStateMachine;
 use crate::nmt::events::NmtCommand;
-use crate::od::{ObjectDictionary, ObjectValue};
+use crate::od::ObjectValue;
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId};
 use alloc::vec;
@@ -62,7 +62,7 @@ pub(super) fn build_soc_frame(
 
 /// Builds a PReq frame for a specific CN.
 pub(super) fn build_preq_frame(
-    context: &MnContext,
+    context: &mut MnContext,
     target_node_id: NodeId,
     is_multiplexed: bool,
 ) -> PowerlinkFrame {
@@ -103,8 +103,9 @@ pub(super) fn build_preq_frame(
         }
     }
 
+    // Pass the mutable context to build_tpdo_payload
     let payload_result = pdo_channel.map_or(Ok((Vec::new(), PDOVersion(0))), |channel| {
-        build_tpdo_payload(&context.core.od, channel)
+        build_tpdo_payload(context, channel)
     });
 
     match payload_result {
@@ -159,11 +160,14 @@ pub(super) fn build_preq_frame(
 ///
 /// Returns the payload and the mapping version, or an error if the configuration is invalid.
 pub(super) fn build_tpdo_payload(
-    od: &ObjectDictionary,
+    context: &mut MnContext,
     channel_index: u8,
 ) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
     let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE + channel_index as u16;
     let mapping_index = OD_IDX_TPDO_MAPP_PARAM_BASE + channel_index as u16;
+    
+    // We need an immutable reference to the OD for most operations
+    let od = &context.core.od;
 
     // 1. Determine the target Node ID and Mapping Version for this channel from 0x18xx.
     let target_node_id = od
@@ -227,30 +231,66 @@ pub(super) fn build_tpdo_payload(
                     return Err(PowerlinkError::PdoMapOverrun);
                 }
 
-                let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
-                    warn!(
-                        "[MN] TPDO mapping for PReq 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
-                        entry.index, entry.sub_index
-                    );
-                    // The buffer is already zero-filled, so no action needed.
-                    continue;
-                };
+                let data_slice = &mut payload[offset..end_pos];
 
-                let serialized_data = value_cow.serialize();
-                if serialized_data.len() != length {
-                    warn!(
-                        "[MN] TPDO mapping for PReq 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes.",
-                        entry.index,
-                        entry.sub_index,
-                        length,
-                        serialized_data.len()
-                    );
-                    let copy_len = serialized_data.len().min(length);
-                    payload[offset..offset + copy_len]
-                        .copy_from_slice(&serialized_data[..copy_len]);
-                } else {
-                    payload[offset..end_pos].copy_from_slice(&serialized_data);
+                // --- SDO-in-PDO LOGIC ---
+                match entry.index {
+                    // SDO Server Channel (0x1200 - 0x127F): Container for a response from the MN.
+                    0x1200..=0x127F => {
+                        trace!(
+                            "[SDO-PDO] MN Server: Building response for TPDO channel {:#06X}",
+                            entry.index
+                        );
+                        let response_payload =
+                            context.core.embedded_sdo_server.get_pending_response(
+                                entry.index,
+                                length,
+                            );
+                        data_slice.copy_from_slice(&response_payload);
+                    }
+                    // SDO Client Channel (0x1280 - 0x12FF): Container for a request from the MN.
+                    0x1280..=0x12FF => {
+                        trace!(
+                            "[SDO-PDO] MN Client: Building request for TPDO channel {:#06X}",
+                            entry.index
+                        );
+                        let request_payload =
+                            context.core.embedded_sdo_client.get_pending_request(
+                                entry.index,
+                                length,
+                            );
+                        data_slice.copy_from_slice(&request_payload);
+                    }
+                    // Standard Data Object
+                    _ => {
+                        // --- This is the OLD logic, now in the 'else' branch ---
+                        let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
+                            warn!(
+                                "[MN] TPDO mapping for PReq 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
+                                entry.index, entry.sub_index
+                            );
+                            // data_slice is already zeros, so just continue
+                            continue;
+                        };
+
+                        let serialized_data = value_cow.serialize();
+                        if serialized_data.len() != length {
+                            warn!(
+                                "[MN] TPDO mapping for PReq 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes.",
+                                entry.index,
+                                entry.sub_index,
+                                length,
+                                serialized_data.len()
+                            );
+                            let copy_len = serialized_data.len().min(length);
+                            data_slice[..copy_len]
+                                .copy_from_slice(&serialized_data[..copy_len]);
+                        } else {
+                            data_slice.copy_from_slice(&serialized_data);
+                        }
+                    }
                 }
+                // --- END SDO-in-PDO LOGIC ---
             }
         }
     } else {

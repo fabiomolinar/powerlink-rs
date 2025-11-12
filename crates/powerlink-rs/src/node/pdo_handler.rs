@@ -1,16 +1,13 @@
-// crates/powerlink-rs/src/node/pdo_handler.rs
 use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler};
-use crate::od::{ObjectDictionary, ObjectValue, constants}; // Import constants
-use crate::pdo::{PDOVersion, PdoMappingEntry}; // Import PdoError from new module
+use crate::node::NodeContext;
+use crate::od::{ObjectValue, constants};
+use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use log::{error, trace, warn};
 
 /// A trait for handling Process Data Object (PDO) logic.
 /// The lifetime parameter 's matches the lifetime of the Node implementing this trait.
-pub trait PdoHandler<'s> {
-    /// Provides access to the node's Object Dictionary with the correct lifetime.
-    fn od(&mut self) -> &mut ObjectDictionary<'s>;
-
+pub trait PdoHandler<'s>: NodeContext<'s> {
     /// Provides access to the node's DLL error manager.
     fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler>;
 
@@ -28,12 +25,14 @@ pub trait PdoHandler<'s> {
         let byte_index = (node_id_val - 1) as usize / 8;
         let bit_index = (node_id_val - 1) % 8;
 
-        if let Some(cow) = self.od().read(object_index, 0) {
+        // Use core().od for immutable read
+        if let Some(cow) = self.core().od.read(object_index, 0) {
             if let ObjectValue::OctetString(mut bytes) = cow.into_owned() {
                 if let Some(byte_to_modify) = bytes.get_mut(byte_index) {
                     *byte_to_modify |= 1 << bit_index;
                     // Write back to the OD, ignoring access rights.
-                    if let Err(e) = self.od().write_internal(
+                    // Use core_mut().od for mutable write
+                    if let Err(e) = self.core_mut().od.write_internal(
                         object_index,
                         0,
                         ObjectValue::OctetString(bytes),
@@ -91,7 +90,8 @@ pub trait PdoHandler<'s> {
 
             // Check if this RPDO channel is configured for the source node
             if let Some(node_id_val) = self
-                .od()
+                .core()
+                .od
                 .read_u8(comm_param_index, constants::SUBIDX_PDO_COMM_PARAM_NODEID_U8)
             {
                 // PReq from MN is mapped to NodeID 0 in OD; PRes is mapped to the source CN's ID.
@@ -101,7 +101,8 @@ pub trait PdoHandler<'s> {
                 if matches_source {
                     // Found the correct communication parameter object
                     let expected_version = self
-                        .od()
+                        .core()
+                        .od
                         .read_u8(
                             comm_param_index,
                             constants::SUBIDX_PDO_COMM_PARAM_VERSION_U8,
@@ -154,8 +155,7 @@ pub trait PdoHandler<'s> {
         };
 
         // We have a valid mapping, now process it
-        // Use self.od() to read number of entries in the mapping object (0x16xx/0)
-        if let Some(mapping_cow) = self.od().read(mapping_index, 0) {
+        if let Some(mapping_cow) = self.core().od.read(mapping_index, 0) {
             if let ObjectValue::Unsigned8(num_entries) = *mapping_cow {
                 if num_entries == 0 {
                     return;
@@ -164,18 +164,24 @@ pub trait PdoHandler<'s> {
                     "Applying RPDO mapping {:#06X} with {} entries for Node {}",
                     mapping_index, num_entries, source_node_id.0
                 );
+                // Read all mapping entries first, as apply_rpdo_mapping_entry needs &mut self
+                let mut mapping_entries = Vec::new();
                 for i in 1..=num_entries {
-                    if let Some(entry_cow) = self.od().read(mapping_index, i) {
+                    if let Some(entry_cow) = self.core().od.read(mapping_index, i) {
                         if let ObjectValue::Unsigned64(raw_mapping) = *entry_cow {
-                            let entry = PdoMappingEntry::from_u64(raw_mapping);
-                            // If any entry fails, stop processing this PDO entirely.
-                            if self
-                                .apply_rpdo_mapping_entry(&entry, payload, source_node_id)
-                                .is_err()
-                            {
-                                break;
-                            }
+                            mapping_entries.push(PdoMappingEntry::from_u64(raw_mapping));
                         }
+                    }
+                }
+                
+                // Now iterate over the collected entries
+                for entry in &mapping_entries {
+                    // If any entry fails, stop processing this PDO entirely.
+                    if self
+                        .apply_rpdo_mapping_entry(entry, payload, source_node_id)
+                        .is_err()
+                    {
+                        break;
                     }
                 }
             }
@@ -216,9 +222,48 @@ pub trait PdoHandler<'s> {
         }
 
         let data_slice = &payload[offset..offset + length];
-        // Cloning is simpler here to avoid complex borrow checker issues with `write_internal`.
+
+        // --- SDO-in-PDO LOGIC ---
+        // Check if this mapping points to an SDO container object
+        match entry.index {
+            // SDO Server Channel (0x1200 - 0x127F): This is a request for us.
+            0x1200..=0x127F => {
+                trace!(
+                    "[SDO-PDO] Server: Received request on channel {:#06X}",
+                    entry.index
+                );
+                // FIX: Borrow core_mut() once, then access od and server
+                let core = self.core_mut();
+                core.embedded_sdo_server.handle_request(
+                    entry.index,
+                    data_slice,
+                    &core.od, // Pass immutable reference to OD
+                );
+                return Ok(()); // SDO handled, skip standard data write
+            }
+            // SDO Client Channel (0x1280 - 0x12FF): This is a response for us.
+            0x1280..=0x12FF => {
+                trace!(
+                    "[SDO-PDO] Client: Received response on channel {:#06X}",
+                    entry.index
+                );
+                self.core_mut().embedded_sdo_client.handle_response(
+                    entry.index,
+                    data_slice,
+                );
+                return Ok(()); // SDO handled, skip standard data write
+            }
+            // Standard Data Object
+            _ => {
+                // Fall through to standard data write logic
+            }
+        }
+        // --- END SDO-in-PDO LOGIC ---
+
+        // Get an immutable reference to the OD first
         let type_template_option = self
-            .od()
+            .core()
+            .od
             .read(entry.index, entry.sub_index)
             .map(|cow| cow.into_owned());
 
@@ -248,8 +293,10 @@ pub trait PdoHandler<'s> {
                     "Applying RPDO: Writing {:?} to 0x{:04X}/{}",
                     value, entry.index, entry.sub_index
                 );
+                // Now get a mutable reference to write
                 if let Err(e) = self
-                    .od()
+                    .core_mut()
+                    .od
                     .write_internal(entry.index, entry.sub_index, value, false)
                 {
                     error!(
