@@ -1,6 +1,4 @@
-// crates/powerlink-rs/src/node/mn/main.rs
 use super::events;
-use super::scheduler;
 use super::state::{CnInfo, CyclePhase, MnContext};
 use crate::common::{NetTime, RelativeTime}; // Added
 use crate::frame::basic::{EthernetHeader, MacAddress};
@@ -322,6 +320,19 @@ impl<'s> ManagingNode<'s> {
 
     /// Handles periodic timer events for the node.
     fn handle_tick(&mut self, current_time_us: u64) -> NodeAction {
+        // --- 0. Check for Cycle Start ---
+        let time_since_last_cycle =
+            current_time_us.saturating_sub(self.context.current_cycle_start_time_us);
+        let current_nmt_state = self.context.nmt_state_machine.current_state();
+
+        if time_since_last_cycle >= self.context.cycle_time_us
+            && current_nmt_state >= NmtState::NmtPreOperational2
+            && self.context.current_phase == CyclePhase::Idle
+        {
+            trace!("[MN] Cycle time elapsed. Starting new cycle.");
+            return cycle::start_cycle(&mut self.context, current_time_us);
+        }
+
         // --- 1. Check for SDO Client Timeouts ---
         if let Some((target_node_id, seq, cmd)) =
             self.context.sdo_client_manager.tick(current_time_us, &self.context.core.od)
@@ -461,7 +472,7 @@ impl<'s> ManagingNode<'s> {
         )
     }
 
-     #[cfg(feature = "sdo-udp")]
+    #[cfg(feature = "sdo-udp")]
     fn process_udp_datagram(
         &mut self,
         payload: &[u8], // Corrected: buffer
@@ -597,11 +608,25 @@ impl<'s> Node for ManagingNode<'s> {
             .next_action_time(&self.context.core.od);
         let nmt_time = self.context.next_tick_us;
 
-        [sdo_server_time, sdo_client_time, nmt_time]
-            .iter()
-            .filter_map(|&t| t)
-            .min()
+        // --- NEW: Add Cycle Timer ---
+        let mut cycle_start_time = None;
+        if self.context.nmt_state_machine.current_state() >= NmtState::NmtPreOperational2
+            && self.context.current_phase == CyclePhase::Idle
+        {
+            cycle_start_time =
+                Some(self.context.current_cycle_start_time_us + self.context.cycle_time_us);
+        }
+        // --- End NEW ---
+
+        [
+            sdo_server_time,
+            sdo_client_time,
+            nmt_time,
+            cycle_start_time,
+        ] // Add new timer
+        .iter()
+        .filter_map(|&t| t)
+        .min()
     }
 
-   
 }

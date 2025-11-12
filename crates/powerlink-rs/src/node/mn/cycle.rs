@@ -6,18 +6,20 @@ use crate::nmt::events::NmtCommand;
 use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::{Object, ObjectDictionary, ObjectValue, constants};
-use crate::sdo::command::SdoCommand;
-use crate::sdo::sequence::SequenceLayerHeader;
-use crate::sdo::asnd::serialize_sdo_asnd_payload;
-use crate::frame::{ASndFrame, ServiceId};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
 use crate::PowerlinkError;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace};
 
+use super::events; // Import events
 use super::payload;
 use super::scheduler;
+use crate::frame::ASndFrame; // Import ASndFrame
+use crate::sdo::asnd::serialize_sdo_asnd_payload; // Import SDO ASnd serializer
+use crate::sdo::command::SdoCommand; // Import SdoCommand
+use crate::sdo::sequence::SequenceLayerHeader; // Import SequenceLayerHeader
+use crate::frame::ServiceId; // Import ServiceId
 
 /// Parses the MN's OD configuration to build its internal node lists.
 /// This function was missing from the provided context.
@@ -171,8 +173,52 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
     )
 }
 
-/// The MN's main scheduler tick.
-/// This function was moved from `main.rs`.
+/// Starts a new isochronous cycle by sending a SoC.
+/// This is the implementation of the SocTrig event.
+pub(super) fn start_cycle(context: &mut MnContext, current_time_us: u64) -> NodeAction {
+    // 1. Update cycle timing and multiplexing
+    context.current_cycle_start_time_us = current_time_us;
+    if context.multiplex_cycle_len > 0 {
+        context.current_multiplex_cycle =
+            (context.current_multiplex_cycle + 1) % context.multiplex_cycle_len;
+    }
+    context.next_isoch_node_idx = 0; // Reset for this cycle's polling
+
+    // 2. Build the SoC frame
+    let soc_frame = payload::build_soc_frame(
+        context,
+        context.current_multiplex_cycle,
+        context.multiplex_cycle_len,
+    );
+
+    // 3. Notify the DLL state machine of the SocTrig
+    // We pass the frame we're *about* to send as the context
+    events::handle_dll_event(context, DllMsEvent::SocTrig, &soc_frame);
+
+    // 4. Update internal state
+    // The DLL state machine (handle_dll_event) should have moved us to a new state.
+    // Based on spec, it's likely WaitPres (DLL_MT1) or WaitAsnd (DLL_MT6)
+    // We set our phase to SoCSent so the *next* tick in main.rs triggers advance_cycle_phase
+    context.current_phase = CyclePhase::SoCSent;
+
+    // 5. Return the frame to be sent
+    // Increment Isochronous Cycle counter (this is also done by CN)
+    context.core.od.increment_counter(
+        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+        constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_CYC,
+    );
+
+    match serialize_frame_action(soc_frame, context) {
+        Ok(action) => action,
+        Err(e) => {
+            error!("[MN] Failed to serialize SoC frame: {:?}", e);
+            NodeAction::NoAction
+        }
+    }
+}
+
+/// The MN's main scheduler tick for non-cycle-start events.
+/// Renamed from run_scheduler.
 pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     let current_nmt_state = context.nmt_state_machine.current_state();
 
@@ -211,7 +257,9 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
     // --- 2. Handle immediate, non-time-based follow-up actions ---
     match context.current_phase {
         CyclePhase::AwaitingMnAsyncSend => {
-            // This logic is now handled in `scheduler::tick`
+            // TODO: This is where MN-initiated async frames (NMT, SDO) should be sent
+            // For now, just advance the cycle.
+            context.current_phase = CyclePhase::Idle;
         }
         CyclePhase::SoCSent => {
             return advance_cycle_phase(context, current_time_us);
@@ -225,9 +273,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
         context.next_tick_us = Some(current_time_us + timeout_us);
         return NodeAction::NoAction;
     }
-    
-    // This logic is now handled in `main::handle_tick`
-    
+
     NodeAction::NoAction
 }
 

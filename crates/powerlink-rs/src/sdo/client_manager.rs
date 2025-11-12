@@ -12,7 +12,6 @@ use crate::sdo::{OD_IDX_SDO_RETRIES, OD_IDX_SDO_TIMEOUT};
 use crate::types::NodeId;
 use crate::PowerlinkError;
 use alloc::collections::BTreeMap;
-use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
 
