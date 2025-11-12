@@ -1,5 +1,6 @@
 pub mod asnd;
 pub mod client;
+pub mod client_manager;
 pub mod command;
 pub mod embedded;
 mod handlers;
@@ -12,10 +13,13 @@ pub mod transport;
 pub mod udp;
 
 pub use client::SdoClient;
+pub use client_manager::SdoClientManager;
 pub use command::SdoCommandHandler;
 pub use server::SdoServer;
 #[cfg(feature = "sdo-udp")]
 pub use transport::UdpTransport;
 pub use transport::{AsndTransport, SdoTransport};
 
+// Re-exported constants for SDO configuration
 const OD_IDX_SDO_TIMEOUT: u16 = 0x1300;
+const OD_IDX_SDO_RETRIES: u16 = 0x1302;

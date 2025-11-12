@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/mn/state.rs
 use crate::ErrorHandler;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
@@ -7,6 +6,7 @@ use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
 use crate::od::ObjectDictionary;
+use crate::sdo::client_manager::SdoClientManager;
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
@@ -45,7 +45,8 @@ pub struct MnContext<'s> {
     pub pending_status_requests: Vec<NodeId>,
     pub pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
     pub mn_async_send_queue: Vec<PowerlinkFrame>,
-    pub pending_sdo_client_requests: Vec<(NodeId, Vec<u8>)>,
+    /// Manages all stateful SDO client (outgoing) connections.
+    pub sdo_client_manager: SdoClientManager,
     pub last_ident_poll_node_id: NodeId,
     pub last_status_poll_node_id: NodeId,
     pub next_tick_us: Option<u64>,

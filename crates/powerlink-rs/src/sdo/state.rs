@@ -2,13 +2,12 @@
 use crate::od::ObjectDictionary;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::{PowerlinkError, od::ObjectValue};
+use crate::sdo::{OD_IDX_SDO_RETRIES, OD_IDX_SDO_TIMEOUT};
 use alloc::vec::Vec;
 use log::{debug, error, info};
 
 // Constants moved from server.rs
 const MAX_EXPEDITED_PAYLOAD: usize = 1452;
-const OD_IDX_SDO_TIMEOUT: u16 = 0x1300;
-const OD_IDX_SDO_RETRIES: u16 = 0x1302;
 
 /// The state of an SDO connection from the server's perspective.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
