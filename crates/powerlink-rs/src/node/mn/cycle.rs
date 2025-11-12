@@ -1,12 +1,94 @@
 // crates/powerlink-rs/src/node/mn/cycle.rs
+use super::state::{CnInfo, CyclePhase, MnContext};
+use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId};
+use crate::nmt::NmtStateMachine;
+use crate::nmt::events::NmtCommand;
+use crate::nmt::states::NmtState;
+use crate::node::{NodeAction, serialize_frame_action};
+use crate::od::{Object, ObjectDictionary, ObjectValue, constants};
+use crate::sdo::command::SdoCommand;
+use crate::sdo::sequence::SequenceLayerHeader;
+use crate::sdo::asnd::serialize_sdo_asnd_payload;
+use crate::frame::{ASndFrame, ServiceId};
+use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
+use crate::PowerlinkError;
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+use log::{debug, error, info, trace};
+
 use super::payload;
 use super::scheduler;
-use super::state::{CyclePhase, MnContext};
-use crate::frame::{DllMsEvent, RequestedServiceId}; // Added RequestedServiceId
-use crate::node::{NodeAction, serialize_frame_action};
-use crate::od::constants; // Import the new constants module
-use crate::types::C_ADR_MN_DEF_NODE_ID;
-use log::debug;
+
+/// Parses the MN's OD configuration to build its internal node lists.
+/// This function was missing from the provided context.
+pub(super) fn parse_mn_node_lists(
+    od: &ObjectDictionary,
+) -> Result<
+    (
+        BTreeMap<NodeId, CnInfo>,
+        Vec<NodeId>,
+        Vec<NodeId>,
+        Vec<NodeId>,
+        BTreeMap<NodeId, u8>,
+    ),
+    PowerlinkError,
+> {
+    let mut node_info = BTreeMap::new();
+    let mut mandatory_nodes = Vec::new();
+    let mut isochronous_nodes = Vec::new();
+    let mut async_only_nodes = Vec::new();
+    let mut multiplex_assign = BTreeMap::new();
+
+    if let Some(Object::Array(entries)) =
+        od.read_object(constants::IDX_NMT_NODE_ASSIGNMENT_AU32)
+    {
+        // Sub-index 0 is NumberOfEntries. Real entries start at 1.
+        for (i, entry) in entries.iter().enumerate() {
+            let sub_index = i as u8 + 1;
+            if let ObjectValue::Unsigned32(assignment) = entry {
+                if (assignment & 1) != 0 { // Bit 0: Node exists
+                    if let Ok(node_id) = NodeId::try_from(sub_index) {
+                        node_info.insert(node_id, CnInfo::default());
+                        if (assignment & (1 << 3)) != 0 { // Bit 3: Node is mandatory
+                            mandatory_nodes.push(node_id);
+                        }
+                        if (assignment & (1 << 8)) == 0 { // Bit 8: 0=Isochronous
+                            isochronous_nodes.push(node_id);
+                            let mux_cycle_no = od
+                                .read_u8(constants::IDX_NMT_MULTIPLEX_ASSIGN_REC, node_id.0)
+                                .unwrap_or(0);
+                            multiplex_assign.insert(node_id, mux_cycle_no);
+                        } else { // 1=Async-only
+                            async_only_nodes.push(node_id);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        error!("Failed to read NMT_NodeAssignment_AU32 (0x1F81)");
+        return Err(PowerlinkError::ValidationError(
+            "Missing 0x1F81 NMT_NodeAssignment_AU32",
+        ));
+    }
+
+    info!(
+        "MN configured to manage {} nodes ({} mandatory, {} isochronous, {} async-only).",
+        node_info.len(),
+        mandatory_nodes.len(),
+        isochronous_nodes.len(),
+        async_only_nodes.len(),
+    );
+
+    Ok((
+        node_info,
+        mandatory_nodes,
+        isochronous_nodes,
+        async_only_nodes,
+        multiplex_assign,
+    ))
+}
+
 
 /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
 pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64) -> NodeAction {
@@ -87,4 +169,96 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
         // TODO: handle error properly
         NodeAction::NoAction,
     )
+}
+
+/// The MN's main scheduler tick.
+/// This function was moved from `main.rs`.
+pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
+    let current_nmt_state = context.nmt_state_machine.current_state();
+
+    // --- 1. Handle one-time actions ---
+    if current_nmt_state == NmtState::NmtOperational && !context.initial_operational_actions_done {
+        context.initial_operational_actions_done = true;
+        if (context.nmt_state_machine.startup_flags & (1 << 1)) != 0 {
+            info!("[MN] Sending NMTStartNode (Broadcast).");
+            // *** INCREMENT ASYNC TX COUNTER ***
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
+            );
+            return serialize_frame_action(
+                payload::build_nmt_command_frame(
+                    context,
+                    NmtCommand::StartNode,
+                    NodeId(C_ADR_BROADCAST_NODE_ID),
+                ),
+                context,
+            )
+            .unwrap_or(
+                // TODO: Handle error properly
+                NodeAction::NoAction,
+            );
+        } else if let Some(&node_id) = context.mandatory_nodes.first() {
+            info!("[MN] Queuing NMTStartNode (Unicast).");
+            context
+                .pending_nmt_commands
+                .push((NmtCommand::StartNode, node_id));
+        }
+    } else if current_nmt_state < NmtState::NmtOperational {
+        context.initial_operational_actions_done = false;
+    }
+
+    // --- 2. Handle immediate, non-time-based follow-up actions ---
+    match context.current_phase {
+        CyclePhase::AwaitingMnAsyncSend => {
+            // This logic is now handled in `scheduler::tick`
+        }
+        CyclePhase::SoCSent => {
+            return advance_cycle_phase(context, current_time_us);
+        }
+        _ => {}
+    }
+
+    // --- 3. Handle time-based actions ---
+    if current_nmt_state == NmtState::NmtNotActive && context.next_tick_us.is_none() {
+        let timeout_us = context.nmt_state_machine.wait_not_active_timeout as u64;
+        context.next_tick_us = Some(current_time_us + timeout_us);
+        return NodeAction::NoAction;
+    }
+    
+    // This logic is now handled in `main::handle_tick`
+    
+    NodeAction::NoAction
+}
+
+/// Builds an ASnd(SDO Request) frame for the SdoClientManager.
+/// This function was missing and is required by main.rs.
+pub(super) fn build_sdo_asnd_request(
+    context: &MnContext,
+    target_node_id: NodeId,
+    seq_header: SequenceLayerHeader,
+    cmd: SdoCommand,
+) -> Result<PowerlinkFrame, PowerlinkError> {
+    trace!(
+        "Building SDO ASnd request for Node {} (TID {})",
+        target_node_id.0, cmd.header.transaction_id
+    );
+    let Some(dest_mac) = scheduler::get_cn_mac_address(context, target_node_id) else {
+        error!(
+            "[MN] Cannot build SDO ASnd: MAC for Node {} not found.",
+            target_node_id.0
+        );
+        return Err(PowerlinkError::InternalError("Missing CN MAC address"));
+    };
+
+    let sdo_payload = serialize_sdo_asnd_payload(seq_header, cmd)?;
+
+    Ok(PowerlinkFrame::ASnd(ASndFrame::new(
+        context.core.mac_address,
+        dest_mac,
+        target_node_id,
+        NodeId(C_ADR_MN_DEF_NODE_ID),
+        ServiceId::Sdo,
+        sdo_payload,
+    )))
 }

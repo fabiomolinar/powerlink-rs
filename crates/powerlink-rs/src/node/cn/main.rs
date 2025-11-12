@@ -347,9 +347,7 @@ impl<'s> Node for ControlledNode<'s> {
         }
 
         // --- Priority 3: Internal Ticks ---
-        let tick_action = self.tick(current_time_us);
-        // SDO Tx counter (for tick-based aborts) is handled inside events::process_tick
-        tick_action
+        self.tick(current_time_us)
     }
 
     #[cfg(not(feature = "sdo-udp"))]
@@ -370,8 +368,7 @@ impl<'s> Node for ControlledNode<'s> {
         }
 
         // --- Priority 2: Internal Ticks ---
-        self.tick(current_time_us);
-        
+        self.tick(current_time_us)
     }
 
     fn nmt_state(&self) -> NmtState {

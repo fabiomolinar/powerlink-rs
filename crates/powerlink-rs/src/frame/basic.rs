@@ -9,7 +9,7 @@ pub const ETHERNET_HEADER_SIZE: usize = 14;
 // --- MacAddress ---
 
 /// A 6-byte IEEE 802 MAC address.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct MacAddress(pub [u8; MAC_ADDRESS_SIZE]);
 
 impl MacAddress {

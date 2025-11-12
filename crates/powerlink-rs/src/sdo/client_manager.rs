@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/sdo/client_manager.rs
 //! Manages multiple, concurrent, stateful SDO client connections.
 //!
 //! This is primarily used by the Managing Node (MN) to perform complex
@@ -7,10 +8,11 @@
 use crate::od::ObjectDictionary;
 use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
-use crate::sdo::{OD_IDX_SDO_TIMEOUT, OD_IDX_SDO_RETRIES};
+use crate::sdo::{OD_IDX_SDO_RETRIES, OD_IDX_SDO_TIMEOUT};
 use crate::types::NodeId;
 use crate::PowerlinkError;
 use alloc::collections::BTreeMap;
+use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, info, trace, warn};
 
@@ -131,6 +133,8 @@ impl SdoClientConnection {
         &mut self,
         seq_header: &SequenceLayerHeader,
         cmd: &SdoCommand,
+        // current_time_us: u64, // No longer needed
+        // od: &ObjectDictionary, // No longer needed
     ) {
         // --- 1. Validate Sequence ACKs ---
         if self.last_sent_command.is_none() {
@@ -143,7 +147,7 @@ impl SdoClientConnection {
             return;
         }
 
-        let (last_seq, last_cmd) = self.last_sent_command.as_ref().unwrap();
+        let (last_seq, _last_cmd) = self.last_sent_command.as_ref().unwrap();
         if seq_header.receive_sequence_number != last_seq.send_sequence_number {
             warn!(
                 "SDO Client: Server ACK mismatch. Expected {}, got {}. Ignoring.",
@@ -161,7 +165,10 @@ impl SdoClientConnection {
         // --- 2. Validate Server Sequence Number ---
         let expected_server_seq = self.last_received_sequence_number.wrapping_add(1) % 64;
         if seq_header.send_sequence_number == self.last_received_sequence_number {
-            debug!("SDO Client: Received duplicate frame from server (Seq: {}).", seq_header.send_sequence_number);
+            debug!(
+                "SDO Client: Received duplicate frame from server (Seq: {}).",
+                seq_header.send_sequence_number
+            );
             // We already cleared our last_sent_command, so get_pending_request
             // will trigger an ACK retransmission.
             return;
@@ -438,11 +445,22 @@ impl SdoClientConnection {
     fn get_next_download_segment(&mut self) -> (SdoCommand, bool) {
         let is_initiate = self.offset == 0;
         let remaining = self.total_size.saturating_sub(self.offset);
-        let chunk_size = MAX_CLIENT_PAYLOAD.min(remaining);
-        let chunk = &self.data_buffer[self.offset..self.offset + chunk_size];
+        
+        let (header_data_len, data_only_len) = if is_initiate {
+            // For initiate, the "payload" is the whole buffer: [index/subindex(4), data...]
+            (self.total_size, self.total_size - 4)
+        } else {
+            // For segments, the "payload" is just data
+            (remaining, remaining)
+        };
+
+        let chunk_size = MAX_CLIENT_PAYLOAD.min(header_data_len);
+        let data_end_offset = self.offset + chunk_size;
+        let chunk = &self.data_buffer[self.offset..data_end_offset];
 
         let segmentation = if is_initiate {
-            if self.total_size <= MAX_CLIENT_PAYLOAD {
+            if self.total_size <= (MAX_CLIENT_PAYLOAD + 4) {
+                // +4 for index/subindex header
                 Segmentation::Expedited
             } else {
                 Segmentation::Initiate
@@ -453,7 +471,7 @@ impl SdoClientConnection {
             Segmentation::Segment
         };
 
-        self.offset += chunk_size;
+        self.offset = data_end_offset;
         let is_last = self.offset >= self.total_size;
 
         let cmd = SdoCommand {
@@ -462,13 +480,13 @@ impl SdoClientConnection {
                 is_response: false,
                 is_aborted: false,
                 segmentation,
-                // TODO: This is wrong, command should be stored from write_object
-                // For now, this is a placeholder.
+                // TODO: This assumes WriteByIndex. This logic needs to be
+                // generalized if we support other download commands.
                 command_id: CommandId::WriteByIndex,
                 segment_size: chunk.len() as u16,
             },
             data_size: if is_initiate {
-                Some(self.total_size as u32)
+                Some(data_only_len as u32) // Data size is *without* index/subindex
             } else {
                 None
             },
@@ -503,7 +521,7 @@ impl SdoClientConnection {
         let cmd = SdoCommand {
             header: CommandLayerHeader {
                 transaction_id: tid,
-                segmentation: Segmentation::Expedited, // Placeholder, will be re-evaluated
+                segmentation: Segmentation::Expedited, // This is a request, always expedited
                 command_id: CommandId::ReadByIndex,
                 segment_size: 4, // Index(2) + SubIndex(1) + Reserved(1)
                 ..Default::default()
@@ -540,12 +558,11 @@ impl SdoClientConnection {
         self.last_received_sequence_number = 63;
 
         // Create the full payload for the *first* segment
-        // This is inefficient but simple. A better way would be to just store
-        // the index/subindex and prepend it when building the first segment.
+        // [index(2), sub_index(1), reserved(1), data...]
         let mut first_payload = Vec::with_capacity(4 + data.len());
         first_payload.extend_from_slice(&index.to_le_bytes());
         first_payload.push(sub_index);
-        first_payload.push(0u8); // Reserved
+        first_payload.push(0u8); // Reserved byte
         first_payload.extend_from_slice(&data);
 
         self.data_buffer = first_payload;
@@ -583,6 +600,16 @@ impl SdoClientManager {
             self.next_transaction_id = 1;
         }
         self.next_transaction_id
+    }
+
+    /// Returns the absolute timestamp of the next SDO timeout, if any.
+    /// This is the missing function required by `mn/main.rs`.
+    pub fn next_action_time(&self, _od: &ObjectDictionary) -> Option<u64> {
+        // Iterate over all handlers and find the minimum Some(deadline)
+        self.connections
+            .values()
+            .filter_map(|conn| conn.deadline_us)
+            .min()
     }
 
     /// Initiates a "Read Object" SDO transfer to a target CN.
@@ -626,6 +653,8 @@ impl SdoClientManager {
         source_node: NodeId,
         seq_header: SequenceLayerHeader,
         cmd: SdoCommand,
+        // current_time_us: u64, // Removed
+        // od: &ObjectDictionary,  // Removed
     ) {
         if let Some(conn) = self.connections.get_mut(&source_node) {
             conn.handle_response(&seq_header, &cmd);
