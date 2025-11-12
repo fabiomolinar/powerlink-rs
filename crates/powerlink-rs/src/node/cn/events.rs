@@ -178,9 +178,8 @@ pub(super) fn process_frame(
             );
             // --- Heartbeat Consumer Check ---
             // A PRes frame is a heartbeat for its source node.
-            if let Some((_timeout, last_seen)) = context
-                .heartbeat_consumers
-                .get_mut(&pres_frame.source)
+            if let Some((_timeout, last_seen)) =
+                context.heartbeat_consumers.get_mut(&pres_frame.source)
             {
                 *last_seen = current_time_us;
             }
@@ -521,11 +520,8 @@ pub(super) fn process_frame(
                             context.core.od.increment_counter(
                                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                                 constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_TX,
-                            );                            
-                            Some(payload::build_pres_response(
-                                context,
-                                context.en_flag,
-                            ))
+                            );
+                            Some(payload::build_pres_response(context, context.en_flag))
                         }
                         _ => None,
                     }
@@ -620,10 +616,9 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
         // Handle errors outside the mutable borrow
         for node_id in timed_out_nodes {
             // We report the error, which will trigger the threshold counter
-            let (nmt_action, signaled) =
-                context
-                    .dll_error_manager
-                    .handle_error(DllError::HeartbeatTimeout { node_id });
+            let (nmt_action, signaled) = context
+                .dll_error_manager
+                .handle_error(DllError::HeartbeatTimeout { node_id });
 
             if signaled {
                 context.error_status_changed = true;
@@ -650,9 +645,7 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                         crate::od::ObjectValue::Unsigned8(new_err_reg),
                         false,
                     )
-                    .unwrap_or_else(|e| {
-                        error!("[CN] Failed to update Error Register: {:?}", e)
-                    });
+                    .unwrap_or_else(|e| error!("[CN] Failed to update Error Register: {:?}", e));
             }
             if nmt_action != NmtAction::None {
                 context

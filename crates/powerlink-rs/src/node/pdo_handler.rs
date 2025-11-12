@@ -173,7 +173,7 @@ pub trait PdoHandler<'s>: NodeContext<'s> {
                         }
                     }
                 }
-                
+
                 // Now iterate over the collected entries
                 for entry in &mapping_entries {
                     // If any entry fails, stop processing this PDO entirely.
@@ -247,10 +247,9 @@ pub trait PdoHandler<'s>: NodeContext<'s> {
                     "[SDO-PDO] Client: Received response on channel {:#06X}",
                     entry.index
                 );
-                self.core_mut().embedded_sdo_client.handle_response(
-                    entry.index,
-                    data_slice,
-                );
+                self.core_mut()
+                    .embedded_sdo_client
+                    .handle_response(entry.index, data_slice);
                 return Ok(()); // SDO handled, skip standard data write
             }
             // Standard Data Object
@@ -294,10 +293,10 @@ pub trait PdoHandler<'s>: NodeContext<'s> {
                     value, entry.index, entry.sub_index
                 );
                 // Now get a mutable reference to write
-                if let Err(e) = self
-                    .core_mut()
-                    .od
-                    .write_internal(entry.index, entry.sub_index, value, false)
+                if let Err(e) =
+                    self.core_mut()
+                        .od
+                        .write_internal(entry.index, entry.sub_index, value, false)
                 {
                     error!(
                         "Critical Error: Failed to write RPDO data to existing OD entry 0x{:04X}/{}: {:?}",

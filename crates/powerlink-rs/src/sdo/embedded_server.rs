@@ -60,8 +60,7 @@ impl EmbeddedSdoServer {
         if command.sequence_header.sequence_number == conn.last_sequence_number {
             trace!(
                 "[SDO-PDO] Server: Received duplicate request (Seq {}) for channel {:#06X}. Resending last response.",
-                command.sequence_header.sequence_number,
-                channel_index
+                command.sequence_header.sequence_number, channel_index
             );
             // Don't re-process, just let get_pending_response send the same response again.
             return;
@@ -79,8 +78,7 @@ impl EmbeddedSdoServer {
         conn.last_sequence_number = command.sequence_header.sequence_number;
 
         // Process the SDO command (this is a simplified handler)
-        let response_payload =
-            Self::process_command(&command, od, conn.last_sequence_number);
+        let response_payload = Self::process_command(&command, od, conn.last_sequence_number);
 
         // Store the serialized response
         conn.pending_response = Some(response_payload);
@@ -117,7 +115,7 @@ impl EmbeddedSdoServer {
             is_response: true,
             is_aborted: abort_code.is_some(),
             segmentation: Segmentation::Expedited, // Always expedited
-            valid_payload_length: 0, // Will be set during serialization
+            valid_payload_length: 0,               // Will be set during serialization
             command_id: if abort_code.is_some() {
                 CommandId::Nil
             } else {
@@ -132,7 +130,7 @@ impl EmbeddedSdoServer {
                 data
             },
         };
-        
+
         response_cmd.serialize()
     }
 

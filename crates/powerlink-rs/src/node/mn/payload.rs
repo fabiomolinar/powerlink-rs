@@ -165,7 +165,7 @@ pub(super) fn build_tpdo_payload(
 ) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
     let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE + channel_index as u16;
     let mapping_index = OD_IDX_TPDO_MAPP_PARAM_BASE + channel_index as u16;
-    
+
     // We need an immutable reference to the OD for most operations
     let od = &context.core.od;
 
@@ -241,11 +241,10 @@ pub(super) fn build_tpdo_payload(
                             "[SDO-PDO] MN Server: Building response for TPDO channel {:#06X}",
                             entry.index
                         );
-                        let response_payload =
-                            context.core.embedded_sdo_server.get_pending_response(
-                                entry.index,
-                                length,
-                            );
+                        let response_payload = context
+                            .core
+                            .embedded_sdo_server
+                            .get_pending_response(entry.index, length);
                         data_slice.copy_from_slice(&response_payload);
                     }
                     // SDO Client Channel (0x1280 - 0x12FF): Container for a request from the MN.
@@ -254,11 +253,10 @@ pub(super) fn build_tpdo_payload(
                             "[SDO-PDO] MN Client: Building request for TPDO channel {:#06X}",
                             entry.index
                         );
-                        let request_payload =
-                            context.core.embedded_sdo_client.get_pending_request(
-                                entry.index,
-                                length,
-                            );
+                        let request_payload = context
+                            .core
+                            .embedded_sdo_client
+                            .get_pending_request(entry.index, length);
                         data_slice.copy_from_slice(&request_payload);
                     }
                     // Standard Data Object
@@ -283,8 +281,7 @@ pub(super) fn build_tpdo_payload(
                                 serialized_data.len()
                             );
                             let copy_len = serialized_data.len().min(length);
-                            data_slice[..copy_len]
-                                .copy_from_slice(&serialized_data[..copy_len]);
+                            data_slice[..copy_len].copy_from_slice(&serialized_data[..copy_len]);
                         } else {
                             data_slice.copy_from_slice(&serialized_data);
                         }

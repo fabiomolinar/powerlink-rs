@@ -2,9 +2,9 @@
 //! Manages the client-side state for SDO transfers embedded in PDOs.
 //!
 //! (Reference: EPSG DS 301, Section 6.3.3)
+use crate::PowerlinkError;
 use crate::sdo::command::{CommandId, Segmentation};
 use crate::sdo::embedded::{PdoSdoCommand, PdoSequenceLayerHeader};
-use crate::PowerlinkError;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use log::{error, info, trace, warn};
@@ -50,13 +50,15 @@ impl EmbeddedSdoClient {
         sub_index: u8,
     ) -> Result<(), PowerlinkError> {
         if !(0x1280..=0x12FF).contains(&channel_index) {
-            return Err(PowerlinkError::InternalError("Invalid SDO client channel index"));
+            return Err(PowerlinkError::InternalError(
+                "Invalid SDO client channel index",
+            ));
         }
         let conn = self
             .connections
             .entry(channel_index)
             .or_insert_with(Default::default);
-        
+
         conn.request_queue.push_back(SdoClientRequest {
             command_id: CommandId::ReadByIndex,
             index,
@@ -75,7 +77,9 @@ impl EmbeddedSdoClient {
         data: Vec<u8>,
     ) -> Result<(), PowerlinkError> {
         if !(0x1280..=0x12FF).contains(&channel_index) {
-            return Err(PowerlinkError::InternalError("Invalid SDO client channel index"));
+            return Err(PowerlinkError::InternalError(
+                "Invalid SDO client channel index",
+            ));
         }
         let conn = self
             .connections
@@ -110,21 +114,21 @@ impl EmbeddedSdoClient {
         };
 
         // Check sequence number
-        if response.sequence_header.sequence_number != conn.next_sequence_number.wrapping_sub(1) % 64 {
+        if response.sequence_header.sequence_number
+            != conn.next_sequence_number.wrapping_sub(1) % 64
+        {
             trace!(
                 "[SDO-PDO] Client: Ignoring duplicate/old response for channel {:#06X}. Seq: {}",
-                channel_index,
-                response.sequence_header.sequence_number
+                channel_index, response.sequence_header.sequence_number
             );
             return;
         }
-        
+
         conn.last_sequence_number = response.sequence_header.sequence_number;
 
         // Handle response
         if response.is_aborted {
-            let abort_code =
-                u32::from_le_bytes(response.data[0..4].try_into().unwrap_or_default());
+            let abort_code = u32::from_le_bytes(response.data[0..4].try_into().unwrap_or_default());
             error!(
                 "[SDO-PDO] Client: Received SDO Abort on channel {:#06X}. Code: {:#010X}",
                 channel_index, abort_code
@@ -162,13 +166,13 @@ impl EmbeddedSdoClient {
             is_response: false,
             is_aborted: false,
             segmentation: Segmentation::Expedited, // Always expedited
-            valid_payload_length: 0, // Will be set
+            valid_payload_length: 0,               // Will be set
             command_id: request.command_id,
             index: request.index,
             sub_index: request.sub_index,
             data: request.data,
         };
-        
+
         conn.next_sequence_number = conn.next_sequence_number.wrapping_add(1) % 64;
 
         let mut payload = cmd.serialize();

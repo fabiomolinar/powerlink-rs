@@ -1,33 +1,31 @@
 // crates/powerlink-rs/src/node/mn/main.rs
 use super::events;
 use super::state::{CyclePhase, MnContext};
+use crate::PowerlinkError;
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
+use crate::frame::control::SocFrame;
 use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::ms_state_machine::DllMsStateMachine;
-use crate::frame::{deserialize_frame, PowerlinkFrame, ServiceId};
-use crate::frame::control::SocFrame;
+use crate::frame::{PowerlinkFrame, ServiceId, deserialize_frame};
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::{
-    CoreNodeContext, Node, NodeAction, serialize_frame_action,
-};
-use crate::od::constants;
+use crate::node::{CoreNodeContext, Node, NodeAction, serialize_frame_action};
 use crate::od::ObjectDictionary; // Corrected import
+use crate::od::constants;
 use crate::sdo::client_manager::SdoClientManager;
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
 use crate::sdo::server::SdoClientInfo;
-use crate::sdo::transport::{AsndTransport, SdoTransport}; // Import trait
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
+use crate::sdo::transport::{AsndTransport, SdoTransport}; // Import trait
 use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoServer}; // Added embedded
 use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::collections::BinaryHeap;
 use alloc::vec::Vec;
 use log::{error, info, trace, warn};
-use crate::PowerlinkError;
 
 // --- Add imports for UDP SDO ---
 #[cfg(feature = "sdo-udp")]
@@ -58,11 +56,12 @@ impl<'s> ManagingNode<'s> {
         let nmt_state_machine = MnNmtStateMachine::from_od(&od)?;
 
         // Read cycle time (0x1006)
-        let cycle_time_us = od
-            .read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0)
-            .ok_or(PowerlinkError::ValidationError( // Use existing error type
+        let cycle_time_us = od.read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0).ok_or(
+            PowerlinkError::ValidationError(
+                // Use existing error type
                 "Failed to read 0x1006 NMT_CycleLen_U32",
-            ))? as u64;
+            ),
+        )? as u64;
 
         // --- Initialize CN Management Info ---
         let (node_info, mandatory_nodes, isochronous_nodes, async_only_nodes, multiplex_assign) =
@@ -84,10 +83,7 @@ impl<'s> ManagingNode<'s> {
             core,
             nmt_state_machine,
             dll_state_machine: DllMsStateMachine::new(), // Removed node_id
-            dll_error_manager: DllErrorManager::new(
-                MnErrorCounters::new(),
-                LoggingErrorHandler,
-            ),
+            dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
             asnd_transport: AsndTransport,
             #[cfg(feature = "sdo-udp")]
             udp_transport: UdpTransport,
@@ -118,7 +114,7 @@ impl<'s> ManagingNode<'s> {
 
         Ok(Self { context })
     }
-    
+
     /// Private helper to process a fully deserialized POWERLINK frame.
     /// This was missing.
     fn process_powerlink_frame(
@@ -126,7 +122,7 @@ impl<'s> ManagingNode<'s> {
         frame: PowerlinkFrame,
         current_time_us: u64,
     ) -> NodeAction {
-         match frame {
+        match frame {
             PowerlinkFrame::PRes(pres_frame) => {
                 events::process_frame(
                     &mut self.context,
@@ -161,17 +157,11 @@ impl<'s> ManagingNode<'s> {
 
     /// Private helper to deserialize and dispatch an Ethernet frame's payload.
     /// This was the missing method `run_cycle` was trying to call.
-    fn process_ethernet_frame(
-        &mut self,
-        frame_bytes: &[u8],
-        current_time_us: u64,
-    ) -> NodeAction {
+    fn process_ethernet_frame(&mut self, frame_bytes: &[u8], current_time_us: u64) -> NodeAction {
         // --- 1. Update NMT State (for Resetting) ---
         // NmtResetting is not a valid state, use NmtResetCommunication
         // FIX: Corrected NMT state variant
-        if self.context.nmt_state_machine.current_state()
-            == NmtState::NmtGsResetCommunication
-        {
+        if self.context.nmt_state_machine.current_state() == NmtState::NmtGsResetCommunication {
             self.context.nmt_state_machine.process_event(
                 crate::nmt::events::NmtEvent::Error, // Use a generic event
                 &mut self.context.core.od,
@@ -197,7 +187,6 @@ impl<'s> ManagingNode<'s> {
         self.process_powerlink_frame(frame, current_time_us)
     }
 
-
     /// Helper function to process ASnd frames, which might contain
     /// SDO, IdentResponse, StatusResponse, or other services.
     fn process_asnd_frame(
@@ -205,11 +194,10 @@ impl<'s> ManagingNode<'s> {
         asnd_frame: PowerlinkFrame, // Pass enum, not just inner frame
         current_time_us: u64,
     ) -> NodeAction {
-        let (asnd_service_id, asnd_dest_node_id, asnd_source_node_id) =
-            match &asnd_frame {
-                PowerlinkFrame::ASnd(f) => (f.service_id, f.destination, f.source),
-                _ => return NodeAction::NoAction, // Should not happen
-            };
+        let (asnd_service_id, asnd_dest_node_id, asnd_source_node_id) = match &asnd_frame {
+            PowerlinkFrame::ASnd(f) => (f.service_id, f.destination, f.source),
+            _ => return NodeAction::NoAction, // Should not happen
+        };
 
         // Check if this is an SDO frame
         if asnd_service_id == ServiceId::Sdo {
@@ -224,7 +212,8 @@ impl<'s> ManagingNode<'s> {
                     PowerlinkFrame::ASnd(f) => &f.payload,
                     _ => unreachable!(),
                 };
-                if payload.len() < 8 { // Min SDO payload is SeqHdr(4) + CmdHdr(4)
+                if payload.len() < 8 {
+                    // Min SDO payload is SeqHdr(4) + CmdHdr(4)
                     warn!("Received SDO frame with invalid payload length. Ignoring.");
                     return NodeAction::NoAction;
                 }
@@ -273,11 +262,7 @@ impl<'s> ManagingNode<'s> {
                     source_node_id: asnd_source_node_id,
                     source_mac,
                 };
-                return self.handle_sdo_server_request(
-                    &payload,
-                    client_info,
-                    current_time_us,
-                );
+                return self.handle_sdo_server_request(&payload, client_info, current_time_us);
             }
         }
 
@@ -336,8 +321,10 @@ impl<'s> ManagingNode<'s> {
         }
 
         // --- 1. Check for SDO Client Timeouts ---
-        if let Some((target_node_id, seq, cmd)) =
-            self.context.sdo_client_manager.tick(current_time_us, &self.context.core.od)
+        if let Some((target_node_id, seq, cmd)) = self
+            .context
+            .sdo_client_manager
+            .tick(current_time_us, &self.context.core.od)
         {
             warn!(
                 "SDO Client tick generated frame (timeout/abort) for Node {}.",
@@ -345,7 +332,8 @@ impl<'s> ManagingNode<'s> {
             );
             // An SDO client timeout/abort needs to send a frame.
             // This function needs to exist in scheduler or payload
-            match cycle::build_sdo_asnd_request(&self.context, target_node_id, seq, cmd) { // Corrected: cycle::
+            match cycle::build_sdo_asnd_request(&self.context, target_node_id, seq, cmd) {
+                // Corrected: cycle::
                 Ok(frame) => {
                     return serialize_frame_action(frame, &mut self.context)
                         .unwrap_or(NodeAction::NoAction);
@@ -404,7 +392,10 @@ impl<'s> ManagingNode<'s> {
         // --- Handle PRes Timeout ---
         if let Some(event) = self.context.pending_timeout_event.take() {
             // This is a PRes timeout
-            warn!("[MN] PRes timeout for Node {:?}.", self.context.current_polled_cn);
+            warn!(
+                "[MN] PRes timeout for Node {:?}.",
+                self.context.current_polled_cn
+            );
             events::handle_dll_event(
                 &mut self.context,
                 event,
@@ -413,8 +404,14 @@ impl<'s> ManagingNode<'s> {
                 &PowerlinkFrame::Soc(SocFrame::new(
                     Default::default(),
                     Default::default(),
-                    NetTime { seconds: 0, nanoseconds: 0 }, // Use NetTime::default() if available
-                    RelativeTime { seconds: 0, nanoseconds: 0 } // Use RelativeTime::default() if available
+                    NetTime {
+                        seconds: 0,
+                        nanoseconds: 0,
+                    }, // Use NetTime::default() if available
+                    RelativeTime {
+                        seconds: 0,
+                        nanoseconds: 0,
+                    }, // Use RelativeTime::default() if available
                 )),
             );
             // A PRes timeout means we must advance the cycle.
@@ -475,14 +472,14 @@ impl<'s> ManagingNode<'s> {
     }
 
     // --- End of New Public API ---
-    
+
     /// Processes a UDP datagram payload for SDO over UDP.
     #[cfg(feature = "sdo-udp")]
     fn process_udp_datagram(
         &mut self,
-        payload: &[u8], // Corrected: buffer
+        payload: &[u8],                     // Corrected: buffer
         source_ip: crate::types::IpAddress, // Corrected: ip
-        source_port: u16, // Corrected: port
+        source_port: u16,                   // Corrected: port
         current_time_us: u64,
     ) -> NodeAction {
         trace!(
@@ -506,7 +503,7 @@ impl<'s> ManagingNode<'s> {
                 let cmd_len = cmd.serialize(&mut sdo_payload[seq_len..]).unwrap_or(0);
                 let total_sdo_len = seq_len + cmd_len;
                 sdo_payload.truncate(total_sdo_len);
-                
+
                 self.handle_sdo_server_request(&sdo_payload, client_info, current_time_us)
             }
             Err(e) => {
@@ -621,14 +618,9 @@ impl<'s> Node for ManagingNode<'s> {
         }
         // --- End NEW ---
 
-        [
-            sdo_server_time,
-            sdo_client_time,
-            nmt_time,
-            cycle_start_time,
-        ] // Add new timer
-        .iter()
-        .filter_map(|&t| t)
-        .min()
+        [sdo_server_time, sdo_client_time, nmt_time, cycle_start_time] // Add new timer
+            .iter()
+            .filter_map(|&t| t)
+            .min()
     }
 }

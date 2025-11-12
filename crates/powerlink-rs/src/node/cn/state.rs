@@ -159,9 +159,8 @@ impl<'s> CnContext<'s> {
                 }
                 // Track the max byte written to truncate later if needed
                 // (though PRes payload is fixed size)
-                max_offset_len = max_offset_len.max(
-                    entry.byte_offset().unwrap_or(0) + entry.byte_length().unwrap_or(0),
-                );
+                max_offset_len = max_offset_len
+                    .max(entry.byte_offset().unwrap_or(0) + entry.byte_length().unwrap_or(0));
             }
         } else {
             warn!(
@@ -215,10 +214,10 @@ impl<'s> CnContext<'s> {
                     "[SDO-PDO] Server: Building response for TPDO channel {:#06X}",
                     entry.index
                 );
-                let response_payload = self.core.embedded_sdo_server.get_pending_response(
-                    entry.index,
-                    length,
-                );
+                let response_payload = self
+                    .core
+                    .embedded_sdo_server
+                    .get_pending_response(entry.index, length);
                 data_slice.copy_from_slice(&response_payload);
                 return Ok(()); // SDO handled, skip standard data read
             }
@@ -228,10 +227,10 @@ impl<'s> CnContext<'s> {
                     "[SDO-PDO] Client: Building request for TPDO channel {:#06X}",
                     entry.index
                 );
-                let request_payload = self.core.embedded_sdo_client.get_pending_request(
-                    entry.index,
-                    length,
-                );
+                let request_payload = self
+                    .core
+                    .embedded_sdo_client
+                    .get_pending_request(entry.index, length);
                 data_slice.copy_from_slice(&request_payload);
                 return Ok(()); // SDO handled, skip standard data read
             }

@@ -101,7 +101,9 @@ impl PdoSdoCommand {
         let mut buffer = Vec::with_capacity(8 + self.data.len());
 
         // 1. Sequence Layer (1 byte)
-        buffer.push((self.sequence_header.sequence_number << 2) | self.sequence_header.connection_state);
+        buffer.push(
+            (self.sequence_header.sequence_number << 2) | self.sequence_header.connection_state,
+        );
 
         // 2. Command Layer Header (7 bytes)
         buffer.push(self.transaction_id);
@@ -123,7 +125,6 @@ impl PdoSdoCommand {
         buffer
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -168,7 +169,7 @@ mod tests {
 
         // Seq(1) + TID(1) + Flags(1) + VPL(1) + Cmd(1) + Index(2) + Sub(1) + Data(4) = 12 bytes
         assert_eq!(buffer.len(), 12);
-        
+
         // Check VPL was set correctly
         assert_eq!(buffer[3], 4); // valid_payload_length
 

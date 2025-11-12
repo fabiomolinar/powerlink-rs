@@ -11,7 +11,7 @@ pub mod sequence_handler;
 pub mod server;
 pub mod state;
 pub mod transport;
-#[cfg(feature="sdo-udp")]
+#[cfg(feature = "sdo-udp")]
 pub mod udp;
 
 pub use client::SdoClient;

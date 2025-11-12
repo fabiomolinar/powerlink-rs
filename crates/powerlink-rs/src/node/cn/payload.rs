@@ -1,7 +1,5 @@
 use crate::frame::basic::MacAddress;
-use crate::frame::control::{
-    IdentResponsePayload, StaticErrorBitField, StatusResponsePayload,
-};
+use crate::frame::control::{IdentResponsePayload, StaticErrorBitField, StatusResponsePayload};
 use crate::frame::error::ErrorEntry;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
@@ -148,7 +146,9 @@ pub(super) fn build_status_response(
             payload_buf.fill(0);
             // Re-serialize with empty entries
             payload_struct.error_entries = Vec::new();
-            payload_struct.serialize(&mut payload_buf).unwrap_or(14 + 20)
+            payload_struct
+                .serialize(&mut payload_buf)
+                .unwrap_or(14 + 20)
         }
     };
     payload_buf.truncate(payload_len);
@@ -196,10 +196,7 @@ pub(super) fn build_nmt_request(
 }
 
 /// Builds a `PRes` frame in response to being polled by a `PReq`.
-pub(super) fn build_pres_response(
-    context: &mut CnContext,
-    en_flag: bool,
-) -> PowerlinkFrame {
+pub(super) fn build_pres_response(context: &mut CnContext, en_flag: bool) -> PowerlinkFrame {
     let node_id = context.nmt_state_machine.node_id();
     let nmt_state = context.nmt_state_machine.current_state();
     let mac_address = context.core.mac_address;
