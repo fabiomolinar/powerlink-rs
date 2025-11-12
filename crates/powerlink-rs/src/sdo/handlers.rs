@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/sdo/handlers.rs
 use log::{error, info, warn};
 
 use crate::PowerlinkError;
@@ -7,16 +6,17 @@ use crate::sdo::command::{
     CommandLayerHeader, ReadByIndexRequest, ReadByNameRequest, ReadMultipleParamRequest,
     SdoCommand, Segmentation, WriteByIndexRequest, WriteByNameRequest,
 };
+use crate::sdo::sequence_handler::SdoSequenceHandler;
 use crate::sdo::state::{SdoServerState, SdoTransferState};
 
-use super::SdoServer;
+// Server parameter removed, no longer needed
 use alloc::vec::Vec;
 
 use crate::sdo::OD_IDX_SDO_TIMEOUT;
 const MAX_EXPEDITED_PAYLOAD: usize = 1452;
 
 pub(super) fn handle_read_by_index(
-    server: &mut SdoServer,
+    handler: &mut SdoSequenceHandler,
     command: SdoCommand,
     mut response_header: CommandLayerHeader,
     od: &ObjectDictionary,
@@ -58,7 +58,8 @@ pub(super) fn handle_read_by_index(
 
                         // Store state *if* not complete
                         if !is_last {
-                            *server.sequence_handler.state_mut() =
+                            // Use handler to access state
+                            *handler.state_mut() =
                                 SdoServerState::SegmentedUpload(transfer_state);
                         }
                         // Return the first segment
@@ -67,25 +68,25 @@ pub(super) fn handle_read_by_index(
                 }
                 // Map OD read errors (Object/SubObjectNotFound) to SDO Abort codes
                 None if od.read_object(req.index).is_none() => {
-                    server.abort(command.header.transaction_id, 0x0602_0000) // Object does not exist
+                    handler.abort(command.header.transaction_id, 0x0602_0000) // Object does not exist
                 }
                 None => {
-                    server.abort(command.header.transaction_id, 0x0609_0011) // Sub-index does not exist
+                    handler.abort(command.header.transaction_id, 0x0609_0011) // Sub-index does not exist
                 }
             }
         }
         Err(PowerlinkError::SdoInvalidCommandPayload) => {
-            server.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
+            handler.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
         }
         Err(_) => {
             // Other parsing errors
-            server.abort(command.header.transaction_id, 0x0800_0000) // General error
+            handler.abort(command.header.transaction_id, 0x0800_0000) // General error
         }
     }
 }
 
 pub(super) fn handle_write_by_index(
-    server: &mut SdoServer,
+    handler: &mut SdoSequenceHandler,
     command: SdoCommand,
     response_header: CommandLayerHeader,
     od: &mut ObjectDictionary,
@@ -119,13 +120,13 @@ pub(super) fn handle_write_by_index(
                             data_size: None,
                             payload: Vec::new(), // Successful write has empty payload
                         },
-                        Err(abort_code) => server.abort(command.header.transaction_id, abort_code),
+                        Err(abort_code) => handler.abort(command.header.transaction_id, abort_code),
                     }
                 }
                 Err(PowerlinkError::SdoInvalidCommandPayload) => {
-                    server.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
+                    handler.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
                 }
-                Err(_) => server.abort(command.header.transaction_id, 0x0800_0000), // General error parsing payload
+                Err(_) => handler.abort(command.header.transaction_id, 0x0800_0000), // General error parsing payload
             }
         }
         Segmentation::Initiate => {
@@ -140,10 +141,10 @@ pub(super) fn handle_write_by_index(
                     let total_size = command.data_size.unwrap_or(0) as usize;
                     if total_size == 0 {
                         error!("Segmented Download Initiate received with DataSize=0.");
-                        return server.abort(command.header.transaction_id, 0x0607_0010); // Type mismatch/length error
+                        return handler.abort(command.header.transaction_id, 0x0607_0010); // Type mismatch/length error
                     }
                     let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
-                    *server.sequence_handler.state_mut() =
+                    *handler.state_mut() =
                         SdoServerState::SegmentedDownload(SdoTransferState {
                             transaction_id: command.header.transaction_id,
                             total_size,
@@ -162,15 +163,15 @@ pub(super) fn handle_write_by_index(
                     }
                 }
                 Err(PowerlinkError::SdoInvalidCommandPayload) => {
-                    server.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
+                    handler.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
                 }
-                Err(_) => server.abort(command.header.transaction_id, 0x0800_0000), // General error parsing payload
+                Err(_) => handler.abort(command.header.transaction_id, 0x0800_0000), // General error parsing payload
             }
         }
         Segmentation::Segment | Segmentation::Complete => {
             // Take the state to avoid mutable borrow issues when calling write_to_od/abort
             if let SdoServerState::SegmentedDownload(mut transfer_state) =
-                core::mem::take(server.sequence_handler.state_mut())
+                core::mem::take(handler.state_mut())
             {
                 if transfer_state.transaction_id != command.header.transaction_id {
                     error!(
@@ -178,16 +179,16 @@ pub(super) fn handle_write_by_index(
                         transfer_state.transaction_id, command.header.transaction_id
                     );
                     // Put state back before aborting
-                    *server.sequence_handler.state_mut() =
+                    *handler.state_mut() =
                         SdoServerState::SegmentedDownload(transfer_state);
-                    return server.abort(command.header.transaction_id, 0x0800_0000); // General error
+                    return handler.abort(command.header.transaction_id, 0x0800_0000); // General error
                 }
 
                 // Delegate processing to the transfer state
                 match transfer_state.process_download_segment(&command, od, current_time_us) {
                     Ok(true) => {
                         // Complete and successful
-                        *server.sequence_handler.state_mut() = SdoServerState::Established;
+                        *handler.state_mut() = SdoServerState::Established;
                         SdoCommand {
                             header: response_header, // Send final ACK
                             data_size: None,
@@ -196,7 +197,7 @@ pub(super) fn handle_write_by_index(
                     }
                     Ok(false) => {
                         // More segments needed
-                        *server.sequence_handler.state_mut() =
+                        *handler.state_mut() =
                             SdoServerState::SegmentedDownload(transfer_state);
                         SdoCommand {
                             header: response_header, // Send ACK for segment
@@ -206,26 +207,26 @@ pub(super) fn handle_write_by_index(
                     }
                     Err(abort_code) => {
                         // Abort
-                        *server.sequence_handler.state_mut() = SdoServerState::Established;
-                        server.abort(command.header.transaction_id, abort_code)
+                        *handler.state_mut() = SdoServerState::Established;
+                        handler.abort(command.header.transaction_id, abort_code)
                     }
                 }
             } else {
                 error!(
                     "Received unexpected SDO segment frame (TID {}). Current state: {:?}",
                     command.header.transaction_id,
-                    server.sequence_handler.state()
+                    handler.state()
                 );
                 // Abort, reset state just in case
-                *server.sequence_handler.state_mut() = SdoServerState::Established;
-                server.abort(command.header.transaction_id, 0x0504_0003) // Invalid sequence
+                *handler.state_mut() = SdoServerState::Established;
+                handler.abort(command.header.transaction_id, 0x0504_0003) // Invalid sequence
             }
         }
     }
 }
 
 pub(super) fn handle_read_by_name(
-    server: &mut SdoServer,
+    handler: &mut SdoSequenceHandler,
     command: SdoCommand,
     response_header: CommandLayerHeader,
     od: &ObjectDictionary,
@@ -246,25 +247,25 @@ pub(super) fn handle_read_by_name(
                     ..command
                 };
                 handle_read_by_index(
-                    server,
+                    handler, // Changed parameter
                     read_req_command,
                     response_header,
                     od,
                     current_time_us,
                 )
             } else {
-                server.abort(command.header.transaction_id, 0x060A_0023) // Resource not available
+                handler.abort(command.header.transaction_id, 0x060A_0023) // Resource not available
             }
         }
         Err(PowerlinkError::SdoInvalidCommandPayload) => {
-            server.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
+            handler.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
         }
-        Err(_) => server.abort(command.header.transaction_id, 0x0800_0000), // General error
+        Err(_) => handler.abort(command.header.transaction_id, 0x0800_0000), // General error
     }
 }
 
 pub(super) fn handle_write_by_name(
-    server: &mut SdoServer,
+    handler: &mut SdoSequenceHandler,
     mut command: SdoCommand,
     response_header: CommandLayerHeader,
     od: &mut ObjectDictionary,
@@ -284,20 +285,26 @@ pub(super) fn handle_write_by_name(
                 command.header.segment_size = command.payload.len() as u16; // Update size
 
                 // Delegate to the existing WriteByIndex handler
-                handle_write_by_index(server, command, response_header, od, current_time_us)
+                handle_write_by_index(
+                    handler, // Changed parameter
+                    command,
+                    response_header,
+                    od,
+                    current_time_us,
+                )
             } else {
-                server.abort(command.header.transaction_id, 0x060A_0023) // Resource not available
+                handler.abort(command.header.transaction_id, 0x060A_0023) // Resource not available
             }
         }
         Err(PowerlinkError::SdoInvalidCommandPayload) => {
-            server.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
+            handler.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
         }
-        Err(_) => server.abort(command.header.transaction_id, 0x0800_0000), // General error
+        Err(_) => handler.abort(command.header.transaction_id, 0x0800_0000), // General error
     }
 }
 
 pub(super) fn handle_read_all_by_index(
-    server: &mut SdoServer,
+    handler: &mut SdoSequenceHandler,
     command: SdoCommand,
     mut response_header: CommandLayerHeader,
     od: &ObjectDictionary,
@@ -306,7 +313,7 @@ pub(super) fn handle_read_all_by_index(
     // Spec 6.3.2.4.2.1.4 (Table 66): Payload is Index (2 bytes) + reserved (2 bytes)
     if command.payload.len() < 2 {
         // Allow at least 2 for index, though 4 is expected
-        return server.abort(command.header.transaction_id, 0x0504_0001); // Command specifier invalid (payload too short)
+        return handler.abort(command.header.transaction_id, 0x0504_0001); // Command specifier invalid (payload too short)
     }
     if command.payload.len() < 4 {
         warn!(
@@ -340,7 +347,7 @@ pub(super) fn handle_read_all_by_index(
                             );
                             // Abort if a sub-index read fails? Or continue with partial data?
                             // Let's abort for consistency.
-                            return server.abort(command.header.transaction_id, 0x0609_0011); // Sub-index access error
+                            return handler.abort(command.header.transaction_id, 0x0609_0011); // Sub-index access error
                         }
                     }
                     // Now send this payload, either expedited or segmented
@@ -366,7 +373,7 @@ pub(super) fn handle_read_all_by_index(
                         let (response_command, is_last) =
                             transfer_state.get_next_upload_segment(od, current_time_us);
                         if !is_last {
-                            *server.sequence_handler.state_mut() =
+                            *handler.state_mut() =
                                 SdoServerState::SegmentedUpload(transfer_state);
                         }
                         response_command
@@ -374,11 +381,11 @@ pub(super) fn handle_read_all_by_index(
                 }
                 Some(crate::od::Object::Variable(_)) => {
                     // ReadAllByIndex is not valid for Variables
-                    server.abort(command.header.transaction_id, 0x0609_0030) // Value range exceeded (not a record/array)
+                    handler.abort(command.header.transaction_id, 0x0609_0030) // Value range exceeded (not a record/array)
                 }
                 None => {
                     // Object itserver doesn't exist
-                    server.abort(command.header.transaction_id, 0x0602_0000) // Object does not exist
+                    handler.abort(command.header.transaction_id, 0x0602_0000) // Object does not exist
                 }
             }
         }
@@ -386,7 +393,7 @@ pub(super) fn handle_read_all_by_index(
 }
 
 pub(super) fn handle_read_multiple_params(
-    server: &mut SdoServer,
+    handler: &mut SdoSequenceHandler,
     command: SdoCommand,
     mut response_header: CommandLayerHeader,
     od: &ObjectDictionary,
@@ -421,7 +428,7 @@ pub(super) fn handle_read_multiple_params(
                         } else {
                             0x0609_0011
                         };
-                        return server.abort(command.header.transaction_id, abort_code);
+                        return handler.abort(command.header.transaction_id, abort_code);
                     }
                 }
             }
@@ -454,16 +461,16 @@ pub(super) fn handle_read_multiple_params(
                 let (response_command, is_last) =
                     transfer_state.get_next_upload_segment(od, current_time_us);
                 if !is_last {
-                    *server.sequence_handler.state_mut() =
+                    *handler.state_mut() =
                         SdoServerState::SegmentedUpload(transfer_state);
                 }
                 response_command
             }
         }
         Err(PowerlinkError::SdoInvalidCommandPayload) => {
-            server.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
+            handler.abort(command.header.transaction_id, 0x0504_0001) // Command specifier invalid
         }
-        Err(_) => server.abort(command.header.transaction_id, 0x0800_0000), // General error
+        Err(_) => handler.abort(command.header.transaction_id, 0x0800_0000), // General error
     }
 }
 
