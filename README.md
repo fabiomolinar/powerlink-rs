@@ -49,8 +49,8 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
   - **Chapter 9 (Routing): 0%**
     - `[ ]` 9.1 Routing Type 1
     - `[ ]` 9.2 Routing Type 2
-  - **Chapter 10 (Indicators): 0%**
-    - `[ ]` (Hardware-specific, outside core library scope)
+  - **Chapter 10 (Indicators): Not applicable**
+    - Hardware-specific, outside core library scope.
 - **EPSG 302 (Extensions): 0%**
   - `[ ]` EPSG 302-A (High Availability)
   - `[ ]` EPSG 302-B (Multiple ASnd)
