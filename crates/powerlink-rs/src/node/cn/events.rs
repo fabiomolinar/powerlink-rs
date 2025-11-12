@@ -448,6 +448,8 @@ pub(super) fn process_frame(
                                     context.nmt_state_machine.node_id,
                                     &context.core.od,
                                     soa_frame,
+                                    &context.core.sdo_client,
+                                    &context.pending_nmt_requests,
                                 ))
                             }
                             RequestedServiceId::StatusRequest => {
@@ -463,6 +465,8 @@ pub(super) fn process_frame(
                                     context.ec_flag,
                                     &mut context.emergency_queue,
                                     soa_frame,
+                                    &context.core.sdo_client,
+                                    &context.pending_nmt_requests,
                                 ))
                             }
                             RequestedServiceId::NmtRequestInvite => {

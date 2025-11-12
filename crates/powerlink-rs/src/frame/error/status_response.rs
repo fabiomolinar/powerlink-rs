@@ -2,27 +2,7 @@
 use crate::PowerlinkError;
 use crate::common::NetTime;
 
-/// Represents the Static Error Bit Field from a StatusResponse frame.
-/// (Reference: EPSG DS 301, Section 6.5.8.1)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StaticErrorBitField {
-    /// Corresponds to the content of ERR_ErrorRegister_U8 (0x1001).
-    pub error_register: u8,
-    /// Device profile or vendor-specific error bits.
-    pub specific_errors: [u8; 7],
-}
-
-impl StaticErrorBitField {
-    pub fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        if buffer.len() < 8 {
-            return Err(PowerlinkError::BufferTooShort);
-        }
-        Ok(Self {
-            error_register: buffer[0],
-            specific_errors: buffer[1..8].try_into()?,
-        })
-    }
-}
+// The StaticErrorBitField struct has been moved to crates/powerlink-rs/src/frame/control/status_response.rs
 
 /// Represents the Mode field within an Error Entry's EntryType.
 /// (Reference: EPSG DS 301, Table 96)

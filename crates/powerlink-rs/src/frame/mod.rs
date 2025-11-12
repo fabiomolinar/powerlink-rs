@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/frame/mod.rs
 //! Defines the structures and logic for the Data Link Layer (DLL) frames.
 
 pub mod basic;
@@ -12,7 +11,10 @@ pub mod poll;
 pub use basic::{EthernetHeader, MacAddress}; // Added MacAddress
 // Make frame types public so other modules (like `node`) can use them.
 pub use codec::{Codec, deserialize_frame};
-pub use control::{ASndFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame};
+pub use control::{
+    ASndFrame, IdentResponsePayload, RequestedServiceId, ServiceId, SoAFrame, SocFrame,
+    StaticErrorBitField, StatusResponsePayload,
+}; // Added new payload types
 pub use cs_state_machine::{DllCsEvent, DllCsStateMachine};
 pub use error::{DllError, DllErrorManager, ErrorHandler, NmtAction, NoOpErrorHandler};
 pub use ms_state_machine::{DllMsEvent, DllMsStateMachine};

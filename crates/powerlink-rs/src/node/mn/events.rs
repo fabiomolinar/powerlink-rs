@@ -1,14 +1,14 @@
-// crates/powerlink-rs/src/node/mn/events.rs
 use super::scheduler;
 use super::state::{AsyncRequest, CnState, CyclePhase, MnContext};
 use crate::frame::{
     ASndFrame, DllMsEvent, PResFrame, PowerlinkFrame, ServiceId,
-    error::{DllError, ErrorEntry, ErrorEntryMode, NmtAction, StaticErrorBitField},
+    error::{DllError, NmtAction},
+    control::{IdentResponsePayload, StatusResponsePayload},
 };
 use crate::nmt::NmtStateMachine;
 use crate::nmt::{events::NmtEvent, states::NmtState};
 use crate::node::PdoHandler;
-use crate::od::constants; // Import the new constants module
+use crate::od::constants;
 use crate::types::NodeId;
 use log::{debug, error, info, trace, warn};
 
@@ -43,6 +43,8 @@ pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, curr
                 cn_info.nmt_state = pres_frame.nmt_state;
                 cn_info.last_pres_time_us = current_time_us;
                 cn_info.dll_errors = 0; // Clear error count on successful PRes
+                // Update the CN's state in the MN's tracker
+                update_cn_state(context, pres_frame.source, pres_frame.nmt_state);
             }
 
             // Check if this PRes corresponds to the node we polled
@@ -174,29 +176,43 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
             if let Some(state) = current_cn_state {
                 // Only validate if the node is currently Unknown or Missing
                 if state == CnState::Unknown || state == CnState::Missing {
-                    // Perform BOOT_STEP1: CHECK_IDENTIFICATION, CHECK_SOFTWARE, CHECK_CONFIGURATION
-                    // This call now takes &context and does not conflict.
-                    if validate_boot_step1_checks(context, node_id, &frame.payload) {
-                        info!(
-                            "[MN] Node {} successfully identified and validated.",
-                            node_id.0
-                        );
-
-                        // Re-acquire mutable borrow to update state
-                        if let Some(info_mut) = context.node_info.get_mut(&node_id) {
-                            info_mut.state = CnState::Identified;
+                    // --- Refactored logic ---
+                    match IdentResponsePayload::deserialize(&frame.payload) {
+                        Ok(payload) => {
+                            if validate_boot_step1_checks(context, node_id, &payload) {
+                                info!(
+                                    "[MN] Node {} successfully identified and validated.",
+                                    node_id.0
+                                );
+                                // Re-acquire mutable borrow to update state
+                                if let Some(info_mut) = context.node_info.get_mut(&node_id) {
+                                    info_mut.state = CnState::Identified;
+                                    // Cache the identity info
+                                    info_mut.identity = Some(super::state::CnIdentity {
+                                        device_type: payload.device_type,
+                                        vendor_id: payload.vendor_id,
+                                        product_code: payload.product_code,
+                                        revision_no: payload.revision_number,
+                                        serial_no: payload.serial_number,
+                                    });
+                                }
+                                // Check if this identification allows the MN to transition
+                                scheduler::check_bootup_state(context);
+                            } else {
+                                info!(
+                                    "[MN] Node {} failed BOOT_STEP1 validation. Will remain in {:?} state.",
+                                    node_id.0, state
+                                );
+                            }
                         }
-
-                        // Check if this identification allows the MN to transition
-                        scheduler::check_bootup_state(context);
-                    } else {
-                        // Validation failed, errors already logged.
-                        // Node remains in Unknown/Missing state and will be polled again.
-                        info!(
-                            "[MN] Node {} failed BOOT_STEP1 validation. Will remain in {:?} state.",
-                            node_id.0, state
-                        );
+                        Err(e) => {
+                            error!(
+                                "[MN] Failed to deserialize IdentResponse from Node {}: {:?}",
+                                node_id.0, e
+                            );
+                        }
                     }
+                    // --- End of refactored logic ---
                 }
             } else {
                 warn!(
@@ -216,8 +232,34 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
                     "[MN] StatusResponse from Node {} processed. Updated EA flag to {}.",
                     node_id.0, info.ea_flag
                 );
-                // Process the actual error information in the StatusResponse payload.
-                process_status_response_payload(frame.source, &frame.payload);
+
+                // --- Refactored logic ---
+                match StatusResponsePayload::deserialize(&frame.payload) {
+                    Ok(payload) => {
+                        info!(
+                            "[MN] StatusResponse from Node {}: ErrorRegister = {:#04x}, SpecificErrors = {:02X?}",
+                            node_id.0,
+                            payload.static_error_bit_field.error_register,
+                            payload.static_error_bit_field.specific_errors
+                        );
+                        // Update the CN's state in the MN's tracker
+                        update_cn_state(context, node_id, payload.nmt_state);
+
+                        for entry in payload.error_entries {
+                            warn!(
+                                "[MN] StatusResponse from Node {}: Received Error/Event Entry: {:?}",
+                                node_id.0, entry
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            "[MN] Failed to deserialize StatusResponse from Node {}: {:?}",
+                            node_id.0, e
+                        );
+                    }
+                }
+                // --- End of refactored logic ---
             }
         }
         _ => {
@@ -232,47 +274,21 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
 /// Validates a CN's IdentResponse payload against the MN's OD configuration.
 /// (EPSG DS 301, Section 7.4.2.2.1.1, 7.4.2.2.1.2, 7.4.2.2.1.3)
 /// Returns true if all checks pass, false otherwise.
+/// This function is now private to this module and takes the deserialized payload struct.
 fn validate_boot_step1_checks(
     context: &MnContext, // <-- Takes immutable &MnContext
     node_id: NodeId,
-    payload: &[u8],
+    payload: &IdentResponsePayload,
 ) -> bool {
-    // Expected payload offsets from IdentResponse (Table 135)
-    const OFFSET_DEVICE_TYPE: usize = 22;
-    const OFFSET_VENDOR_ID: usize = 26;
-    const OFFSET_PRODUCT_CODE: usize = 30;
-    const OFFSET_REVISION_NO: usize = 34;
-    const OFFSET_VERIFY_CONF_DATE: usize = 50;
-    const OFFSET_VERIFY_CONF_TIME: usize = 54;
-    const OFFSET_APP_SW_DATE: usize = 58;
-    const OFFSET_APP_SW_TIME: usize = 62;
-    const MIN_PAYLOAD_LEN: usize = 66; // Need up to end of ApplicationSwTime
-
-    if payload.len() < MIN_PAYLOAD_LEN {
-        warn!(
-            "[MN] IdentResponse from Node {} is too short ({} bytes) for validation.",
-            node_id.0,
-            payload.len()
-        );
-        return false;
-    }
-
-    // Helper macro to read a U32 LE from a specific offset in the payload
-    macro_rules! read_payload_u32 {
-        ($offset:expr) => {
-            u32::from_le_bytes(payload[$offset..$offset + 4].try_into().unwrap_or_default())
-        };
-    }
-
-    // 1. Read received values from IdentResponse payload
-    let received_device_type = read_payload_u32!(OFFSET_DEVICE_TYPE);
-    let received_vendor_id = read_payload_u32!(OFFSET_VENDOR_ID);
-    let received_product_code = read_payload_u32!(OFFSET_PRODUCT_CODE);
-    let received_revision_no = read_payload_u32!(OFFSET_REVISION_NO);
-    let received_conf_date = read_payload_u32!(OFFSET_VERIFY_CONF_DATE);
-    let received_conf_time = read_payload_u32!(OFFSET_VERIFY_CONF_TIME);
-    let received_sw_date = read_payload_u32!(OFFSET_APP_SW_DATE);
-    let received_sw_time = read_payload_u32!(OFFSET_APP_SW_TIME);
+    // 1. Read received values from IdentResponse payload (already deserialized)
+    let received_device_type = payload.device_type;
+    let received_vendor_id = payload.vendor_id;
+    let received_product_code = payload.product_code;
+    let received_revision_no = payload.revision_number;
+    let received_conf_date = payload.verify_conf_date;
+    let received_conf_time = payload.verify_conf_time;
+    let received_sw_date = payload.app_sw_date;
+    let received_sw_time = payload.app_sw_time;
 
     // 2. Read expected values from MN's Object Dictionary
     // A value of 0 in the OD means "do not check"
@@ -416,76 +432,6 @@ fn validate_boot_step1_checks(
     // TODO: Add SerialNo check (0x1F88) as a warning-only check
 
     true
-}
-
-/// Parses and logs the contents of a StatusResponse payload.
-/// (Reference: EPSG DS 301, Section 7.3.3.3.1)
-fn process_status_response_payload(source_node: NodeId, payload: &[u8]) {
-    // The StatusResponse payload starts at offset 6 within the ASnd service slot.
-    if payload.len() < 6 {
-        warn!(
-            "[MN] Received StatusResponse from Node {} with invalid short payload ({} bytes).",
-            source_node.0,
-            payload.len()
-        );
-        return;
-    }
-    let status_payload = &payload[6..];
-
-    // 1. Parse Static Error Bit Field (first 8 bytes)
-    if status_payload.len() < 8 {
-        warn!(
-            "[MN] StatusResponse payload from Node {} is too short for Static Error Bit Field.",
-            source_node.0
-        );
-        return;
-    }
-    match StaticErrorBitField::deserialize(status_payload) {
-        Ok(field) => {
-            info!(
-                "[MN] StatusResponse from Node {}: ErrorRegister = {:#04x}, SpecificErrors = {:02X?}",
-                source_node.0, field.error_register, field.specific_errors
-            );
-        }
-        Err(e) => {
-            error!(
-                "[MN] Failed to parse StaticErrorBitField from Node {}: {:?}",
-                source_node.0, e
-            );
-            return;
-        }
-    }
-
-    // 2. Parse list of Error/Event History Entries (in 20-byte chunks)
-    let mut offset = 8;
-    while offset + 20 <= status_payload.len() {
-        let entry_slice = &status_payload[offset..offset + 20];
-        match ErrorEntry::deserialize(entry_slice) {
-            Ok(entry) => {
-                // The list is terminated by an entry with Mode = Terminator
-                if entry.entry_type.mode == ErrorEntryMode::Terminator {
-                    trace!(
-                        "[MN] End of StatusResponse error entries for Node {}.",
-                        source_node.0
-                    );
-                    break;
-                }
-                warn!(
-                    "[MN] StatusResponse from Node {}: Received Error/Event Entry: {:?}",
-                    source_node.0, entry
-                );
-                // In a real application, this entry would be processed or stored.
-                offset += 20;
-            }
-            Err(e) => {
-                error!(
-                    "[MN] Failed to parse ErrorEntry from Node {}: {:?}",
-                    source_node.0, e
-                );
-                break; // Stop parsing on error
-            }
-        }
-    }
 }
 
 /// Checks the flags in a received PRes frame for async requests and error signals.

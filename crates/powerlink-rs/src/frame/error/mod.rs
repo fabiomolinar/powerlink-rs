@@ -9,7 +9,7 @@ pub mod types;
 
 pub use counters::{CnErrorCounters, MnErrorCounters, ThresholdCounter};
 pub use manager::DllErrorManager;
-pub use status_response::{EntryType, ErrorEntry, ErrorEntryMode, StaticErrorBitField};
+pub use status_response::{EntryType, ErrorEntry, ErrorEntryMode};
 pub use traits::{ErrorCounters, ErrorHandler, LoggingErrorHandler};
 pub use types::{DllError, NmtAction};
 
