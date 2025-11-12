@@ -31,7 +31,7 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
     - `[x]` 6.3.2 Service Data Objects (SDO) via UDP/IP
     - `[x]` 6.4 Process Data Objects (PDO) (Mapping, validation, error handling)
     - `[x]` 6.5 Error Signaling (EN/EA/ER/EC flags, StatusResponse)
-    - `[ ]` 6.3.3 SDO Embedded in PDO
+    - `[x]` 6.3.3 SDO Embedded in PDO
     - `[ ]` 6.6 Program Download (PDL) (MN logic to send firmware via SDO is missing)
     - `[ ]` 6.7 Configuration Management (CFM) (MN logic to send configuration via SDO is missing)
   - **Chapter 7 (Network Management): 90%**
