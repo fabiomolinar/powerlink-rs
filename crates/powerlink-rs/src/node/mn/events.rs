@@ -6,6 +6,7 @@ use crate::frame::{
     error::{DllError, NmtAction},
 };
 use crate::nmt::NmtStateMachine;
+use crate::nmt::events::{MnNmtCommandRequest, NmtStateCommand};
 use crate::nmt::{events::NmtEvent, states::NmtState};
 use crate::node::PdoHandler;
 use crate::node::mn::state::NmtCommandData;
@@ -153,7 +154,7 @@ pub(super) fn handle_dll_event(
                     }
                     context
                         .pending_nmt_commands
-                        .push((crate::nmt::events::NmtCommand::ResetNode, node_id, NmtCommandData::None));
+                        .push((MnNmtCommandRequest::State(NmtStateCommand::ResetNode), node_id, NmtCommandData::None));
                 }
                 NmtAction::ResetCommunication => {
                     warn!("[MN] DLL Error threshold met. Requesting Communication Reset.");

@@ -24,7 +24,7 @@ use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::UdpTransport;
 use crate::sdo::transport::{AsndTransport, SdoTransport}; // Import trait
 use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoServer}; // Added embedded
-use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
+use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::collections::BinaryHeap;
 use alloc::vec::Vec;
 use log::{error, info, trace, warn};
@@ -39,7 +39,7 @@ use crate::types::IpAddress;
 // Import cycle functions
 use super::cycle; // Import the cycle module
 // --- NEW IMPORTS ---
-use crate::nmt::events::NmtCommand;
+use crate::nmt::events::{MnNmtCommandRequest, NmtManagingCommand, NmtStateCommand};
 use crate::node::mn::state::NmtCommandData;
 // --- END NEW IMPORTS ---
 
@@ -475,24 +475,26 @@ impl<'s> ManagingNode<'s> {
     /// Queues an NMT state command to be sent to a target CN or broadcast.
     ///
     /// # Arguments
-    /// * `command` - The NMT state command to send (e.g., `NmtCommand::StartNode`).
+    /// * `command` - The NMT state command to send (e.g., `NmtStateCommand::StartNode`).
     /// * `target` - The `NodeId` of the target CN, or `NodeId(C_ADR_BROADCAST_NODE_ID)` for broadcast.
-    pub fn queue_nmt_state_command(&mut self, command: NmtCommand, target: NodeId) {
+    pub fn queue_nmt_state_command(&mut self, command: NmtStateCommand, target: NodeId) {
         info!(
             "Queueing NMT State Command: {:?} for Node {}",
             command, target.0
         );
-        self.context
-            .pending_nmt_commands
-            .push((command, target, NmtCommandData::None));
+        self.context.pending_nmt_commands.push((
+            MnNmtCommandRequest::State(command),
+            target,
+            NmtCommandData::None,
+        ));
     }
 
     /// Queues an NMTNetHostNameSet command to be sent to a target CN.
     /// (Reference: EPSG DS 301, Section 7.3.2.1.1)
     ///
     /// # Arguments
-    /// * `target` - The `NodeId` of the target CN.
-    /// * `hostname` - The hostname to set (must be 32 chars or less).
+    /// * `target` - The `NodeId` of the target CN. Must be a unicast address.
+    /// * `hostname` - The hostname to set (max 32 bytes).
     pub fn set_hostname(
         &mut self,
         target: NodeId,
@@ -507,8 +509,13 @@ impl<'s> ManagingNode<'s> {
                 "Hostname exceeds 32 characters",
             ));
         }
+        if target.0 == C_ADR_BROADCAST_NODE_ID {
+            return Err(PowerlinkError::ValidationError(
+                "NmtNetHostNameSet must be unicast",
+            ));
+        }
         self.context.pending_nmt_commands.push((
-            NmtCommand::NmtNetHostNameSet,
+            MnNmtCommandRequest::Managing(NmtManagingCommand::NmtNetHostNameSet),
             target,
             NmtCommandData::HostName(hostname),
         ));
@@ -523,7 +530,7 @@ impl<'s> ManagingNode<'s> {
     pub fn flush_arp_entry(&mut self, target: NodeId) {
         info!("Queueing NMTFlushArpEntry for Node {}", target.0);
         self.context.pending_nmt_commands.push((
-            NmtCommand::NmtFlushArpEntry,
+            MnNmtCommandRequest::Managing(NmtManagingCommand::NmtFlushArpEntry),
             NodeId(crate::types::C_ADR_BROADCAST_NODE_ID), // Command is always broadcast
             NmtCommandData::FlushArp(target), // Payload contains the target to flush
         ));

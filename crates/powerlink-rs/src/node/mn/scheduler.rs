@@ -2,9 +2,10 @@
 use super::state::{CnInfo, CnState, MnContext};
 use crate::frame::basic::MacAddress;
 use crate::frame::{DllMsEvent, RequestedServiceId};
-use crate::nmt::events::{NmtCommand, NmtEvent};
+use crate::nmt::events::{MnNmtCommandRequest, NmtEvent, NmtStateCommand}; // Updated imports
 use crate::nmt::{NmtStateMachine, states::NmtState};
-use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId}; // Added IpAddress
+use crate::node::mn::state::NmtCommandData; // Import NmtCommandData
+use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use log::{debug, info, trace};
 use crate::node::mn::ip_from_node_id;
 
@@ -145,9 +146,9 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
                         node_id.0
                     );
                     context.pending_nmt_commands.push((
-                        NmtCommand::EnableReadyToOperate,
+                        MnNmtCommandRequest::State(NmtStateCommand::EnableReadyToOperate),
                         *node_id,
-                        crate::node::mn::state::NmtCommandData::None,
+                        NmtCommandData::None,
                     ));
                 }
             }

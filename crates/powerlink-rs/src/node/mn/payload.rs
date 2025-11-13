@@ -10,7 +10,7 @@ use crate::frame::{
     ASndFrame, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame,
 };
 use crate::nmt::NmtStateMachine;
-use crate::nmt::events::NmtCommand;
+use crate::nmt::events::MnNmtCommandRequest; // Import the new wrapper
 use crate::od::ObjectValue;
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId};
@@ -340,7 +340,7 @@ pub(super) fn build_soa_frame(
 /// Builds an ASnd(NMT Command) frame.
 pub(super) fn build_nmt_command_frame(
     context: &MnContext,
-    command: NmtCommand,
+    command: MnNmtCommandRequest,
     target_node_id: NodeId,
     command_data: NmtCommandData,
 ) -> PowerlinkFrame {
@@ -379,13 +379,13 @@ pub(super) fn build_nmt_command_frame(
     let nmt_payload = match command_data {
         NmtCommandData::None => {
             // Plain NMT State Command (2 bytes: CommandID + Reserved)
-            vec![command as u8, 0u8]
+            vec![command.as_u8(), 0u8]
         }
         NmtCommandData::HostName(hostname) => {
             // NMTNetHostNameSet (34 bytes: CommandID + Reserved + HostName[32])
             // (Reference: EPSG DS 301, Section 7.3.2.1.1, Table 130)
             let mut payload = Vec::with_capacity(34);
-            payload.push(command as u8); // NMTCommandID
+            payload.push(command.as_u8()); // NMTCommandID
             payload.push(0u8); // Reserved
             let hostname_bytes = hostname.as_bytes();
             let len = hostname_bytes.len().min(32);
@@ -396,7 +396,7 @@ pub(super) fn build_nmt_command_frame(
         NmtCommandData::FlushArp(flush_target_node) => {
             // NMTFlushArpEntry (3 bytes: CommandID + Reserved + NodeID)
             // (Reference: EPSG DS 301, Section 7.3.2.1.2, Table 132)
-            vec![command as u8, 0u8, flush_target_node.0]
+            vec![command.as_u8(), 0u8, flush_target_node.0]
         }
     };
     // --- End of Payload Build ---

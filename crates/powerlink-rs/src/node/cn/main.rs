@@ -6,7 +6,7 @@ use crate::frame::basic::MacAddress;
 use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler};
 use crate::frame::{DllError, NmtAction, ServiceId, deserialize_frame};
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
-use crate::nmt::events::{NmtCommand, NmtEvent};
+use crate::nmt::events::NmtEvent;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction};
@@ -21,7 +21,10 @@ use crate::sdo::{
 };
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
+// --- NEW/MODIFIED IMPORTS ---
+use crate::nmt::events::{CnNmtRequest, NmtServiceRequest, NmtStateCommand};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
+// --- END IMPORTS ---
 use alloc::collections::{BTreeMap, VecDeque}; // Import BTreeMap
 use alloc::vec::Vec;
 use log::{debug, error, info, warn};
@@ -137,14 +140,32 @@ impl<'s> ControlledNode<'s> {
             .queue_sdo_request(NodeId(C_ADR_MN_DEF_NODE_ID), payload);
     }
 
-    /// Allows the application to queue an NMT command request to be sent to the MN.
+    /// Allows the application to queue an NMT state command request to be sent to the MN.
     /// (Reference: EPSG DS 301, Section 7.3.6)
-    pub fn queue_nmt_request(&mut self, command: NmtCommand, target: NodeId) {
+    pub fn queue_nmt_request(&mut self, command: NmtStateCommand, target: NodeId) {
         info!(
-            "Queueing NMT request: Command={:?}, Target={}",
+            "Queueing NMT State Command request: Command={:?}, Target={}",
             command, target.0
         );
-        self.context.pending_nmt_requests.push((command, target));
+        self.context
+            .pending_nmt_requests
+            .push((CnNmtRequest::Command(command), target));
+    }
+
+    /// Internal helper to queue an NMT service request.
+    /// Used by NmtNetHostNameSet handler to request an IdentResponse.
+    pub(super) fn queue_nmt_service_request(
+        &mut self,
+        service: NmtServiceRequest,
+        target: NodeId,
+    ) {
+        info!(
+            "Queueing NMT Service request: Service={:?}, Target={}",
+            service, target.0
+        );
+        self.context
+            .pending_nmt_requests
+            .push((CnNmtRequest::Service(service), target));
     }
 
     /// Processes a POWERLINK Ethernet frame.
@@ -709,11 +730,11 @@ mod tests {
         assert!(node.context.pending_nmt_requests.is_empty());
 
         // Queue a request
-        node.queue_nmt_request(NmtCommand::ResetNode, NodeId(10));
+        node.queue_nmt_request(NmtStateCommand::ResetNode, NodeId(10));
         assert_eq!(node.context.pending_nmt_requests.len(), 1);
         assert_eq!(
             node.context.pending_nmt_requests[0],
-            (NmtCommand::ResetNode, NodeId(10))
+            (CnNmtRequest::Command(NmtStateCommand::ResetNode), NodeId(10))
         );
     }
 }

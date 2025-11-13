@@ -6,7 +6,7 @@ use crate::frame::error::{EntryType, ErrorEntry, ErrorEntryMode};
 use crate::frame::{
     ASndFrame, DllCsEvent, DllError, NmtAction, PowerlinkFrame, RequestedServiceId, ServiceId,
 };
-use crate::nmt::events::{NmtCommand, NmtEvent};
+use crate::nmt::events::{CnNmtRequest, NmtEvent};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, PdoHandler, serialize_frame_action};
@@ -14,7 +14,11 @@ use crate::od::constants; // Import the new constants module
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
-use alloc::string::String; // Import String
+// --- NEW/MODIFIED IMPORTS ---
+use crate::nmt::events::{NmtManagingCommand, NmtServiceRequest, NmtStateCommand};
+use crate::od::ObjectValue;
+use alloc::string::String;
+// --- END IMPORTS ---
 use alloc::vec::Vec; // Import Vec
 use log::{debug, error, info, trace, warn};
 
@@ -279,88 +283,71 @@ pub(super) fn process_frame(
         {
             // This is an NMT command for us.
             if let Some(cmd_id_byte) = asnd_frame.payload.first() {
-                match NmtCommand::try_from(*cmd_id_byte) {
-                    // --- NMT State Commands ---
-                    Ok(cmd @ (NmtCommand::StartNode
-                    | NmtCommand::StopNode
-                    | NmtCommand::EnterPreOperational2
-                    | NmtCommand::EnableReadyToOperate
-                    | NmtCommand::ResetNode
-                    | NmtCommand::ResetCommunication
-                    | NmtCommand::ResetConfiguration
-                    | NmtCommand::SwReset)) => {
-                        // This is a state transition event
-                        nmt_event = Some(match cmd {
-                            NmtCommand::StartNode => NmtEvent::StartNode,
-                            NmtCommand::StopNode => NmtEvent::StopNode,
-                            NmtCommand::EnterPreOperational2 => NmtEvent::EnterPreOperational2,
-                            NmtCommand::EnableReadyToOperate => NmtEvent::EnableReadyToOperate,
-                            NmtCommand::ResetNode => NmtEvent::ResetNode,
-                            NmtCommand::ResetCommunication => NmtEvent::ResetCommunication,
-                            NmtCommand::ResetConfiguration => NmtEvent::ResetConfiguration,
-                            NmtCommand::SwReset => NmtEvent::SwReset,
-                            _ => unreachable!(),
-                        });
-                    }
+                // First, try to parse as an NMT State Command
+                if let Ok(cmd) = NmtStateCommand::try_from(*cmd_id_byte) {
+                    // This is a state transition event
+                    nmt_event = Some(match cmd {
+                        NmtStateCommand::StartNode => NmtEvent::StartNode,
+                        NmtStateCommand::StopNode => NmtEvent::StopNode,
+                        NmtStateCommand::EnterPreOperational2 => NmtEvent::EnterPreOperational2,
+                        NmtStateCommand::EnableReadyToOperate => NmtEvent::EnableReadyToOperate,
+                        NmtStateCommand::ResetNode => NmtEvent::ResetNode,
+                        NmtStateCommand::ResetCommunication => NmtEvent::ResetCommunication,
+                        NmtStateCommand::ResetConfiguration => NmtEvent::ResetConfiguration,
+                        NmtStateCommand::SwReset => NmtEvent::SwReset,
+                    });
+                // If not a state command, try to parse as an NMT Managing Command
+                } else if let Ok(cmd) = NmtManagingCommand::try_from(*cmd_id_byte) {
+                    match cmd {
+                        NmtManagingCommand::NmtNetHostNameSet => {
+                            // Spec 7.3.2.1.1 & Table 130
+                            // Payload is [CmdID(1), Reserved(1), HostName(32)]
+                            if asnd_frame.payload.len() >= 34 {
+                                let hostname_bytes = &asnd_frame.payload[2..34];
+                                // Find end of string (null terminator or end of slice)
+                                let len = hostname_bytes.iter().position(|&b| b == 0).unwrap_or(32);
+                                match String::from_utf8(hostname_bytes[..len].to_vec()) {
+                                    Ok(hostname) => {
+                                        info!("[CN] Received NmtNetHostNameSet: '{}'", hostname);
+                                        // Write to OD 0x1F9A
+                                        if let Err(e) = context.core.od.write_internal(
+                                            constants::IDX_NMT_HOST_NAME_VSTR, // 0x1F9A
+                                            0,
+                                            ObjectValue::VisibleString(hostname),
+                                            false, // Bypass access checks for internal write
+                                        ) {
+                                            error!("[CN] Failed to write new hostname to OD: {:?}", e);
+                                        }
 
-                    // --- NMT Managing Commands ---
-                    Ok(NmtCommand::NmtNetHostNameSet) => {
-                        // Spec 7.3.2.1.1 & Table 130
-                        // Payload is [CmdID(1), Reserved(1), HostName(32)]
-                        if asnd_frame.payload.len() >= 34 {
-                            let hostname_bytes = &asnd_frame.payload[2..34];
-                            // Find end of string (null terminator or end of slice)
-                            let len = hostname_bytes.iter().position(|&b| b == 0).unwrap_or(32);
-                            match String::from_utf8(hostname_bytes[..len].to_vec()) {
-                                Ok(hostname) => {
-                                    info!("[CN] Received NmtNetHostNameSet: '{}'", hostname);
-                                    // Write to OD 0x1F9A
-                                    if let Err(e) = context.core.od.write_internal(
-                                        constants::IDX_NMT_HOST_NAME_VSTR, // 0x1F9A
-                                        0,
-                                        crate::od::ObjectValue::VisibleString(hostname),
-                                        false, // Bypass access checks for internal write
-                                    ) {
-                                        error!("[CN] Failed to write new hostname to OD: {:?}", e);
+                                        // Spec: "CN requests an IdentRequest to itself"
+                                        info!("[CN] NmtNetHostNameSet: Queueing IdentRequest service.");
+                                        context.pending_nmt_requests.push((
+                                            CnNmtRequest::Service(NmtServiceRequest::IdentRequest),
+                                            context.nmt_state_machine.node_id,
+                                        ));
                                     }
-
-                                    // Spec: "CN requests an IdentRequest to itself"
-                                    // This means queuing an NMTRequest with NMTRequestedCommandID = IDENT_REQUEST (0x01)
-                                    // TODO: Refactor `pending_nmt_requests` to hold u8, not NmtCommand.
-                                    warn!("[CN] NMTNetHostNameSet: Cannot queue IdentRequest. `pending_nmt_requests` must be refactored.");
-                                    // Example of what should happen:
-                                    // context.pending_nmt_requests.push((
-                                    //     0x01, // This is RequestedServiceId::IdentRequest
-                                    //     context.nmt_state_machine.node_id,
-                                    // ));
+                                    Err(e) => {
+                                        error!("[CN] Failed to parse hostname from NmtNetHostNameSet: {:?}", e);
+                                    }
                                 }
-                                Err(e) => {
-                                    error!("[CN] Failed to parse hostname from NmtNetHostNameSet: {:?}", e);
-                                }
+                            } else {
+                                warn!("[CN] Received NmtNetHostNameSet with invalid payload length ({} bytes)", asnd_frame.payload.len());
                             }
-                        } else {
-                            warn!("[CN] Received NmtNetHostNameSet with invalid payload length ({} bytes)", asnd_frame.payload.len());
+                        }
+                        NmtManagingCommand::NmtFlushArpEntry => {
+                            // Spec 7.3.2.1.2 & Table 132
+                            // Payload is [CmdID(1), Reserved(1), NodeID(1)]
+                            if asnd_frame.payload.len() >= 3 {
+                                let node_to_flush = asnd_frame.payload[2];
+                                info!("[CN] Received NmtFlushArpEntry for Node ID {}. (ARP cache not yet implemented).", node_to_flush);
+                                // TODO: Add call to cn.arp_cache.flush(node_to_flush)
+                            } else {
+                                warn!("[CN] Received NmtFlushArpEntry with invalid payload length ({} bytes)", asnd_frame.payload.len());
+                            }
                         }
                     }
-                    Ok(NmtCommand::NmtFlushArpEntry) => {
-                        // Spec 7.3.2.1.2 & Table 132
-                        // Payload is [CmdID(1), Reserved(1), NodeID(1)]
-                        if asnd_frame.payload.len() >= 3 {
-                            let node_to_flush = asnd_frame.payload[2];
-                            info!("[CN] Received NmtFlushArpEntry for Node ID {}. (ARP cache not yet implemented).", node_to_flush);
-                            // TODO: Add call to cn.arp_cache.flush(node_to_flush)
-                        } else {
-                            warn!("[CN] Received NmtFlushArpEntry with invalid payload length ({} bytes)", asnd_frame.payload.len());
-                        }
-                    }
-
-                    // --- Unknown/Other Commands ---
-                    Ok(_) => {
-                        warn!("Received unhandled NMT Command: {:?}", cmd_id_byte);
-                    }
-                    Err(_) => {
-                        warn!("Received unknown NMT Command ID: {:#04x}", cmd_id_byte);
-                    }
+                } else {
+                    warn!("Received unknown NMT Command ID: {:#04x}", cmd_id_byte);
                 }
             }
         }
@@ -552,7 +539,7 @@ pub(super) fn process_frame(
                                 ))
                             }
                             RequestedServiceId::NmtRequestInvite => {
-                                context.pending_nmt_requests.pop().map(|(cmd, tgt)| {
+                                context.pending_nmt_requests.pop().map(|(cmd_type, tgt)| {
                                     // *** INCREMENT ASYNC TX COUNTER ***
                                     context.core.od.increment_counter(
                                         constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
@@ -561,7 +548,7 @@ pub(super) fn process_frame(
                                     payload::build_nmt_request(
                                         context.core.mac_address,
                                         context.nmt_state_machine.node_id,
-                                        cmd,
+                                        cmd_type.as_u8(), // Send the raw u8 ID
                                         tgt,
                                         soa_frame,
                                     )

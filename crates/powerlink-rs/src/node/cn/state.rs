@@ -5,7 +5,7 @@ use crate::frame::error::{
     CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler,
 };
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
-use crate::nmt::events::NmtCommand;
+use crate::nmt::events::CnNmtRequest;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
 use crate::od::{ObjectValue, constants};
 use crate::pdo::{PDOVersion, PdoMappingEntry, error::PdoError};
@@ -31,7 +31,7 @@ pub struct CnContext<'s> {
     #[cfg(feature = "sdo-udp")]
     pub udp_transport: UdpTransport,
     /// Queue for NMT commands this CN wants the MN to execute.
-    pub pending_nmt_requests: Vec<(NmtCommand, NodeId)>,
+    pub pending_nmt_requests: Vec<(CnNmtRequest, NodeId)>,
     /// Queue for detailed error/event entries to be reported in StatusResponse.
     pub emergency_queue: VecDeque<ErrorEntry>,
     /// Map of nodes to monitor via heartbeat, mapping NodeId -> (Timeout in us, LastSeen time in us).

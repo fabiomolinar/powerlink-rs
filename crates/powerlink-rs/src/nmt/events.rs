@@ -1,11 +1,11 @@
 // crates/powerlink-rs/src/nmt/events.rs
 use crate::PowerlinkError;
 
-/// Defines NMT Command IDs used in NMT Command frames.
-/// (Reference: EPSG DS 301, Appendix 3.7)
+/// Defines NMT State Command IDs used in ASnd(NMT_COMMAND) frames.
+/// (Reference: EPSG DS 301, Appendix 3.7, 0x20-0x3F)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum NmtCommand {
+pub enum NmtStateCommand {
     StartNode = 0x21,
     StopNode = 0x22,
     EnterPreOperational2 = 0x23,
@@ -14,13 +14,9 @@ pub enum NmtCommand {
     ResetCommunication = 0x29,
     ResetConfiguration = 0x2A,
     SwReset = 0x2B,
-    // NMT Managing Commands (Spec 7.3.2)
-    NmtNetHostNameSet = 0x62,
-    NmtFlushArpEntry = 0x63,
-    // Extended commands (require parsing Node List in payload) are not included here for simplicity
 }
 
-impl TryFrom<u8> for NmtCommand {
+impl TryFrom<u8> for NmtStateCommand {
     type Error = PowerlinkError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
@@ -33,10 +29,87 @@ impl TryFrom<u8> for NmtCommand {
             0x29 => Ok(Self::ResetCommunication),
             0x2A => Ok(Self::ResetConfiguration),
             0x2B => Ok(Self::SwReset),
-            // NMT Managing Commands
+            _ => Err(PowerlinkError::InvalidEnumValue),
+        }
+    }
+}
+
+/// Defines NMT Managing Command IDs used in ASnd(NMT_COMMAND) frames.
+/// (Reference: EPSG DS 301, Appendix 3.7, 0x60-0x7F)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NmtManagingCommand {
+    NmtNetHostNameSet = 0x62,
+    NmtFlushArpEntry = 0x63,
+}
+
+impl TryFrom<u8> for NmtManagingCommand {
+    type Error = PowerlinkError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
             0x62 => Ok(Self::NmtNetHostNameSet),
             0x63 => Ok(Self::NmtFlushArpEntry),
             _ => Err(PowerlinkError::InvalidEnumValue),
+        }
+    }
+}
+
+/// Defines NMT Service IDs that a CN can request via ASnd(NMT_REQUEST).
+/// (Reference: EPSG DS 301, Table 145)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum NmtServiceRequest {
+    IdentRequest = 0x01,
+    StatusRequest = 0x02,
+}
+
+impl TryFrom<u8> for NmtServiceRequest {
+    type Error = PowerlinkError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(Self::IdentRequest),
+            0x02 => Ok(Self::StatusRequest),
+            _ => Err(PowerlinkError::InvalidEnumValue),
+        }
+    }
+}
+
+/// Represents a command or service that a CN can queue to be sent to the MN
+/// via an `ASnd(NMT_REQUEST)` frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CnNmtRequest {
+    Command(NmtStateCommand),
+    Service(NmtServiceRequest),
+}
+
+impl CnNmtRequest {
+    /// Returns the raw u8 ID for this command or service,
+    /// to be used in the `NMTRequestedCommandID` field of an NMTRequest frame.
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            CnNmtRequest::Command(cmd) => *cmd as u8,
+            CnNmtRequest::Service(srv) => *srv as u8,
+        }
+    }
+}
+
+/// Represents a command that the MN can queue to be sent
+/// via an `ASnd(NMT_COMMAND)` frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MnNmtCommandRequest {
+    State(NmtStateCommand),
+    Managing(NmtManagingCommand),
+}
+
+impl MnNmtCommandRequest {
+    /// Returns the raw u8 ID for this command,
+    /// to be used in the `NMTCommandID` field of an NMTCommand frame.
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            MnNmtCommandRequest::State(cmd) => *cmd as u8,
+            MnNmtCommandRequest::Managing(cmd) => *cmd as u8,
         }
     }
 }

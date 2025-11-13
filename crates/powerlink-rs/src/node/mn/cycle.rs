@@ -3,7 +3,7 @@ use super::state::{CnInfo, CyclePhase, MnContext};
 use crate::PowerlinkError;
 use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId};
 use crate::nmt::NmtStateMachine;
-use crate::nmt::events::NmtCommand;
+use crate::nmt::events::{MnNmtCommandRequest, NmtStateCommand}; // Updated imports
 use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::{Object, ObjectDictionary, ObjectValue, constants};
@@ -243,7 +243,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             return serialize_frame_action(
                 payload::build_nmt_command_frame(
                     context,
-                    NmtCommand::StartNode,
+                    MnNmtCommandRequest::State(NmtStateCommand::StartNode),
                     NodeId(C_ADR_BROADCAST_NODE_ID),
                     NmtCommandData::None,
                 ),
@@ -257,7 +257,11 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             info!("[MN] Queuing NMTStartNode (Unicast).");
             context
                 .pending_nmt_commands
-                .push((NmtCommand::StartNode, node_id, NmtCommandData::None));
+                .push((
+                    MnNmtCommandRequest::State(NmtStateCommand::StartNode),
+                    node_id,
+                    NmtCommandData::None,
+                ));
         }
     } else if current_nmt_state < NmtState::NmtOperational {
         context.initial_operational_actions_done = false;
@@ -271,7 +275,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             // This logic was missing.
             context.current_phase = CyclePhase::Idle; // Consume the phase
 
-            if let Some((command, target_node_id, command_data)) =
+            if let Some((command_req, target_node_id, command_data)) =
                 context.pending_nmt_commands.pop()
             {
                 // *** INCREMENT ASYNC TX COUNTER (NMT Command) ***
@@ -280,7 +284,12 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                     constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
                 );
                 return serialize_frame_action(
-                    payload::build_nmt_command_frame(context, command, target_node_id, command_data),
+                    payload::build_nmt_command_frame(
+                        context,
+                        command_req,
+                        target_node_id,
+                        command_data,
+                    ),
                     context,
                 )
                 .unwrap_or(NodeAction::NoAction);

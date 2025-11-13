@@ -1,9 +1,8 @@
 use crate::ErrorHandler;
-use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
-use crate::nmt::events::NmtCommand; // Import NmtCommand
+use crate::nmt::events::MnNmtCommandRequest;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
@@ -61,8 +60,8 @@ pub struct MnContext<'s> {
     pub pending_er_requests: Vec<NodeId>,
     pub pending_status_requests: Vec<NodeId>,
     /// Queue for NMT commands (State and Managing) to be sent by the MN.
-    /// (Target Node ID, NMT Command ID, Command-specific Data)
-    pub pending_nmt_commands: Vec<(NmtCommand, NodeId, NmtCommandData)>,
+    /// (Command Type, Target Node ID, Command-specific Data)
+    pub pending_nmt_commands: Vec<(MnNmtCommandRequest, NodeId, NmtCommandData)>,
     pub mn_async_send_queue: Vec<PowerlinkFrame>,
     /// Manages all stateful SDO client (outgoing) connections.
     pub sdo_client_manager: SdoClientManager,

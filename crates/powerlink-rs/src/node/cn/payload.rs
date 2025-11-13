@@ -1,10 +1,11 @@
+// crates/powerlink-rs/src/node/cn/payload.rs
 use crate::frame::basic::MacAddress;
 use crate::frame::control::{IdentResponsePayload, StaticErrorBitField, StatusResponsePayload};
 use crate::frame::error::ErrorEntry;
 use crate::frame::poll::{PResFlags, RSFlag};
 use crate::frame::{ASndFrame, PResFrame, PowerlinkFrame, ServiceId};
 use crate::nmt::NmtStateMachine;
-use crate::nmt::events::NmtCommand;
+use crate::nmt::events::CnNmtRequest; // Import CnNmtRequest
 use crate::nmt::states::NmtState;
 use crate::od::constants;
 use crate::pdo::PDOVersion;
@@ -26,7 +27,7 @@ pub(super) fn build_ident_response(
     od: &ObjectDictionary,
     soa: &crate::frame::SoAFrame,
     sdo_client: &SdoClient,
-    pending_nmt_requests: &[(NmtCommand, NodeId)],
+    pending_nmt_requests: &[(CnNmtRequest, NodeId)], // Updated type
 ) -> PowerlinkFrame {
     debug!("Building IdentResponse for SoA from node {}", soa.source.0);
 
@@ -35,6 +36,7 @@ pub(super) fn build_ident_response(
 
     // Set PR/RS flags based on pending requests
     let (rs_count, pr_flag) = if !pending_nmt_requests.is_empty() {
+        // NMT requests (Commands or Services) always have the highest priority
         (
             pending_nmt_requests.len().min(7) as u8,
             crate::frame::PRFlag::PrioNmtRequest,
@@ -78,7 +80,7 @@ pub(super) fn build_status_response(
     emergency_queue: &mut VecDeque<ErrorEntry>,
     soa: &crate::frame::SoAFrame,
     sdo_client: &SdoClient,
-    pending_nmt_requests: &[(NmtCommand, NodeId)],
+    pending_nmt_requests: &[(CnNmtRequest, NodeId)], // Updated type
 ) -> PowerlinkFrame {
     debug!("Building StatusResponse for SoA from node {}", soa.source.0);
 
@@ -92,6 +94,7 @@ pub(super) fn build_status_response(
 
     // Set PR/RS flags
     let (rs_count, pr_flag) = if !pending_nmt_requests.is_empty() {
+        // NMT requests (Commands or Services) always have the highest priority
         (
             pending_nmt_requests.len().min(7) as u8,
             crate::frame::PRFlag::PrioNmtRequest,
@@ -169,19 +172,19 @@ pub(super) fn build_status_response(
 pub(super) fn build_nmt_request(
     mac_address: MacAddress,
     node_id: NodeId,
-    command: NmtCommand,
+    command_id: u8, // Updated type to u8
     target: NodeId,
     soa: &crate::frame::SoAFrame,
 ) -> PowerlinkFrame {
     debug!(
-        "Building NMTRequest(Command={:?}, Target={}) for SoA from node {}",
-        command, target.0, soa.source.0
+        "Building NMTRequest(CommandID={:#04x}, Target={}) for SoA from node {}",
+        command_id, target.0, soa.source.0
     );
     // Payload format from Spec Table 144
     let payload = vec![
-        command as u8, // NMTRequestedCommandID
+        command_id,    // NMTRequestedCommandID
         target.0,      // NMTRequestedCommandTarget
-                       // NMTRequestedCommandData is omitted for plain commands
+                       // NMTRequestedCommandData is omitted for plain commands/services
     ];
 
     let asnd = ASndFrame::new(
