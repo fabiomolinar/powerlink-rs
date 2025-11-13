@@ -8,6 +8,9 @@ The project utilizes a Rust **workspace** to achieve clear separation between th
 
 1. **The Core Crate (`powerlink-rs`):** This is defined as the **"Platform-agnostic core logic for Ethernet POWERLINK Rust implementation"**. It contains the fundamental protocol state machines and data structures necessary to implement the standard (e.g., NMT cycle logic, frame parsing/generation). It is set as the default member of the workspace.
 2. **I/O Driver Crates (`powerlink-rs-*`):** These separate crates handle the low-level, raw Ethernet input/output (I/O) for different operating systems and embedded environments. Current planned drivers include `powerlink-rs-linux`, `powerlink-rs-windows`, and `powerlink-rs-embedded`.
+3. **Utility Crates (`powerlink-rs-*`):** These are optional, helper crates that provide specific functionality.
+    * **`powerlink-rs-monitor`:** Provides a web-based diagnostic GUI.
+    * **`powerlink-rs-xdc`:** A `no_std` + `alloc` crate for parsing XDC (XML Device Configuration) files. This is used by applications to load configuration data, which is then passed to the `ManagingNode` to perform Configuration Management (CFM).
 
 ## Resource Management and Portability (The `no_std` Core)
 
@@ -40,6 +43,7 @@ The core implementation mirrors the functional layers defined in the EPSG DS 301
 | **Network Management (NMT)** | Modules implementing the Network Management state machines (MN and CN states, e.g., `NMT_CS_NOT_ACTIVE` to `NMT_CS_OPERATIONAL`) and handling configuration objects. |
 | **Service Data Objects (SDO)** | Modules implementing non-real-time data exchange (client/server model). **The core crate implements *mandatory* SDO commands (e.g., `ReadByIndex`, `WriteByIndex`) and the `SdoClientManager` for segmented transfers**. *Optional* SDO commands are handled by the `SdoCommandHandler` trait. High-level features like **Program Download (PDL)** are considered application-level tasks; the crate provides the SDO mechanism (e.g., `mn.write_object(0x1F50, ...)`), while the application provides the firmware data and the "intent" to download. |
 | **Process Data Objects (PDO)** | Modules handling real-time, cyclic data exchange (Producer/Consumer model) carried within PReq and PRes frames. |
+| **Configuration Management (CFM)** | This is a hybrid. The **application** (using the `powerlink-rs-xdc` crate) is responsible for parsing the XDC file and providing the binary configuration data. The **`powerlink-rs` core crate** implements the *engine* that automatically detects a configuration mismatch (via `IdentResponse`) and triggers the SDO download of this data as part of the MN boot-up sequence. |
 
 ## Diagnostics and Monitoring (`powerlink-rs-monitor`)
 

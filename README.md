@@ -34,7 +34,7 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
     - `[x]` 6.3.3 SDO Embedded in PDO
     - `[~]` Optional SDO Commands (`WriteAllByIndex`, `WriteMultipleParamByIndex`, etc.) are *not* implemented in the core, but are supported via the `SdoCommandHandler` trait for applications to implement.
     - `[~]` 6.6 Program Download (PDL) (Considered an application-level task. The crate provides the SDO mechanism (segmented `WriteByIndex` to 0x1F50) for the application to use.)
-    - `[ ]` 6.7 Configuration Management (CFM) (MN logic to send configuration via SDO is missing)
+    - `[ ]` 6.7 Configuration Management (CFM) (MN logic to send configuration via SDO is missing. The `powerlink-rs-xdc` crate will provide the parsing logic for this.)
   - **Chapter 7 (Network Management): 100%**
     - `[x]` 7.1 NMT State Machines (Common, MN, CN)
     - `[x]` 7.3.1 NMT State Command Services (StartNode, StopNode, Resets)
@@ -119,7 +119,7 @@ To aid in debugging these complex integration tests, a dedicated `powerlink-rs-m
   - Status: **In development**. The immediate focus is on expanding the Docker-based integration tests to validate the full boot-up sequence, PDO exchange, and error handling.
 - Future (post DS-301):
   - Microcontroller Support: Implement a `no_std` I/O module targeting a specific embedded MAC/PHY driver using the traits defined in Phase 4.
-  - Configuration Files: Implement parsers for the `XML` Device Description (`XDD`) and `XML` Device Configuration (`XDC`) files (defined by EPSG DS-311).
+  - Configuration Files: Implement parsers for the `XML` Device Description (`XDD`) and `XML` Device Configuration (`XDC`) files (defined by EPSG DS-311). This is supported by the `powerlink-rs-xdc` crate.
   - Extensions (DS-302 Series): Add support for non-mandatory features defined in extension specifications, such as:
     - High Availability (EPSG DS-302-A).
     - Multiple-ASnd (EPSG DS-302-B).
@@ -141,4 +141,4 @@ A copy of the License is provided: [link to copy of the license](LICENSE).
 
 **ALL USERS ARE REQUIRED TO READ AND UNDERSTAND THE FULL DISCLAIMER BEFORE USING THIS CODE.**
 
--> **[View Full Disclaimer and Patent Notice (`DISCLAIMER.md`)](DISCLAIMER.md)```
+-> **[View Full Disclaimer and Patent Notice (`DISCLAIMER.md`)](DISCLAIMER.md).
