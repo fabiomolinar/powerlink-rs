@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/cn/main.rs
 use super::events;
 use super::state::CnContext;
 use crate::PowerlinkError;
@@ -10,22 +9,20 @@ use crate::nmt::events::NmtEvent;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction};
-use crate::od::{Object, ObjectDictionary, ObjectValue, constants}; // Import constants
+use crate::od::{Object, ObjectDictionary, ObjectValue, constants};
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
-use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer}; // Added embedded
+use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::{
     server::SdoClientInfo, transport::SdoTransport, udp::deserialize_sdo_udp_payload,
 };
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
-// --- NEW/MODIFIED IMPORTS ---
 use crate::nmt::events::{CnNmtRequest, NmtStateCommand};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
-// --- END IMPORTS ---
-use alloc::collections::{BTreeMap, VecDeque}; // Import BTreeMap
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use log::{debug, error, info, warn};
 
