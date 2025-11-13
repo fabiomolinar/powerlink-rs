@@ -2,6 +2,15 @@
 
 #![no_std]
 #![doc = "Parses and generates POWERLINK XDC (XML Device Configuration) files."]
+#![doc = ""]
+#![doc = "This `no_std + alloc` library provides type-safe parsing and serialization"]
+#![doc = "for POWERLINK XDC files, focusing on the CFM (Configuration Manager)"]
+#![doc = "data required by a Managing Node."]
+#![doc = ""]
+#![doc = "It supports:"]
+#![doc = "- `load_xdc_from_str`: Parsing `actualValue` attributes from an XDC."]
+#![doc = "- `load_xdd_defaults_from_str`: Parsing `defaultValue` attributes from an XDD."]
+#![doc = "- `save_xdc_to_string`: Serializing configuration data back into a minimal XDC string."]
 
 extern crate alloc;
 
@@ -16,9 +25,17 @@ use core::fmt::Write;
 // Need this for `from_str_radix`
 use core::num::ParseIntError;
 
+// Import quick_xml types needed for manual serialization
+use quick_xml::events::{BytesDecl, BytesStart, Event};
+use quick_xml::Writer;
+
 // Import our internal XML model definitions
 mod model;
-use model::{Iso15745ProfileContainer, SubObject};
+// Import all model structs, as we use most of them in save_xdc_to_string
+use model::{
+    ApplicationLayers, Iso15745Profile, Iso15745ProfileContainer, Object, ObjectList, ProfileBody,
+    ProfileHeader, SubObject,
+};
 
 // --- Public Data Structures ---
 
@@ -39,25 +56,49 @@ pub struct CfmObject {
     pub index: u16,
     /// The Object Dictionary sub-index (e.g., 0x01).
     pub sub_index: u8,
-    /// The raw binary data from the `actualValue` attribute.
+    /// The raw binary data from the `actualValue` or `defaultValue` attribute.
     pub data: Vec<u8>,
 }
 
 // --- Public API Functions ---
 
-/// Parses an XML string slice and extracts CFM object data.
+/// Parses an XDC (XML Device Configuration) string slice and extracts CFM object data
+/// from `actualValue` attributes.
 ///
-/// This function deserializes the XDC XML, navigates to the ObjectList,
-/// finds relevant CFM objects, and parses their `actualValue`
-/// hex strings into binary.
+/// This function is used to load a device's final configuration.
 ///
 /// # Arguments
 /// * `xml_content` - A string slice containing the full XDC XML file.
 ///
 /// # Errors
 /// Returns an `XdcError` if parsing fails, hex conversion fails, or
-/// critical objects are missing.
+/// critical elements are missing.
 pub fn load_xdc_from_str(xml_content: &str) -> Result<CfmData, XdcError> {
+    load_from_str_internal(xml_content, |so| so.actual_value.as_ref())
+}
+
+/// Parses an XDD (XML Device Description) string slice and extracts CFM object data
+/// from `defaultValue` attributes.
+///
+/// This function is used to load the default factory configuration from
+/// a device description file.
+///
+/// # Arguments
+/// * `xml_content` - A string slice containing the full XDD XML file.
+///
+/// # Errors
+/// Returns an `XdcError` if parsing fails, hex conversion fails, or
+/// critical elements are missing.
+pub fn load_xdd_defaults_from_str(xml_content: &str) -> Result<CfmData, XdcError> {
+    load_from_str_internal(xml_content, |so| so.default_value.as_ref())
+}
+
+/// Internal parsing logic that accepts a closure to select the correct
+/// attribute (`actualValue` or `defaultValue`).
+fn load_from_str_internal(
+    xml_content: &str,
+    value_selector: impl Fn(&SubObject) -> Option<&String>,
+) -> Result<CfmData, XdcError> {
     // 1. Deserialize the raw XML string into our internal model.
     let container: Iso15745ProfileContainer = quick_xml::de::from_str(xml_content)?;
 
@@ -118,9 +159,9 @@ pub fn load_xdc_from_str(xml_content: &str) -> Result<CfmData, XdcError> {
                 continue;
             }
 
-            // We only care about sub-objects that have an `actualValue`.
-            if let Some(actual_value) = &sub_object.actual_value {
-                let data = parse_hex_string(actual_value)?;
+            // We only care about sub-objects that have a value from the selector.
+            if let Some(value_str) = value_selector(sub_object) {
+                let data = parse_hex_string(value_str)?;
 
                 objects.push(CfmObject {
                     index,
@@ -140,11 +181,14 @@ pub fn load_xdc_from_str(xml_content: &str) -> Result<CfmData, XdcError> {
 /// populates the `ObjectList` from the `CfmData`, formats the binary data
 /// back into hex strings, and serializes it to an XML string.
 ///
+/// This function only serializes to `actualValue` attributes, as is standard
+/// for an XDC file.
+///
 /// # Arguments
 /// * `data` - The binary-ready `CfmData` to serialize.
 ///
 /// # Errors
-/// Returns an `XdcError` if serialization fails.
+/// Returns an `XdcError` if serialization fails or string formatting fails.
 pub fn save_xdc_to_string(data: &CfmData) -> Result<String, XdcError> {
     // 1. Group CfmObjects by their index to build model::Object structs.
     // We use a BTreeMap to keep the objects sorted by index in the final XML.
@@ -155,6 +199,7 @@ pub fn save_xdc_to_string(data: &CfmData) -> Result<String, XdcError> {
         let sub_object = model::SubObject {
             sub_index: format_hex_u8(cfm_obj.sub_index), // e.g., "01"
             actual_value: Some(format_hex_string(&cfm_obj.data)?), // e.g., "0x01020304"
+            default_value: None, // We only write actualValue for XDCs
         };
 
         // Get or create the parent Vec<SubObject>
@@ -293,7 +338,7 @@ pub enum XdcError {
     /// An error from the underlying `quick-xml` serializer.
     XmlWriting(quick_xml::Error),
 
-    /// The `actualValue` attribute contained invalid hex.
+    /// The `actualValue` or `defaultValue` attribute contained invalid hex.
     HexParsing(hex::FromHexError),
 
     /// An error occurred during string formatting.

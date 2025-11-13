@@ -87,7 +87,10 @@ pub struct SubObject {
     pub sub_index: String,
     
     /// The `actualValue` is the key data for an XDC file.
-    /// It is optional because some SubObjects may not have it.
     #[serde(rename = "@actualValue", default, skip_serializing_if = "Option::is_none")]
     pub actual_value: Option<String>,
+    
+    /// The `defaultValue` is the key data for an XDD file.
+    #[serde(rename = "@defaultValue", default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<String>,
 }
