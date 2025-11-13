@@ -9,14 +9,10 @@ use crate::nmt::NmtStateMachine;
 use crate::nmt::{events::NmtEvent, states::NmtState};
 use crate::node::PdoHandler;
 use crate::od::constants;
-use crate::types::{IpAddress, NodeId}; // Import IpAddress
+use crate::types::NodeId;
+use crate::node::mn::ip_from_node_id;
 use log::{debug, error, info, trace, warn};
 
-/// Helper to derive a CN's IP Address from its Node ID.
-/// (Per EPSG DS 301, Section 5.1.2)
-fn ip_from_node_id(node_id: NodeId) -> IpAddress {
-    [192, 168, 100, node_id.0]
-}
 
 /// Processes a `PowerlinkFrame` after it has been identified as
 /// non-SDO or not for the MN. This handles NMT state changes and

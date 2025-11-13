@@ -4,14 +4,9 @@ use crate::frame::basic::MacAddress;
 use crate::frame::{DllMsEvent, RequestedServiceId};
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::{NmtStateMachine, states::NmtState};
-use crate::types::{C_ADR_MN_DEF_NODE_ID, IpAddress, NodeId}; // Added IpAddress
-use log::{debug, error, info, trace, warn};
-
-/// Helper to derive a CN's IP Address from its Node ID.
-/// (Per EPSG DS 301, Section 5.1.2)
-fn ip_from_node_id(node_id: NodeId) -> IpAddress {
-    [192, 168, 100, node_id.0]
-}
+use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId}; // Added IpAddress
+use log::{debug, info, trace};
+use crate::node::mn::ip_from_node_id;
 
 /// Looks up a CN's MAC address from the dynamic ARP cache.
 /// The cache is populated passively by `IdentResponse` frames.
