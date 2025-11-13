@@ -135,6 +135,30 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
     context.current_polled_cn = None;
     context.current_phase = CyclePhase::IsochronousDone;
 
+    // --- Check for NMT Info Service publishing ---
+    // The multiplexed cycle number in the OD (0x1F9E) is 1-based.
+    let current_mux_cycle_1_based = context.current_multiplex_cycle.wrapping_add(1);
+    if let Some(&service_id) = context.publish_config.get(&current_mux_cycle_1_based) {
+        info!(
+            "[MN] Publishing NMT Info Service {:?} for Mux Cycle {}.",
+            service_id, current_mux_cycle_1_based
+        );
+        // NMTPublish replaces SoA. The cycle ends, and we wait for the next SocTrig.
+        context.current_phase = CyclePhase::Idle;
+
+        // Increment Async Tx counter
+        context.core.od.increment_counter(
+            constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+            constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
+        );
+
+        // Call the new payload builder
+        let frame = payload::build_nmt_info_frame(context, service_id);
+        return serialize_frame_action(frame, context).unwrap_or(NodeAction::NoAction);
+    }
+    // --- End of NMT Info Service logic ---
+
+    // --- Original logic: Send SoA ---
     let (req_service, target_node, set_er_flag) = scheduler::determine_next_async_action(context);
 
     if target_node.0 != C_ADR_MN_DEF_NODE_ID
@@ -315,6 +339,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
 
             if let Some(frame) = context.mn_async_send_queue.pop() {
                 // *** INCREMENT ASYNC TX COUNTER (Generic) ***
+                // FIX: Corrected typo N-Z-MT -> NMT
                 context.core.od.increment_counter(
                     constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                     constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,

@@ -17,7 +17,7 @@ pub const IDX_NMT_RESTORE_PARAM_CMD_REC: u16 = 0x1011;
 pub const IDX_NMT_CONSUMER_HEARTBEAT_TIME_AU32: u16 = 0x1016;
 pub const IDX_NMT_IDENTITY_OBJECT_REC: u16 = 0x1018;
 pub const IDX_CFM_VERIFY_CONFIG_REC: u16 = 0x1020;
-pub const IDX_PDL_LOC_VER_APPL_SW_REC: u16 = 0x1F52; // Added this constant
+pub const IDX_PDL_LOC_VER_APPL_SW_REC: u16 = 0x1F52;
 
 // 0x11xx: Diagnostic Objects
 pub const IDX_DIAG_NMT_TELEGR_COUNT_REC: u16 = 0x1101;
@@ -105,6 +105,7 @@ pub const SUBIDX_NMT_CYCLE_TIMING_PRESCALER_U16: u8 = 9;
 pub const IDX_NMT_CN_BASIC_ETH_TIMEOUT_U32: u16 = 0x1F99;
 pub const IDX_NMT_HOST_NAME_VSTR: u16 = 0x1F9A;
 pub const IDX_NMT_MULTIPLEX_ASSIGN_REC: u16 = 0x1F9B;
+pub const IDX_NMT_PUBLISH_CONFIG_AU32: u16 = 0x1F9E; // NMT Publish Configuration
 
 // 0x1Fxx: CFM (Configuration Management) & PDL (Program Download)
 pub const IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32: u16 = 0x1F26;

@@ -21,6 +21,21 @@ pub enum ServiceId {
     NmtCommand = 0x04,
     /// Corresponds to `SDO`.
     Sdo = 0x05,
+    // --- NMT Info Services (Spec 7.3.4, Table 138) ---
+    /// Corresponds to `NMTPublishTime`.
+    NMTPublishTime = 0x0B,
+    /// Corresponds to `NMTPublishNMTState`.
+    NMTPublishNMTState = 0x0D,
+    /// Corresponds to `NMTPublishNodeState`.
+    NMTPublishNodeState = 0x0E,
+    /// Corresponds to `NMTPublishNodeList`.
+    NMTPublishNodeList = 0x0F,
+    /// Corresponds to `NMTPublishEmergNew`.
+    NMTPublishEmergNew = 0x10,
+    /// Corresponds to `NMTPublishHeartbeat`.
+    NMTPublishHeartbeat = 0x11,
+    /// Corresponds to `NMTPublishActiveNodes`.
+    NMTPublishActiveNodes = 0x12,
 }
 
 impl TryFrom<u8> for ServiceId {
@@ -32,6 +47,14 @@ impl TryFrom<u8> for ServiceId {
             0x03 => Ok(Self::NmtRequest),
             0x04 => Ok(Self::NmtCommand),
             0x05 => Ok(Self::Sdo),
+            // NMT Info Services
+            0x0B => Ok(Self::NMTPublishTime),
+            0x0D => Ok(Self::NMTPublishNMTState),
+            0x0E => Ok(Self::NMTPublishNodeState),
+            0x0F => Ok(Self::NMTPublishNodeList),
+            0x10 => Ok(Self::NMTPublishEmergNew),
+            0x11 => Ok(Self::NMTPublishHeartbeat),
+            0x12 => Ok(Self::NMTPublishActiveNodes),
             _ => Err(PowerlinkError::InvalidServiceId(value)),
         }
     }
@@ -103,6 +126,7 @@ impl Codec for ASndFrame {
             if buffer.len() < padded_pl_len {
                 return Err(PowerlinkError::BufferTooShort); // Need space for padding
             }
+            // FIX: Pad from end of data to padded length, not from total_pl_frame_size
             buffer[pl_frame_len..padded_pl_len].fill(0); // Pad with zeros
         }
 
@@ -130,9 +154,9 @@ impl Codec for ASndFrame {
         // For the roundtrip test, we heuristically trim trailing zeros if the buffer length
         // exactly matches the minimum Ethernet payload size (46 bytes after Eth header).
         // This assumes padding is always zero and the actual payload doesn't end in zero.
-        // A more robust solution requires context from higher layers or adjusted tests.
         let potential_payload = &buffer[pl_header_size..];
         let min_eth_payload_after_header = 46; // 60 total - 14 eth header
+        // FIX: The buffer length is the length of the *PL* part, not the whole eth frame
         let payload = if buffer.len() == min_eth_payload_after_header {
             // If the PL frame section is *exactly* the minimum size, padding *might* exist.
             // Find the last non-zero byte. This assumes padding is always zero.

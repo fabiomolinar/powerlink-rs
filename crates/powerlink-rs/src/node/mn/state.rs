@@ -1,7 +1,7 @@
 use crate::ErrorHandler;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
-use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
+use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame, ServiceId}; // Import ServiceId
 use crate::nmt::events::MnNmtCommandRequest;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
@@ -44,6 +44,9 @@ pub struct MnContext<'s> {
     // ... rest of the fields remain the same ...
     pub multiplex_cycle_len: u8,
     pub multiplex_assign: BTreeMap<NodeId, u8>,
+    /// A map of multiplexed cycle number (1-based) -> NMT Info Service to publish.
+    /// (Reference: OD 0x1F9E)
+    pub publish_config: BTreeMap<u8, ServiceId>,
     pub current_multiplex_cycle: u8,
     pub node_info: BTreeMap<NodeId, CnInfo>,
     pub mandatory_nodes: Vec<NodeId>,

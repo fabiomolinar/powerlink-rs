@@ -9,13 +9,12 @@ use crate::frame::basic::MacAddress;
 use crate::frame::control::SocFrame;
 use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::ms_state_machine::DllMsStateMachine;
-use crate::frame::{PowerlinkFrame, ServiceId, deserialize_frame};
+use crate::frame::{PowerlinkFrame, ServiceId, deserialize_frame}; // Added ServiceId
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction, serialize_frame_action};
-use crate::od::ObjectDictionary; // Corrected import
-use crate::od::constants;
+use crate::od::{Object, ObjectDictionary, ObjectValue, constants}; // Added Object, ObjectValue
 use crate::sdo::client_manager::SdoClientManager;
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
@@ -73,6 +72,42 @@ impl<'s> ManagingNode<'s> {
         let (node_info, mandatory_nodes, isochronous_nodes, async_only_nodes, multiplex_assign) =
             cycle::parse_mn_node_lists(&od)?;
 
+        // --- Initialize NMT Info Publish Configuration (0x1F9E) ---
+        let mut publish_config = BTreeMap::new();
+        if let Some(Object::Array(entries)) =
+            od.read_object(constants::IDX_NMT_PUBLISH_CONFIG_AU32)
+        {
+            // Sub-index 0 is NumberOfEntries. Real entries start at 1.
+            for (i, entry) in entries.iter().enumerate() {
+                let sub_index = i as u8 + 1;
+                if let ObjectValue::Unsigned32(config_val) = entry {
+                    // Spec 7.2.1.1.18: Bits 0-7 = ServiceId, Bits 8-15 = MultiplexedCycle
+                    let service_id_byte = (config_val & 0xFF) as u8;
+                    let cycle_num = ((config_val >> 8) & 0xFF) as u8;
+
+                    if cycle_num > 0 && service_id_byte > 0 {
+                        match ServiceId::try_from(service_id_byte) {
+                            Ok(service_id) => {
+                                info!(
+                                    "Configuring NMT Info Service: {:?} for Mux Cycle {}",
+                                    service_id, cycle_num
+                                );
+                                publish_config.insert(cycle_num, service_id);
+                            }
+                            Err(_) => {
+                                warn!(
+                                    "Ignoring invalid ServiceId {:#04x} in 0x1F9E/{}",
+                                    service_id_byte, sub_index
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            info!("NMT Publish Config (0x1F9E) not found. NMT Info Services disabled.");
+        }
+
         // --- Initialize Core Context ---
         let core = CoreNodeContext {
             od, // OD is moved into context
@@ -96,6 +131,7 @@ impl<'s> ManagingNode<'s> {
             cycle_time_us,
             multiplex_cycle_len: 8, // Default, TODO: Read from 0x1F98
             multiplex_assign,
+            publish_config, // Add the new config map
             current_multiplex_cycle: 0,
             node_info,
             mandatory_nodes,

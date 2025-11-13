@@ -19,7 +19,8 @@ use alloc::vec::Vec;
 use log::{debug, error, trace, warn};
 
 // Import NmtCommandData
-use crate::node::mn::state::NmtCommandData;
+use crate::node::mn::state::{CnState, NmtCommandData};
+use crate::nmt::states::NmtState; // Import CnState and NmtState
 
 // Constants for OD access
 const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
@@ -38,8 +39,8 @@ pub(super) fn build_soc_frame(
     trace!("[MN] Building SoC frame.");
     // TODO: Get real NetTime and RelativeTime from system clock or PTP
     let net_time = NetTime {
-        seconds: 0,
-        nanoseconds: 0,
+        seconds: (context.current_cycle_start_time_us / 1_000_000) as u32,
+        nanoseconds: ((context.current_cycle_start_time_us % 1_000_000) * 1000) as u32,
     };
     let relative_time = RelativeTime {
         seconds: 0,
@@ -409,4 +410,141 @@ pub(super) fn build_nmt_command_frame(
         ServiceId::NmtCommand,
         nmt_payload,
     ))
+}
+
+/// Builds an ASnd(NMT Info) broadcast frame.
+/// (Reference: EPSG DS 301, Section 7.3.4)
+pub(super) fn build_nmt_info_frame(
+    context: &MnContext,
+    service_id: ServiceId,
+) -> PowerlinkFrame {
+    debug!("[MN] Building ASnd(NMT Info={:?}) broadcast.", service_id);
+
+    let nmt_payload = match service_id {
+        ServiceId::NMTPublishTime => {
+            build_publish_time_payload(context) // Spec 7.3.4.1.1, Table 140
+        }
+        ServiceId::NMTPublishNMTState => {
+            // Spec 7.3.4.3.1, Table 144
+            vec![context.nmt_state_machine.current_state() as u8]
+        }
+        ServiceId::NMTPublishNodeState => {
+            build_node_state_payload(context) // Spec 7.3.4.4.1, Table 146
+        }
+        ServiceId::NMTPublishNodeList => {
+            // Spec 7.3.4.5.1, Table 148
+            build_node_list_payload(context, false)
+        }
+        ServiceId::NMTPublishActiveNodes => {
+            // Spec 7.3.4.7.1, Table 150
+            build_node_list_payload(context, true)
+        }
+        ServiceId::NMTPublishEmergNew => {
+            // TODO: Track the last CN that signaled an emergency
+            warn!("[MN] NMTPublishEmergNew not yet implemented. Sending empty payload.");
+            vec![0u8] // Payload is NodeID_U8 (1 byte)
+        }
+        ServiceId::NMTPublishHeartbeat => {
+            // TODO: Track the last CN that triggered a heartbeat timeout
+            warn!("[MN] NMTPublishHeartbeat not yet implemented. Sending empty payload.");
+            vec![0u8] // Payload is NodeID_U8 (1 byte)
+        }
+        _ => {
+            // This function should not be called for other ServiceIds
+            error!(
+                "[MN] Invalid call to build_nmt_info_frame with ServiceId {:?}",
+                service_id
+            );
+            Vec::new()
+        }
+    };
+
+    PowerlinkFrame::ASnd(ASndFrame::new(
+        context.core.mac_address,
+        MacAddress(crate::types::C_DLL_MULTICAST_ASND),
+        NodeId(C_ADR_BROADCAST_NODE_ID),
+        NodeId(C_ADR_MN_DEF_NODE_ID),
+        service_id,
+        nmt_payload,
+    ))
+}
+
+/// Helper for NMTPublishTime
+/// (Reference: EPSG DS 301, Section 7.3.4.1.1, Table 140)
+fn build_publish_time_payload(context: &MnContext) -> Vec<u8> {
+    // Payload is NetTime_U64 (8 bytes).
+    // We don't have a real PTP clock, so we use the cycle start time.
+    let net_time = NetTime {
+        seconds: (context.current_cycle_start_time_us / 1_000_000) as u32,
+        nanoseconds: ((context.current_cycle_start_time_us % 1_000_000) * 1000) as u32,
+    };
+    let mut payload = Vec::with_capacity(8);
+    payload.extend_from_slice(&net_time.seconds.to_le_bytes());
+    payload.extend_from_slice(&net_time.nanoseconds.to_le_bytes());
+    payload
+}
+
+/// Helper for NMTPublishNodeState
+/// (Reference: EPSG DS 301, Section 7.3.4.4.1, Table 146)
+fn build_node_state_payload(context: &MnContext) -> Vec<u8> {
+    // Payload is NMTStateList_AU8 (239 bytes)
+    let mut payload = vec![0u8; 239]; // Index 0 = Node 1, Index 238 = Node 239
+    for (node_id, info) in &context.node_info {
+        let idx = (node_id.0 - 1) as usize;
+        if idx < payload.len() {
+            payload[idx] = info.nmt_state as u8;
+        }
+    }
+    payload
+}
+
+/// Helper for NMTPublishNodeList and NMTPublishActiveNodes
+/// (Reference: EPSG DS 301, Table 148, Table 150)
+fn build_node_list_payload(context: &MnContext, only_operational: bool) -> Vec<u8> {
+    // Payload is POWERLINKNodeList_AU32 (32 bytes / 256 bits)
+    let mut payload_bytes = [0u8; 32];
+
+    let mut set_bit = |node_id: u8| {
+        if node_id == 0 || node_id > 254 {
+            return;
+        }
+        let node_idx_0_based = (node_id - 1) as usize;
+        let byte_index = node_idx_0_based / 8;
+        let bit_index = node_idx_0_based % 8;
+        if let Some(byte) = payload_bytes.get_mut(byte_index) {
+            *byte |= 1 << bit_index;
+        }
+    };
+
+    // Add all CNs
+    for (node_id, info) in &context.node_info {
+        if !only_operational {
+            // NMTPublishNodeList: all nodes "configured and detected" (Spec 7.3.4.4.1)
+            // We interpret this as Identified or further.
+            if info.state >= CnState::Identified {
+                set_bit(node_id.0);
+            }
+        } else {
+            // NMTPublishActiveNodes: all nodes "in NMT state NMT_CS_OPERATIONAL" (Spec 7.3.4.7.1)
+            if info.state == CnState::Operational {
+                set_bit(node_id.0);
+            }
+        }
+    }
+
+    // Add the MN itself (Node 240)
+    let mn_state = context.nmt_state_machine.current_state();
+    if !only_operational {
+        // For PublishNodeList, if the MN is in any cyclic state, include it.
+        if mn_state >= NmtState::NmtPreOperational1 {
+            set_bit(context.nmt_state_machine.node_id().0);
+        }
+    } else {
+        // For PublishActiveNodes, only include MN if it is Operational.
+        if mn_state == NmtState::NmtOperational {
+            set_bit(context.nmt_state_machine.node_id().0);
+        }
+    }
+
+    payload_bytes.to_vec()
 }
