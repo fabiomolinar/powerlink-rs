@@ -8,6 +8,7 @@ use crate::sdo::command::{CommandId, ReadByIndexRequest, Segmentation};
 use crate::sdo::embedded::{PdoSdoCommand, PdoSequenceLayerHeader};
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use alloc::vec;
 use log::{error, trace, warn}; // Added warn
 
 /// The state of a single embedded SDO server connection.
