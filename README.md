@@ -102,13 +102,16 @@ To aid in debugging these complex integration tests, a dedicated `powerlink-rs-m
     - DLL Error Handling Integration: Ensure DLL error counters correctly trigger the specified NMT state changes.
   - Success Metric: A simulated MN/CN pair can successfully transition to the NMT_CS_OPERATIONAL state and maintain a stable POWERLINK cycle.
   - Status: **Completed**.
-- Phase 7: Debugging and Monitoring (`powerlink-rs-monitor`):
+- Phase 7: Configuration files
+  - Focus: Implement parsers for the `XML` Device Description (`XDD`) and `XML` Device Configuration (`XDC`) files (defined by EPSG DS-311). This is supported by the `powerlink-rs-xdc` crate.
+  - Status: **In development**.
+- Phase 8: Debugging and Monitoring (`powerlink-rs-monitor`):
   - Focus: Implement a dedicated `powerlink-rs-monitor` crate. This tool will provide a web-based GUI for real-time diagnostics.
   - Key features:
     - In-Process (Default): Runs as a non-real-time (NRT) thread in the same application as the node, communicating via an RT-safe channel (e.g., `crossbeam-channel`). This provides deep, internal state visibility for development and debugging without impacting network performance.
     - Out-of-Process (Standard): Runs as a separate, standard-compliant Diagnostic Node (e.g., Node 253) that polls the MN's diagnostic OD entries (0x1F8E, 0x1101, etc.) via SDO, allowing it to monitor any compliant MN on the network.
   - Status: **In development**.
-- Phase 8: Integration Testing and Validation:
+- Phase 9: Integration Testing and Validation:
   - Focus: Creating robust integration tests for the full MN/CN communication cycle.
   - Key Features:
     - Develop Docker-based tests for the full boot-up sequence.
@@ -119,7 +122,6 @@ To aid in debugging these complex integration tests, a dedicated `powerlink-rs-m
   - Status: **In development**. The immediate focus is on expanding the Docker-based integration tests to validate the full boot-up sequence, PDO exchange, and error handling.
 - Future (post DS-301):
   - Microcontroller Support: Implement a `no_std` I/O module targeting a specific embedded MAC/PHY driver using the traits defined in Phase 4.
-  - Configuration Files: Implement parsers for the `XML` Device Description (`XDD`) and `XML` Device Configuration (`XDC`) files (defined by EPSG DS-311). This is supported by the `powerlink-rs-xdc` crate.
   - Extensions (DS-302 Series): Add support for non-mandatory features defined in extension specifications, such as:
     - High Availability (EPSG DS-302-A).
     - Multiple-ASnd (EPSG DS-302-B).
