@@ -1,4 +1,5 @@
 use crate::ErrorHandler;
+use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
 use crate::nmt::events::NmtCommand;
@@ -9,7 +10,7 @@ use crate::sdo::client_manager::SdoClientManager;
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
-use crate::types::NodeId;
+use crate::types::{IpAddress, NodeId};
 use alloc::collections::{BTreeMap, BinaryHeap};
 use alloc::vec::Vec;
 use core::cmp::Ordering;
@@ -35,6 +36,9 @@ pub struct MnContext<'s> {
     pub mandatory_nodes: Vec<NodeId>,
     pub isochronous_nodes: Vec<NodeId>,
     pub async_only_nodes: Vec<NodeId>,
+    /// A dynamic cache mapping a CN's IP address to its discovered MAC address.
+    /// This is populated from IdentResponse frames.
+    pub arp_cache: BTreeMap<IpAddress, MacAddress>,
     pub next_isoch_node_idx: usize,
     pub current_phase: CyclePhase,
     pub current_polled_cn: Option<NodeId>,

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use super::events;
 use super::state::{CyclePhase, MnContext};
 use crate::PowerlinkError;
@@ -94,6 +96,7 @@ impl<'s> ManagingNode<'s> {
             mandatory_nodes,
             isochronous_nodes,
             async_only_nodes,
+            arp_cache: BTreeMap::new(),
             next_isoch_node_idx: 0,
             current_phase: CyclePhase::Idle,
             current_polled_cn: None,

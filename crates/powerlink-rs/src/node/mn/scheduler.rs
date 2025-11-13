@@ -1,50 +1,33 @@
+// crates/powerlink-rs/src/node/mn/scheduler.rs
 use super::state::{CnInfo, CnState, MnContext};
 use crate::frame::basic::MacAddress;
 use crate::frame::{DllMsEvent, RequestedServiceId};
 use crate::nmt::events::{NmtCommand, NmtEvent};
 use crate::nmt::{NmtStateMachine, states::NmtState};
-use crate::od::ObjectValue;
-use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use crate::types::{C_ADR_MN_DEF_NODE_ID, IpAddress, NodeId}; // Added IpAddress
 use log::{debug, error, info, trace, warn};
 
-/// Looks up a CN's MAC address from the Object Dictionary (0x2100).
-/// This is a custom object, not defined by the spec, but used in the examples.
-pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option<MacAddress> {
-    const IDX_MAN_CN_MAC_ADDRESS_LIST: u16 = 0x2100;
+/// Helper to derive a CN's IP Address from its Node ID.
+/// (Per EPSG DS 301, Section 5.1.2)
+fn ip_from_node_id(node_id: NodeId) -> IpAddress {
+    [192, 168, 100, node_id.0]
+}
 
-    match context.core.od.read(IDX_MAN_CN_MAC_ADDRESS_LIST, node_id.0) {
-        Some(cow) => match &*cow {
-            ObjectValue::OctetString(bytes) => {
-                if bytes.len() == 6 {
-                    // Create a [u8; 6] from the Vec
-                    let mut mac_bytes = [0u8; 6];
-                    mac_bytes.copy_from_slice(bytes);
-                    if mac_bytes != [0u8; 6] {
-                        Some(MacAddress(mac_bytes))
-                    } else {
-                        None // All zeros is not a valid MAC for this
-                    }
-                } else {
-                    warn!(
-                        "Invalid MAC address length for Node {} in OD 0x2100. Expected 6 bytes, got {}.",
-                        node_id.0,
-                        bytes.len()
-                    );
-                    None
-                }
-            }
-            _ => {
-                error!(
-                    "Invalid data type for OD 0x2100 sub-index {}. Expected OctetString.",
-                    node_id.0
-                );
-                None
-            }
-        },
+/// Looks up a CN's MAC address from the dynamic ARP cache.
+/// The cache is populated passively by `IdentResponse` frames.
+pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option<MacAddress> {
+    // 1. Derive the IP address from the Node ID.
+    let ip_addr = ip_from_node_id(node_id);
+
+    // 2. Look up the IP in the ARP cache.
+    match context.arp_cache.get(&ip_addr) {
+        Some(mac) => Some(*mac),
         None => {
-            error!(
-                "Could not find entry for Node {} in OD 0x2100 (MAC address map).",
-                node_id.0
+            // Log this as trace, as it's normal during boot-up before IdentResponse.
+            trace!(
+                "Could not find MAC address for Node {} (IP {}) in ARP cache.",
+                node_id.0,
+                core::net::Ipv4Addr::from(ip_addr)
             );
             None
         }
@@ -52,8 +35,6 @@ pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option
 }
 
 /// Determines the highest priority asynchronous action to be taken.
-/// The priority is:
-// ... (existing code)
 pub(super) fn determine_next_async_action(
     context: &mut MnContext,
 ) -> (RequestedServiceId, NodeId, bool) {

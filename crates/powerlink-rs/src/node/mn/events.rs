@@ -9,8 +9,14 @@ use crate::nmt::NmtStateMachine;
 use crate::nmt::{events::NmtEvent, states::NmtState};
 use crate::node::PdoHandler;
 use crate::od::constants;
-use crate::types::NodeId;
+use crate::types::{IpAddress, NodeId}; // Import IpAddress
 use log::{debug, error, info, trace, warn};
+
+/// Helper to derive a CN's IP Address from its Node ID.
+/// (Per EPSG DS 301, Section 5.1.2)
+fn ip_from_node_id(node_id: NodeId) -> IpAddress {
+    [192, 168, 100, node_id.0]
+}
 
 /// Processes a `PowerlinkFrame` after it has been identified as
 /// non-SDO or not for the MN. This handles NMT state changes and
@@ -184,6 +190,18 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
                                     "[MN] Node {} successfully identified and validated.",
                                     node_id.0
                                 );
+
+                                // --- ARP CACHE LOGIC ---
+                                // Passively populate the ARP cache based on the frame
+                                // (Spec 5.1.3)
+                                let cn_ip = ip_from_node_id(node_id);
+                                let cn_mac = frame.eth_header.source_mac;
+                                context.arp_cache.insert(cn_ip, cn_mac);
+                                info!(
+                                    "[MN-ARP] Cached MAC {} for Node {} (IP {}).",
+                                    cn_mac, node_id.0, core::net::Ipv4Addr::from(cn_ip)
+                                );
+
                                 // Re-acquire mutable borrow to update state
                                 if let Some(info_mut) = context.node_info.get_mut(&node_id) {
                                     info_mut.state = CnState::Identified;
@@ -412,7 +430,7 @@ fn validate_boot_step1_checks(
 
         if received_conf_date != expected_conf_date || received_conf_time != expected_conf_time {
             error!(
-                "[MN] CHECK_CONFIGURATION failed for Node {}: Config date/time mismatch. Expected {}/{}, got {}/{}. [E_NMT_BPO1_CF_VERIFY]",
+                "[MN] CHECK_CONFIGURATION failed for Node {}: Config date/time mismatch. Expected {}/{}, got {}/{}. [E_NNT_BPO1_CF_VERIFY]",
                 node_id.0,
                 expected_conf_date,
                 expected_conf_time,
