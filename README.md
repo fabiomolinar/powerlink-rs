@@ -16,13 +16,13 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
     - `[x]` 4.7 DLL Error Handling & Counters (CN/MN)
     - `[x]` 4.2.5 Recognizing Active Nodes (IdentRequest/Response)
     - `[~]` 4.2.4.1.1.1 Multiplexed Timeslots (Basic support implemented; complex scheduling not yet optimized)
-  - **Chapter 5 (Network/Transport Layer): 80%**
+  - **Chapter 5 (Network/Transport Layer): 90%**
     - `[x]` 5.1 IP Addressing (Logic assumes 192.168.100.x subnet)
     - `[x]` 5.2 POWERLINK compliant UDP/IP format (for SDO)
     - `[x]` SDO over UDP/IP HAL (`NetworkInterface` trait)
     - `[x]` Core SDO/UDP serialization (`sdo/udp.rs`)
     - `[x]` Integration of `receive_udp` into `Node::run_cycle`
-    - `[ ]` 5.1.3 Address Resolution (ARP) (Currently relies on static MAC maps in examples)
+    - `[x]` 5.1.3 Address Resolution (ARP) (Passive ARP cache populated from IdentResponse)
     - `[ ]` 5.1.4 Hostname (OD `0x1F9A` exists but no NMT services use it)
   - **Chapter 6 (Application Layer): 85%**
     - `[x]` 6.1 Basic Data Types & Encoding (in `types.rs`, `od/value.rs`)
