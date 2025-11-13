@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/mn/main.rs
 use super::events;
 use super::state::{CyclePhase, MnContext};
 use crate::PowerlinkError;
@@ -203,6 +202,11 @@ impl<'s> ManagingNode<'s> {
         if asnd_service_id == ServiceId::Sdo {
             // Check if it's an SDO response *for us* (the MN)
             if asnd_dest_node_id == self.context.nmt_state_machine.node_id() {
+                // *** INCREMENT SDO RX COUNTER (ASnd Response) ***
+                self.context.core.od.increment_counter(
+                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_RX,
+                );
                 trace!(
                     "Received SDO ASnd response from Node {}.",
                     asnd_source_node_id.0
@@ -249,6 +253,11 @@ impl<'s> ManagingNode<'s> {
                 return NodeAction::NoAction;
             // Check if it's an SDO request *to* us (the MN's server)
             } else if asnd_dest_node_id == NodeId(C_ADR_MN_DEF_NODE_ID) {
+                // *** INCREMENT SDO RX COUNTER (ASnd Request) ***
+                self.context.core.od.increment_counter(
+                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_RX,
+                );
                 trace!(
                     "Received SDO/ASnd request from Node {}.",
                     asnd_source_node_id.0
@@ -291,7 +300,14 @@ impl<'s> ManagingNode<'s> {
                     .asnd_transport
                     .build_response(response_data, &self.context)
                 {
-                    Ok(action) => action,
+                    Ok(action) => {
+                        // *** INCREMENT SDO TX COUNTER (ASnd Response) ***
+                        self.context.core.od.increment_counter(
+                            constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                            constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                        );
+                        action
+                    }
                     Err(e) => {
                         error!("Failed to build SDO/ASnd response: {:?}", e);
                         NodeAction::NoAction
@@ -335,6 +351,11 @@ impl<'s> ManagingNode<'s> {
             match cycle::build_sdo_asnd_request(&self.context, target_node_id, seq, cmd) {
                 // Corrected: cycle::
                 Ok(frame) => {
+                    // *** INCREMENT SDO TX COUNTER (ASnd Client Abort) ***
+                    self.context.core.od.increment_counter(
+                        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                        constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                    );
                     return serialize_frame_action(frame, &mut self.context)
                         .unwrap_or(NodeAction::NoAction);
                 }
@@ -355,11 +376,30 @@ impl<'s> ManagingNode<'s> {
                         // SDO server timed out, needs to send an Abort.
                         // This assumes ASnd transport for timeouts.
                         warn!("SDO Server tick generated abort frame.");
-                        match self
-                            .context
-                            .asnd_transport
-                            .build_response(response_data, &self.context)
-                        {
+                        let build_result = match response_data.client_info {
+                            SdoClientInfo::Asnd { .. } => {
+                                // *** INCREMENT SDO TX COUNTER (ASnd Server Abort) ***
+                                self.context.core.od.increment_counter(
+                                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                                );
+                                self.context
+                                    .asnd_transport
+                                    .build_response(response_data, &self.context)
+                            }
+                            #[cfg(feature = "sdo-udp")]
+                            SdoClientInfo::Udp { .. } => {
+                                // *** INCREMENT SDO TX COUNTER (UDP Server Abort) ***
+                                self.context.core.od.increment_counter(
+                                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                                );
+                                self.context
+                                    .udp_transport
+                                    .build_response(response_data, &self.context)
+                            }
+                        };
+                        match build_result {
                             Ok(action) => return action,
                             Err(e) => {
                                 error!("Failed to build SDO/ASnd abort response: {:?}", e);
@@ -492,6 +532,12 @@ impl<'s> ManagingNode<'s> {
         // Check if this is an SDO/UDP frame
         match deserialize_sdo_udp_payload(payload) {
             Ok((seq_header, cmd)) => {
+                // *** INCREMENT SDO RX COUNTER (UDP Request) ***
+                self.context.core.od.increment_counter(
+                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_RX,
+                );
+
                 // This is an SDO request *to* the MN's SDO server.
                 let client_info = SdoClientInfo::Udp {
                     source_ip,
@@ -504,7 +550,31 @@ impl<'s> ManagingNode<'s> {
                 let total_sdo_len = seq_len + cmd_len;
                 sdo_payload.truncate(total_sdo_len);
 
-                self.handle_sdo_server_request(&sdo_payload, client_info, current_time_us)
+                // --- Call SDO Server and build UDP response ---
+                match self.context.core.sdo_server.handle_request(
+                    &sdo_payload,
+                    client_info,
+                    &mut self.context.core.od,
+                    current_time_us,
+                ) {
+                    Ok(response_data) => {
+                        match self
+                            .context
+                            .udp_transport
+                            .build_response(response_data, &self.context)
+                        {
+                            Ok(action) => action, // This will be NodeAction::SendUdp
+                            Err(e) => {
+                                error!("Failed to build SDO/UDP response: {:?}", e);
+                                NodeAction::NoAction
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("SDO server error (UDP): {:?}", e);
+                        NodeAction::NoAction
+                    }
+                }
             }
             Err(e) => {
                 warn!("Failed to deserialize SDO/UDP payload: {:?}", e);
@@ -542,7 +612,7 @@ impl<'s> Node for ManagingNode<'s> {
         if let Some((buffer, ip, port)) = udp_datagram {
             let action = self.process_udp_datagram(buffer, ip, port, current_time_us);
             if let NodeAction::SendUdp { .. } = action {
-                // Increment SDO Tx counter for UDP response
+                // *** INCREMENT SDO TX COUNTER (UDP Response) ***
                 self.context.core.od.increment_counter(
                     constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                     constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,

@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/mn/cycle.rs
 use super::state::{CnInfo, CyclePhase, MnContext};
 use crate::PowerlinkError;
 use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId};
@@ -159,6 +158,12 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
         context.current_phase = CyclePhase::Idle;
     }
 
+    // Increment Async Tx counter (for SoA)
+    context.core.od.increment_counter(
+        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+        constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
+    );
+
     // Increment StatusRequest counter if applicable
     if req_service == RequestedServiceId::StatusRequest {
         context.core.od.increment_counter(
@@ -258,9 +263,54 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
     // --- 2. Handle immediate, non-time-based follow-up actions ---
     match context.current_phase {
         CyclePhase::AwaitingMnAsyncSend => {
-            // TODO: This is where MN-initiated async frames (NMT, SDO) should be sent
-            // For now, just advance the cycle.
-            context.current_phase = CyclePhase::Idle;
+            // MN has invited itself. Check what to send.
+            // Priority: NMT Commands > SDO Client > Generic Queue
+            // This logic was missing.
+            context.current_phase = CyclePhase::Idle; // Consume the phase
+
+            if let Some((command, target_node_id)) = context.pending_nmt_commands.pop() {
+                // *** INCREMENT ASYNC TX COUNTER (NMT Command) ***
+                context.core.od.increment_counter(
+                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                    constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
+                );
+                return serialize_frame_action(
+                    payload::build_nmt_command_frame(context, command, target_node_id),
+                    context,
+                )
+                .unwrap_or(NodeAction::NoAction);
+            }
+
+            if let Some((target_node_id, seq, cmd)) = context
+                .sdo_client_manager
+                .get_pending_request(current_time_us, &context.core.od)
+            {
+                match build_sdo_asnd_request(context, target_node_id, seq, cmd) {
+                    Ok(frame) => {
+                        // *** INCREMENT SDO TX COUNTER (ASnd Request) ***
+                        context.core.od.increment_counter(
+                            constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                            constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
+                        );
+                        return serialize_frame_action(frame, context)
+                            .unwrap_or(NodeAction::NoAction);
+                    }
+                    Err(e) => error!("Failed to build SDO client request frame: {:?}", e),
+                }
+            }
+
+            if let Some(frame) = context.mn_async_send_queue.pop() {
+                // *** INCREMENT ASYNC TX COUNTER (Generic) ***
+                context.core.od.increment_counter(
+                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                    constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
+                );
+                return serialize_frame_action(frame, context).unwrap_or(NodeAction::NoAction);
+            }
+
+            // If we got here, we invited ourselves but had nothing to send.
+            debug!("[MN] Awaited async send, but no frames were queued.");
+            return NodeAction::NoAction;
         }
         CyclePhase::SoCSent => {
             return advance_cycle_phase(context, current_time_us);

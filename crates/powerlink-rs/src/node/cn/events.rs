@@ -1,4 +1,3 @@
-// crates/powerlink-rs/src/node/cn/events.rs
 use super::payload;
 use super::state::CnContext;
 use crate::common::NetTime;
@@ -30,6 +29,11 @@ pub(super) fn process_frame(
         if asnd_frame.destination == context.nmt_state_machine.node_id
             && asnd_frame.service_id == ServiceId::Sdo
         {
+            // *** INCREMENT SDO RX COUNTER (ASnd) ***
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_SDO_RX,
+            );
             // SDO Rx logic is in main.rs, which has already incremented SdoRx.
             // We just need to handle the SDO Server logic here.
             debug!("Received SDO/ASnd frame for processing.");
@@ -52,7 +56,7 @@ pub(super) fn process_frame(
                         .build_response(response_data, context)
                     {
                         Ok(action) => {
-                            // Increment SDO Tx counter for ASnd response
+                            // *** INCREMENT SDO TX COUNTER (ASnd Response) ***
                             context.core.od.increment_counter(
                                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                                 constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
@@ -438,6 +442,7 @@ pub(super) fn process_frame(
                         | NmtState::NmtOperational
                         | NmtState::NmtCsStopped => match soa_frame.req_service_id {
                             RequestedServiceId::IdentRequest => {
+                                // *** INCREMENT ASYNC TX COUNTER ***
                                 context.core.od.increment_counter(
                                     constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                                     constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
@@ -452,6 +457,7 @@ pub(super) fn process_frame(
                                 ))
                             }
                             RequestedServiceId::StatusRequest => {
+                                // *** INCREMENT ASYNC TX COUNTER ***
                                 context.core.od.increment_counter(
                                     constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                                     constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
@@ -470,6 +476,7 @@ pub(super) fn process_frame(
                             }
                             RequestedServiceId::NmtRequestInvite => {
                                 context.pending_nmt_requests.pop().map(|(cmd, tgt)| {
+                                    // *** INCREMENT ASYNC TX COUNTER ***
                                     context.core.od.increment_counter(
                                         constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                                         constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
@@ -488,7 +495,7 @@ pub(super) fn process_frame(
                                 .sdo_client
                                 .pop_pending_request()
                                 .map(|sdo_payload| {
-                                    // Increment SDO Tx counter
+                                    // *** INCREMENT SDO TX COUNTER (ASnd Request) ***
                                     context.core.od.increment_counter(
                                         constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                                         constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
@@ -561,7 +568,7 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
             // SDO server generated a response (e.g., abort). Build the action.
             let build_result = match response_data.client_info {
                 SdoClientInfo::Asnd { .. } => {
-                    // Increment SDO Tx counter
+                    // *** INCREMENT SDO TX COUNTER (ASnd Abort) ***
                     context.core.od.increment_counter(
                         constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                         constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
@@ -572,7 +579,7 @@ pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                 }
                 #[cfg(feature = "sdo-udp")]
                 SdoClientInfo::Udp { .. } => {
-                    // Increment SDO Tx counter
+                    // *** INCREMENT SDO TX COUNTER (UDP Abort) ***
                     context.core.od.increment_counter(
                         constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                         constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
