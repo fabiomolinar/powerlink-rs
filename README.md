@@ -16,14 +16,14 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
     - `[x]` 4.7 DLL Error Handling & Counters (CN/MN)
     - `[x]` 4.2.5 Recognizing Active Nodes (IdentRequest/Response)
     - `[~]` 4.2.4.1.1.1 Multiplexed Timeslots (Basic support implemented; complex scheduling not yet optimized)
-  - **Chapter 5 (Network/Transport Layer): 90%**
+  - **Chapter 5 (Network/Transport Layer): 100%**
     - `[x]` 5.1 IP Addressing (Logic assumes 192.168.100.x subnet)
     - `[x]` 5.2 POWERLINK compliant UDP/IP format (for SDO)
     - `[x]` SDO over UDP/IP HAL (`NetworkInterface` trait)
     - `[x]` Core SDO/UDP serialization (`sdo/udp.rs`)
     - `[x]` Integration of `receive_udp` into `Node::run_cycle`
-    - `[x]` 5.1.3 Address Resolution (ARP) (Passive ARP cache populated from IdentResponse)
-    - `[ ]` 5.1.4 Hostname (OD `0x1F9A` exists but no NMT services use it)
+    - `[x]` 5.1.3 Address Resolution (ARP) (Passive ARP cache populated from IdentResponse. Active ARP client not implemented.)
+    - `[x]` 5.1.4 Hostname (OD `0x1F9A` is set via `NMTNetHostNameSet`)
   - **Chapter 6 (Application Layer): 85%**
     - `[x]` 6.1 Basic Data Types & Encoding (in `types.rs`, `od/value.rs`)
     - `[x]` 6.2 Object Dictionary Structure (in `od/` module)
@@ -33,7 +33,7 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
     - `[x]` 6.5 Error Signaling (EN/EA/ER/EC flags, StatusResponse)
     - `[x]` 6.3.3 SDO Embedded in PDO
     - `[~]` Optional SDO Commands (`WriteAllByIndex`, `WriteMultipleParamByIndex`, etc.) are *not* implemented in the core, but are supported via the `SdoCommandHandler` trait for applications to implement.
-    - `[ ]` 6.6 Program Download (PDL) (MN logic to send firmware via SDO is missing)
+    - `[~]` 6.6 Program Download (PDL) (Considered an application-level task. The crate provides the SDO mechanism (segmented `WriteByIndex` to 0x1F50) for the application to use.)
     - `[ ]` 6.7 Configuration Management (CFM) (MN logic to send configuration via SDO is missing)
   - **Chapter 7 (Network Management): 100%**
     - `[x]` 7.1 NMT State Machines (Common, MN, CN)
@@ -141,4 +141,4 @@ A copy of the License is provided: [link to copy of the license](LICENSE).
 
 **ALL USERS ARE REQUIRED TO READ AND UNDERSTAND THE FULL DISCLAIMER BEFORE USING THIS CODE.**
 
--> **[View Full Disclaimer and Patent Notice (`DISCLAIMER.md`)](DISCLAIMER.md)**
+-> **[View Full Disclaimer and Patent Notice (`DISCLAIMER.md`)](DISCLAIMER.md)```
