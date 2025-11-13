@@ -38,15 +38,46 @@ pub struct ProfileHeader {
 /// The main body containing either device or communication data.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProfileBody {
-    /// This field is only present in the Communication Network Profile,
-    /// which is the one we care about.
+    /// This field is only present in the Communication Network Profile.
     #[serde(rename = "ApplicationLayers", default, skip_serializing_if = "Option::is_none")]
     pub application_layers: Option<ApplicationLayers>,
+
+    /// This field is only present in the Device Profile.
+    #[serde(rename = "DeviceIdentity", default, skip_serializing_if = "Option::is_none")]
+    pub device_identity: Option<DeviceIdentity>,
     
-    /// Used to identify which ProfileBody this is. We look for
-    /// "ProfileBody_CommunicationNetwork_Powerlink".
+    /// Used to identify which ProfileBody this is.
     #[serde(rename = "@type", default, skip_serializing_if = "Option::is_none")]
     pub xsi_type: Option<String>,
+}
+
+/// Represents the `<DeviceIdentity>` block in the Device Profile.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct DeviceIdentity {
+    #[serde(rename = "vendorName", default, skip_serializing_if = "Option::is_none")]
+    pub vendor_name: Option<String>,
+
+    #[serde(rename = "vendorID", default, skip_serializing_if = "Option::is_none")]
+    pub vendor_id: Option<String>, // e.g., "0x12345678"
+
+    #[serde(rename = "productName", default, skip_serializing_if = "Option::is_none")]
+    pub product_name: Option<String>, // e.g., "MyName"
+
+    #[serde(rename = "productID", default, skip_serializing_if = "Option::is_none")]
+    pub product_id: Option<String>, // e.g., "1234"
+    
+    #[serde(rename = "version", default, skip_serializing_if = "Vec::is_empty")]
+    pub version: Vec<Version>, // e.g., <version versionType="HW" value="1" />
+}
+
+/// Represents a `<version>` element within `<DeviceIdentity>`.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct Version {
+    #[serde(rename = "@versionType")]
+    pub version_type: String,
+
+    #[serde(rename = "@value")]
+    pub value: String,
 }
 
 /// Contains the ObjectList.
