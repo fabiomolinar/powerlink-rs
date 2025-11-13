@@ -335,3 +335,268 @@ impl From<fmt::Error> for XdcError {
         XdcError::FmtError(e)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    /// A minimal, valid XDC XML string for testing.
+    /// Contains objects 0x1006 (to be ignored) and the CFM objects
+    /// 0x1F22, 0x1F26, and 0x1F27.
+    const TEST_XDC_CONTENT: &str = r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.ethernet-powerlink.org Powerlink_Main.xsd">
+  <ISO15745Profile>
+    <ProfileHeader>
+    </ProfileHeader>
+    <ProfileBody xsi:type="ProfileBody_Device_Powerlink">
+      <ApplicationLayers>
+        <ObjectList>
+          <Object index="6000" objectType="7" />
+        </ObjectList>
+      </ApplicationLayers>
+    </ProfileBody>
+  </ISO15745Profile>
+  <ISO15745Profile>
+    <ProfileHeader>
+    </ProfileHeader>
+    <ProfileBody xsi:type="ProfileBody_CommunicationNetwork_Powerlink">
+      <ApplicationLayers>
+        <ObjectList>
+          <Object index="1006" name="NMT_CycleLen_U32" objectType="7">
+            <SubObject subIndex="00" name="Cycle Time" actualValue="10000" />
+          </Object>
+          
+          <Object index="1F22" name="CFM_ConciseDcfList_ADOM" objectType="8">
+            <SubObject subIndex="00" name="NumberOfEntries" actualValue="1" />
+            <SubObject subIndex="01" name="Dcf_1" actualValue="0x0102030405060708" />
+          </Object>
+          
+          <Object index="1F26" name="CFM_ExpConfDateList_AU32" objectType="8">
+            <SubObject subIndex="01" name="Node_1_Date" actualValue="0x11223344" />
+            <SubObject subIndex="02" name="Node_2_Date" defaultValue="0" />
+          </Object>
+          
+          <Object index="1F27" name="CFM_ExpConfTimeList_AU32" objectType="8">
+            <SubObject subIndex="01" name="Node_1_Time" actualValue="0x55667788" />
+            <SubObject subIndex="02" name="Node_2_Time" actualValue="0xAABBCCDD" />
+          </Object>
+        </ObjectList>
+      </ApplicationLayers>
+    </ProfileBody>
+  </ISO15745Profile>
+</ISO15745ProfileContainer>
+    "#;
+
+    #[test]
+    fn test_load_xdc() {
+        let cfm_data =
+            load_xdc_from_str(TEST_XDC_CONTENT).expect("Failed to parse test XDC");
+
+        // We expect 4 CfmObjects in total (1 from 1F22, 1 from 1F26, 2 from 1F27)
+        assert_eq!(cfm_data.objects.len(), 4);
+
+        // Check Object 0x1F22, SubObject 0x01
+        let obj_1f22 = cfm_data
+            .objects
+            .iter()
+            .find(|o| o.index == 0x1F22 && o.sub_index == 1)
+            .expect("Did not find 0x1F22/01");
+        assert_eq!(
+            obj_1f22.data,
+            vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+        );
+
+        // Check Object 0x1F26, SubObject 0x01
+        let obj_1f26 = cfm_data
+            .objects
+            .iter()
+            .find(|o| o.index == 0x1F26 && o.sub_index == 1)
+            .expect("Did not find 0x1F26/01");
+        assert_eq!(obj_1f26.data, vec![0x11, 0x22, 0x33, 0x44]);
+
+        // Check Object 0x1F27, SubObject 0x01
+        let obj_1f27_1 = cfm_data
+            .objects
+            .iter()
+            .find(|o| o.index == 0x1F27 && o.sub_index == 1)
+            .expect("Did not find 0x1F27/01");
+        assert_eq!(obj_1f27_1.data, vec![0x55, 0x66, 0x77, 0x88]);
+
+        // Check Object 0x1F27, SubObject 0x02
+        let obj_1f27_2 = cfm_data
+            .objects
+            .iter()
+            .find(|o| o.index == 0x1F27 && o.sub_index == 2)
+            .expect("Did not find 0x1F27/02");
+        assert_eq!(obj_1f27_2.data, vec![0xAA, 0xBB, 0xCC, 0xDD]);
+
+        // Check that ignored objects are not present
+        assert!(cfm_data
+            .objects
+            .iter()
+            .find(|o| o.index == 0x1006)
+            .is_none());
+        assert!(cfm_data
+            .objects
+            .iter()
+            .find(|o| o.index == 0x6000)
+            .is_none());
+        // Check that sub-object without actualValue is not present
+        assert!(cfm_data
+            .objects
+            .iter()
+            .find(|o| o.index == 0x1F26 && o.sub_index == 2)
+            .is_none());
+    }
+
+    #[test]
+    fn test_save_xdc_to_string() {
+        let cfm_data = CfmData {
+            objects: vec![
+                CfmObject {
+                    index: 0x1F22,
+                    sub_index: 1,
+                    data: vec![0x01, 0x02, 0x03],
+                },
+                // Add an object out of order to test sorting
+                CfmObject {
+                    index: 0x1F26,
+                    sub_index: 1,
+                    data: vec![0xAA, 0xBB],
+                },
+                CfmObject {
+                    index: 0x1F22,
+                    sub_index: 2,
+                    data: vec![0x04, 0x05],
+                },
+            ],
+        };
+
+        let xml_string =
+            save_xdc_to_string(&cfm_data).expect("Failed to save XDC to string");
+
+        // Check for XML declaration
+        assert!(xml_string.starts_with(r#"<?xml version="1.0" encoding="UTF-8"?>"#));
+        // Check for root element
+        assert!(xml_string
+            .contains(r#"<ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org""#));
+        // Check for profile body
+        assert!(xml_string
+            .contains(r#"<ProfileBody xsi:type="ProfileBody_CommunicationNetwork_Powerlink">"#));
+        // Check for 0x1F22
+        assert!(xml_string.contains(r#"<Object index="1F22" objectType="8">"#));
+        assert!(
+            xml_string.contains(r#"<SubObject subIndex="00" actualValue="2" />"#)
+        );
+        assert!(
+            xml_string.contains(r#"<SubObject subIndex="01" actualValue="0x010203" />"#)
+        );
+        assert!(
+            xml_string.contains(r#"<SubObject subIndex="02" actualValue="0x0405" />"#)
+        );
+        // Check for 0x1F26
+        assert!(xml_string.contains(r#"<Object index="1F26" objectType="8">"#));
+        assert!(
+            xml_string.contains(r#"<SubObject subIndex="00" actualValue="1" />"#)
+        );
+        assert!(
+            xml_string.contains(r#"<SubObject subIndex="01" actualValue="0xAABB" />"#)
+        );
+    }
+
+    #[test]
+    fn test_round_trip() {
+        // 1. Load from the canonical test string
+        let data_a =
+            load_xdc_from_str(TEST_XDC_CONTENT).expect("Round-trip: Initial load failed");
+
+        // 2. Save it back to a new string
+        let xml_b = save_xdc_to_string(&data_a)
+            .expect("Round-trip: Save failed");
+
+        // 3. Load from the newly generated string
+        let data_b =
+            load_xdc_from_str(&xml_b).expect("Round-trip: Second load failed");
+
+        // 4. The data must be identical.
+        // We must sort both lists to ensure a stable comparison.
+        let mut objects_a = data_a.objects;
+        let mut objects_b = data_b.objects;
+
+        objects_a.sort_by_key(|o| (o.index, o.sub_index));
+        objects_b.sort_by_key(|o| (o.index, o.sub_index));
+        
+        assert_eq!(objects_a, objects_b, "Round-trip data does not match");
+    }
+
+    #[test]
+    fn test_load_errors() {
+        // Test malformed XML
+        let bad_xml = "<Object";
+        let result = load_xdc_from_str(bad_xml);
+        assert!(matches!(result, Err(XdcError::XmlParsing(_))));
+
+        // Test valid XML but missing the correct profile
+        let missing_profile_xml = r#"
+<ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ISO15745Profile>
+    <ProfileBody xsi:type="ProfileBody_Device_Powerlink">
+    </ProfileBody>
+  </ISO15745Profile>
+</ISO15745ProfileContainer>
+        "#;
+        let result = load_xdc_from_str(missing_profile_xml);
+        assert!(matches!(
+            result,
+            Err(XdcError::MissingElement {
+                element: "ProfileBody_CommunicationNetwork_Powerlink"
+            })
+        ));
+
+        // Test invalid hex (odd length)
+        let odd_hex_xml = r#"
+<ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ISO15745Profile>
+    <ProfileBody xsi:type="ProfileBody_CommunicationNetwork_Powerlink">
+      <ApplicationLayers>
+        <ObjectList>
+          <Object index="1F22" objectType="8">
+            <SubObject subIndex="01" actualValue="0x123" />
+          </Object>
+        </ObjectList>
+      </ApplicationLayers>
+    </ProfileBody>
+  </ISO15745Profile>
+</ISO15745ProfileContainer>
+        "#;
+        let result = load_xdc_from_str(odd_hex_xml);
+        assert!(matches!(result, Err(XdcError::HexParsing(_))));
+        if let Err(XdcError::HexParsing(e)) = result {
+             assert_eq!(e, hex::FromHexError::OddLength);
+        }
+
+        // Test invalid hex (bad char)
+        let bad_char_xml = r#"
+<ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <ISO15745Profile>
+    <ProfileBody xsi:type="ProfileBody_CommunicationNetwork_Powerlink">
+      <ApplicationLayers>
+        <ObjectList>
+          <Object index="1F22" objectType="8">
+            <SubObject subIndex="01" actualValue="0xGGHH" />
+          </Object>
+        </ObjectList>
+      </ApplicationLayers>
+    </ProfileBody>
+  </ISO15745Profile>
+</ISO15745ProfileContainer>
+        "#;
+        let result = load_xdc_from_str(bad_char_xml);
+        assert!(matches!(result, Err(XdcError::HexParsing(_))));
+        if let Err(XdcError::HexParsing(e)) = result {
+             assert_eq!(e, hex::FromHexError::InvalidHexCharacter { c: 'G', index: 0 });
+        }
+    }
+}
