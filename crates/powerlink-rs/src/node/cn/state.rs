@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/cn/state.rs
 use crate::ErrorHandler;
 use crate::PowerlinkError;
 use crate::frame::DllCsStateMachine;
@@ -5,7 +6,7 @@ use crate::frame::error::{
     CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler,
 };
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
-use crate::nmt::events::CnNmtRequest;
+use crate::nmt::events::{CnNmtRequest, NmtServiceRequest}; // Import NmtServiceRequest
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
 use crate::od::{ObjectValue, constants};
 use crate::pdo::{PDOVersion, PdoMappingEntry, error::PdoError};
@@ -16,7 +17,7 @@ use crate::types::NodeId;
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec;
 use alloc::vec::Vec;
-use log::{error, trace, warn};
+use log::{error, info, trace, warn}; // Import info
 
 /// Holds the complete state for a Controlled Node.
 pub struct CnContext<'s> {
@@ -74,6 +75,21 @@ impl<'s> NodeContext<'s> for CnContext<'s> {
 
 /// Inherent methods for CN-specific logic, including the moved TPDO logic.
 impl<'s> CnContext<'s> {
+    /// Internal helper to queue an NMT service request.
+    /// Used by NmtNetHostNameSet handler to request an IdentResponse.
+    pub(super) fn queue_nmt_service_request(
+        &mut self,
+        service: NmtServiceRequest,
+        target: NodeId,
+    ) {
+        info!(
+            "Queueing NMT Service request: Service={:?}, Target={}",
+            service, target.0
+        );
+        self.pending_nmt_requests
+            .push((CnNmtRequest::Service(service), target));
+    }
+
     /// Fills a buffer with the CN's TPDO payload.
     ///
     /// This implementation is for a CN, which can only have one

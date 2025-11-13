@@ -6,7 +6,7 @@ use crate::frame::error::{EntryType, ErrorEntry, ErrorEntryMode};
 use crate::frame::{
     ASndFrame, DllCsEvent, DllError, NmtAction, PowerlinkFrame, RequestedServiceId, ServiceId,
 };
-use crate::nmt::events::{CnNmtRequest, NmtEvent};
+use crate::nmt::events::NmtEvent; // Removed NmtCommand
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, PdoHandler, serialize_frame_action};
@@ -321,10 +321,11 @@ pub(super) fn process_frame(
 
                                         // Spec: "CN requests an IdentRequest to itself"
                                         info!("[CN] NmtNetHostNameSet: Queueing IdentRequest service.");
-                                        context.pending_nmt_requests.push((
-                                            CnNmtRequest::Service(NmtServiceRequest::IdentRequest),
+                                        // Use the new helper method on CnContext
+                                        context.queue_nmt_service_request(
+                                            NmtServiceRequest::IdentRequest,
                                             context.nmt_state_machine.node_id,
-                                        ));
+                                        );
                                     }
                                     Err(e) => {
                                         error!("[CN] Failed to parse hostname from NmtNetHostNameSet: {:?}", e);
