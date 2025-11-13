@@ -35,15 +35,15 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
     - `[~]` Optional SDO Commands (`WriteAllByIndex`, `WriteMultipleParamByIndex`, etc.) are *not* implemented in the core, but are supported via the `SdoCommandHandler` trait for applications to implement.
     - `[ ]` 6.6 Program Download (PDL) (MN logic to send firmware via SDO is missing)
     - `[ ]` 6.7 Configuration Management (CFM) (MN logic to send configuration via SDO is missing)
-  - **Chapter 7 (Network Management): 90%**
+  - **Chapter 7 (Network Management): 100%**
     - `[x]` 7.1 NMT State Machines (Common, MN, CN)
     - `[x]` 7.3.1 NMT State Command Services (StartNode, StopNode, Resets)
     - `[x]` 7.3.3 NMT Response Services (IdentResponse, StatusResponse)
     - `[x]` 7.3.6 Request NMT Services by a CN (ASnd NMTRequest)
     - `[x]` 7.3.5 NMT Guard Services (SoC/PRes timeouts, Consumer Heartbeat)
     - `[x]` 7.4 MN Boot-up Sequence (Full validation: 7.4.2.2.1.1 - 7.4.2.2.1.3)
-    - `[ ]` 7.3.4 NMT Info Services (MN publishing `NMTPublish...` frames)
-    - `[ ]` 7.3.2 NMT Managing Command Services (e.g., `NMTNetHostNameSet`)
+    - `[x]` 7.3.4 NMT Info Services (MN publishing `NMTPublish...` frames)
+    - `[x]` 7.3.2 NMT Managing Command Services (e.g., `NMTNetHostNameSet`)
   - **Chapter 8 (Diagnostics): 50%**
     - `[x]` 8.1 Diagnostic OD Entries (`0x1101`, `0x1102`) (Counters are incremented)
     - `[~]` `powerlink-rs-monitor` (In-process web monitor, in development)
