@@ -38,7 +38,7 @@ The core implementation mirrors the functional layers defined in the EPSG DS 301
 | **Data Link Layer (DLL) / Frames** | Core modules handle the parsing and serialization of basic frames (e.g., SoC, SoA, PReq, PRes). Phase 1 focuses heavily on this layer. |
 | **Object Dictionary (OD)** | Module responsible for defining the structure and handling of data objects accessible over POWERLINK communication, using Index and Sub-Index addressing. |
 | **Network Management (NMT)** | Modules implementing the Network Management state machines (MN and CN states, e.g., `NMT_CS_NOT_ACTIVE` to `NMT_CS_OPERATIONAL`) and handling configuration objects. |
-| **Service Data Objects (SDO)** | Modules implementing non-real-time data exchange (client/server model). SDO services are implemented using sequenced commands over asynchronous frames (ASnd) or UDP/IP. |
+| **Service Data Objects (SDO)** | Modules implementing non-real-time data exchange (client/server model). **The core crate implements *mandatory* SDO commands (e.g., `ReadByIndex`, `WriteByIndex`)**. *Optional* commands (e.g., `WriteAllByIndex`, `WriteMultipleParamByIndex`) are handled by the `SdoCommandHandler` trait, which can be implemented by the application. |
 | **Process Data Objects (PDO)** | Modules handling real-time, cyclic data exchange (Producer/Consumer model) carried within PReq and PRes frames. |
 
 ## Diagnostics and Monitoring (`powerlink-rs-monitor`)

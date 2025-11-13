@@ -96,24 +96,28 @@ pub struct SdoCommand {
 }
 
 impl SdoCommand {
+    /// Deserializes an SDO command from a buffer.
+    /// Assumes the buffer starts *at* the Command Layer (after the Sequence Layer).
+    /// (Reference: EPSG DS 301, Section 6.3.2.4.1, Table 54)
     pub fn deserialize(buffer: &[u8]) -> Result<Self, PowerlinkError> {
-        if buffer.len() < 4 {
+        // Fixed command header is 8 bytes
+        // (Reserved, TID, Flags, CommandID, SegSize, Reserved)
+        const FIXED_HEADER_SIZE: usize = 8;
+        if buffer.len() < FIXED_HEADER_SIZE {
             return Err(PowerlinkError::BufferTooShort);
         }
-        let flags = buffer[0];
-        let transaction_id = flags & 0x0F;
+
+        // buffer[0] is reserved
+        let transaction_id = buffer[1];
+        let flags = buffer[2];
         let is_response = (flags & 0x10) != 0;
         let is_aborted = (flags & 0x20) != 0;
-        let segmentation = match (flags >> 6) & 0b11 {
-            0 => Segmentation::Expedited,
-            1 => Segmentation::Initiate,
-            2 => Segmentation::Segment,
-            3 => Segmentation::Complete,
-            _ => unreachable!(),
-        };
+        let segmentation = Segmentation::try_from((flags >> 6) & 0b11)?;
 
-        let command_id = CommandId::try_from(buffer[1])?;
-        let segment_size = u16::from_le_bytes(buffer[2..4].try_into()?);
+        let command_id = CommandId::try_from(buffer[3])?;
+        // Segment Size (bytes 4-5)
+        let segment_size = u16::from_le_bytes(buffer[4..6].try_into()?);
+        // buffer[6..8] is reserved
 
         let header = CommandLayerHeader {
             transaction_id,
@@ -125,18 +129,25 @@ impl SdoCommand {
         };
 
         // If it's an Initiate frame, the next 4 bytes are the total data size.
+        // (Reference: EPSG DS 301, Section 6.3.2.4.1, Table 54)
         let (data_size, payload_offset) = if segmentation == Segmentation::Initiate {
-            if buffer.len() < 8 {
+            const INITIATE_HEADER_SIZE: usize = 12;
+            if buffer.len() < INITIATE_HEADER_SIZE {
                 return Err(PowerlinkError::BufferTooShort);
             }
-            let size = u32::from_le_bytes(buffer[4..8].try_into()?);
-            (Some(size), 8)
+            let size = u32::from_le_bytes(buffer[8..12].try_into()?);
+            (Some(size), INITIATE_HEADER_SIZE)
         } else {
-            (None, 4)
+            (None, FIXED_HEADER_SIZE)
         };
 
-        // The rest of the buffer is the payload.
-        let payload = buffer[payload_offset..].to_vec();
+        // The payload starts after the fixed header (and data size, if present)
+        // The segment_size field indicates the length of this payload.
+        let payload_end = payload_offset + (segment_size as usize);
+        if buffer.len() < payload_end {
+            return Err(PowerlinkError::BufferTooShort);
+        }
+        let payload = buffer[payload_offset..payload_end].to_vec();
 
         Ok(SdoCommand {
             header,
@@ -145,28 +156,37 @@ impl SdoCommand {
         })
     }
 
+    /// Serializes the SDO command into the provided buffer.
+    /// Assumes buffer starts *at* the Command Layer.
+    /// Returns the total number of bytes written (header + payload).
     pub fn serialize(&self, buffer: &mut [u8]) -> Result<usize, PowerlinkError> {
-        let flags = (self.header.transaction_id & 0x0F)
-            | if self.header.is_response { 0x10 } else { 0 }
-            | if self.header.is_aborted { 0x20 } else { 0 }
-            | ((match self.header.segmentation {
-                Segmentation::Expedited => 0,
-                Segmentation::Initiate => 1,
-                Segmentation::Segment => 2,
-                Segmentation::Complete => 3,
-            }) << 6);
+        let flags = (if self.header.is_response { 0x10 } else { 0 })
+            | (if self.header.is_aborted { 0x20 } else { 0 })
+            | ((self.header.segmentation as u8) << 6);
 
-        buffer[0] = flags;
-        buffer[1] = self.header.command_id as u8;
-        buffer[2..4].copy_from_slice(&self.header.segment_size.to_le_bytes());
+        // Fixed command header is 8 bytes
+        const FIXED_HEADER_SIZE: usize = 8;
+        if buffer.len() < FIXED_HEADER_SIZE {
+            return Err(PowerlinkError::BufferTooShort);
+        }
 
-        let mut current_offset = 4;
+        buffer[0] = 0; // Reserved
+        buffer[1] = self.header.transaction_id;
+        buffer[2] = flags;
+        buffer[3] = self.header.command_id as u8;
+        buffer[4..6].copy_from_slice(&self.header.segment_size.to_le_bytes());
+        buffer[6..8].copy_from_slice(&[0, 0]); // Reserved
+
+        let mut current_offset = FIXED_HEADER_SIZE;
 
         if self.header.segmentation == Segmentation::Initiate {
-            if let Some(size) = self.data_size {
-                buffer[current_offset..current_offset + 4].copy_from_slice(&size.to_le_bytes());
-                current_offset += 4;
+            const INITIATE_HEADER_SIZE: usize = 12;
+            if buffer.len() < INITIATE_HEADER_SIZE {
+                return Err(PowerlinkError::BufferTooShort);
             }
+            let size = self.data_size.unwrap_or(0);
+            buffer[current_offset..current_offset + 4].copy_from_slice(&size.to_le_bytes());
+            current_offset += 4;
         }
 
         let payload_len = self.payload.len();
@@ -212,7 +232,7 @@ pub struct ReadByNameRequest {
 
 impl ReadByNameRequest {
     pub fn from_payload(payload: &[u8]) -> Result<Self, PowerlinkError> {
-        // The name is a zero-terminated string.
+        // The name is the entire payload, potentially zero-terminated.
         let name_end = payload
             .iter()
             .position(|&b| b == 0)
@@ -247,6 +267,32 @@ impl<'a> WriteByIndexRequest<'a> {
     }
 }
 
+/// Payload for a WriteAllByIndex command.
+/// (Reference: EPSG DS 301, Section 6.3.2.4.2.1.3, Table 63)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // This struct is optional and not used by the core crate
+pub struct WriteAllByIndexRequest<'a> {
+    pub index: u16,
+    pub data: &'a [u8],
+}
+
+#[allow(dead_code)] // This impl is optional and not used by the core crate
+impl<'a> WriteAllByIndexRequest<'a> {
+    pub fn from_payload(payload: &'a [u8]) -> Result<Self, PowerlinkError> {
+        // Spec 6.3.2.4.2.1.3 (Table 63) shows:
+        // Index (2 bytes), reserved (1 byte), reserved (1 byte)
+        // Total 4 bytes before payload data starts.
+        if payload.len() < 4 {
+            return Err(PowerlinkError::SdoInvalidCommandPayload);
+        }
+        Ok(Self {
+            index: u16::from_le_bytes(payload[0..2].try_into()?),
+            // Ignore payload[2] and payload[3] (reserved)
+            data: &payload[4..],
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteByNameRequest<'a> {
     pub name: String,
@@ -255,6 +301,9 @@ pub struct WriteByNameRequest<'a> {
 
 impl<'a> WriteByNameRequest<'a> {
     pub fn from_payload(payload: &'a [u8]) -> Result<Self, PowerlinkError> {
+        // TODO: This implementation does not match Table 67/68,
+        // which describe a complex payload with an internal offset.
+        // For now, assume simple zero-terminated string + data.
         let name_end = payload.iter().position(|&b| b == 0).unwrap_or(0);
         if name_end == 0 {
             return Err(PowerlinkError::SdoInvalidCommandPayload);
@@ -321,9 +370,26 @@ mod tests {
 
         let mut buffer = [0u8; 64];
         let bytes_written = original.serialize(&mut buffer).unwrap();
+        // Corrected size: 8 (fixed header) + 8 (payload) = 16
+        assert_eq!(bytes_written, 16);
+
         // Call the inherent method, not a trait method
         let deserialized = SdoCommand::deserialize(&buffer[..bytes_written]).unwrap();
 
+        // Check header fields individually
+        assert_eq!(original.header.transaction_id, deserialized.header.transaction_id);
+        assert_eq!(original.header.is_response, deserialized.header.is_response);
+        assert_eq!(original.header.is_aborted, deserialized.header.is_aborted);
+        assert_eq!(original.header.segmentation, deserialized.header.segmentation);
+        assert_eq!(original.header.command_id, deserialized.header.command_id);
+        // segment_size in the header is the length of the data *in that segment*
+        // which is just the payload for expedited.
+        assert_eq!(original.header.segment_size, 8);
+        assert_eq!(deserialized.header.segment_size, 8);
+
+        // Check payload
+        assert_eq!(original.data_size, deserialized.data_size);
+        assert_eq!(original.payload, deserialized.payload);
         assert_eq!(original, deserialized);
     }
 
@@ -336,19 +402,23 @@ mod tests {
                 is_aborted: false,
                 segmentation: Segmentation::Initiate,
                 command_id: CommandId::WriteByIndex,
-                segment_size: 4,
+                segment_size: 4, // Size of payload (index/subindex)
             },
-            data_size: Some(1000),
+            data_size: Some(1000), // Total size of data to be written
             payload: vec![0x10, 0x60, 0x00, 0x00],
         };
 
         let mut buffer = [0u8; 64];
         let bytes_written = original.serialize(&mut buffer).unwrap();
+        // Corrected size: 8 (fixed header) + 4 (data size) + 4 (payload) = 16
+        assert_eq!(bytes_written, 16);
+
         // Call the inherent method
         let deserialized = SdoCommand::deserialize(&buffer[..bytes_written]).unwrap();
 
         assert_eq!(original, deserialized);
         assert_eq!(deserialized.data_size, Some(1000));
+        assert_eq!(deserialized.header.segment_size, 4);
     }
 
     #[test]

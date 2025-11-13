@@ -27,11 +27,12 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
   - **Chapter 6 (Application Layer): 85%**
     - `[x]` 6.1 Basic Data Types & Encoding (in `types.rs`, `od/value.rs`)
     - `[x]` 6.2 Object Dictionary Structure (in `od/` module)
-    - `[x]` 6.3.2 Service Data Objects (SDO) via ASnd
-    - `[x]` 6.3.2 Service Data Objects (SDO) via UDP/IP
+    - `[x]` 6.3.2 Service Data Objects (SDO) via ASnd (Mandatory commands: Read/WriteByIndex)
+    - `[x]` 6.3.2 Service Data Objects (SDO) via UDP/IP (Mandatory commands: Read/WriteByIndex)
     - `[x]` 6.4 Process Data Objects (PDO) (Mapping, validation, error handling)
     - `[x]` 6.5 Error Signaling (EN/EA/ER/EC flags, StatusResponse)
     - `[x]` 6.3.3 SDO Embedded in PDO
+    - `[~]` Optional SDO Commands (`WriteAllByIndex`, `WriteMultipleParamByIndex`, etc.) are *not* implemented in the core, but are supported via the `SdoCommandHandler` trait for applications to implement.
     - `[ ]` 6.6 Program Download (PDL) (MN logic to send firmware via SDO is missing)
     - `[ ]` 6.7 Configuration Management (CFM) (MN logic to send configuration via SDO is missing)
   - **Chapter 7 (Network Management): 90%**
@@ -79,6 +80,7 @@ To aid in debugging these complex integration tests, a dedicated `powerlink-rs-m
 - Phase 3: Service Data Object (SDO) Communication:
   - Focus: Reliable, asynchronous configuration and diagnostic access over ASnd frames.
   - Key Features (DS-301): Implementation of the SDO Command Layer Protocol (e.g., Read/Write by Index requests), the SDO Sequence Layer (for reliability), and integration for transfer via the mandatory ASnd frame (Method 2, signaled by NMT_FeatureFlags_U32 Bit 2).
+  - SDO Philosophy: The core crate implements all *mandatory* SDO commands (e.g., `ReadByIndex`, `WriteByIndex`). *Optional* commands (e.g., `WriteAllByIndex`, `WriteMultipleParamByIndex`) are *not* implemented in the core, but are supported via the `SdoCommandHandler` trait for applications to implement.
   - Success Metric: Successful simulated read/write transactions (SDO client and server) to the mock Object Dictionary.
   - Status: **Completed**.
 - Phase 4: Platform Abstraction and Initial I/O Layer:
@@ -103,7 +105,7 @@ To aid in debugging these complex integration tests, a dedicated `powerlink-rs-m
 - Phase 7: Debugging and Monitoring (`powerlink-rs-monitor`):
   - Focus: Implement a dedicated `powerlink-rs-monitor` crate. This tool will provide a web-based GUI for real-time diagnostics.
   - Key features:
-    - In-Process (Default): Runs as a non-real-time thread in the same application as the node, communicating via an RT-safe channel (e.g., `crossbeam-channel`). This provides deep, internal state visibility for development and debugging without impacting network performance.
+    - In-Process (Default): Runs as a non-real-time (NRT) thread in the same application as the node, communicating via an RT-safe channel (e.g., `crossbeam-channel`). This provides deep, internal state visibility for development and debugging without impacting network performance.
     - Out-of-Process (Standard): Runs as a separate, standard-compliant Diagnostic Node (e.g., Node 253) that polls the MN's diagnostic OD entries (0x1F8E, 0x1101, etc.) via SDO, allowing it to monitor any compliant MN on the network.
   - Status: **In development**.
 - Phase 8: Integration Testing and Validation:
@@ -112,7 +114,7 @@ To aid in debugging these complex integration tests, a dedicated `powerlink-rs-m
     - Develop Docker-based tests for the full boot-up sequence.
     - Test PDO data exchange in `NMT_OPERATIONAL` state.
     - Test NMT command handling (e.g., `StopNode`, `ResetNode`).
-    - Test DLL error handling scenarios (e.g., PRes timeouts).
+    - Test SDO (ASnd) read/write of mandatory commands (`ReadByIndex`, `WriteByIndex`).
   - Success Metric: All integration tests pass, demonstrating a stable and conformant basic network operation.
   - Status: **In development**. The immediate focus is on expanding the Docker-based integration tests to validate the full boot-up sequence, PDO exchange, and error handling.
 - Future (post DS-301):
