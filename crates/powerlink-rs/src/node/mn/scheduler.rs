@@ -144,9 +144,11 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
                         "[MN] BOOT_STEP2: Queuing NMTEnableReadyToOperate for Node {}.",
                         node_id.0
                     );
-                    context
-                        .pending_nmt_commands
-                        .push((NmtCommand::EnableReadyToOperate, *node_id));
+                    context.pending_nmt_commands.push((
+                        NmtCommand::EnableReadyToOperate,
+                        *node_id,
+                        crate::node::mn::state::NmtCommandData::None,
+                    ));
                 }
             }
         }

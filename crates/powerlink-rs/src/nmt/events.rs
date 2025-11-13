@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/nmt/events.rs
 use crate::PowerlinkError;
 
 /// Defines NMT Command IDs used in NMT Command frames.
@@ -13,6 +14,9 @@ pub enum NmtCommand {
     ResetCommunication = 0x29,
     ResetConfiguration = 0x2A,
     SwReset = 0x2B,
+    // NMT Managing Commands (Spec 7.3.2)
+    NmtNetHostNameSet = 0x62,
+    NmtFlushArpEntry = 0x63,
     // Extended commands (require parsing Node List in payload) are not included here for simplicity
 }
 
@@ -29,6 +33,9 @@ impl TryFrom<u8> for NmtCommand {
             0x29 => Ok(Self::ResetCommunication),
             0x2A => Ok(Self::ResetConfiguration),
             0x2B => Ok(Self::SwReset),
+            // NMT Managing Commands
+            0x62 => Ok(Self::NmtNetHostNameSet),
+            0x63 => Ok(Self::NmtFlushArpEntry),
             _ => Err(PowerlinkError::InvalidEnumValue),
         }
     }

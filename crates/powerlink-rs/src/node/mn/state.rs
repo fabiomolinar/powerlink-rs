@@ -1,8 +1,9 @@
 use crate::ErrorHandler;
+use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame};
-use crate::nmt::events::NmtCommand;
+use crate::nmt::events::NmtCommand; // Import NmtCommand
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
@@ -12,8 +13,21 @@ use crate::sdo::transport::AsndTransport;
 use crate::sdo::transport::UdpTransport;
 use crate::types::{IpAddress, NodeId};
 use alloc::collections::{BTreeMap, BinaryHeap};
+use alloc::string::String; // Import String
 use alloc::vec::Vec;
 use core::cmp::Ordering;
+
+/// Represents the data payload for an NMT Managing Command.
+/// (Reference: EPSG DS 301, Section 7.3.2)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NmtCommandData {
+    /// No data payload (for plain state commands).
+    None,
+    /// Payload for NMTNetHostNameSet (Spec 7.3.2.1.1).
+    HostName(String),
+    /// Payload for NMTFlushArpEntry (Spec 7.3.2.1.2).
+    FlushArp(NodeId),
+}
 
 /// Holds the complete state for a Managing Node.
 pub struct MnContext<'s> {
@@ -46,7 +60,9 @@ pub struct MnContext<'s> {
     /// A high-priority queue for sending StatusRequests to CNs that need an ER flag.
     pub pending_er_requests: Vec<NodeId>,
     pub pending_status_requests: Vec<NodeId>,
-    pub pending_nmt_commands: Vec<(NmtCommand, NodeId)>,
+    /// Queue for NMT commands (State and Managing) to be sent by the MN.
+    /// (Target Node ID, NMT Command ID, Command-specific Data)
+    pub pending_nmt_commands: Vec<(NmtCommand, NodeId, NmtCommandData)>,
     pub mn_async_send_queue: Vec<PowerlinkFrame>,
     /// Manages all stateful SDO client (outgoing) connections.
     pub sdo_client_manager: SdoClientManager,

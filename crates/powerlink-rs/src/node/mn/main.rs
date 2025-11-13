@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/mn/main.rs
 use std::collections::BTreeMap;
 
 use super::events;
@@ -37,6 +38,10 @@ use crate::types::IpAddress;
 
 // Import cycle functions
 use super::cycle; // Import the cycle module
+// --- NEW IMPORTS ---
+use crate::nmt::events::NmtCommand;
+use crate::node::mn::state::NmtCommandData;
+// --- END NEW IMPORTS ---
 
 /// Represents a complete POWERLINK Managing Node (MN).
 /// This struct is now a thin wrapper around the MnContext.
@@ -466,6 +471,63 @@ impl<'s> ManagingNode<'s> {
     }
 
     // --- New Public API Methods ---
+
+    /// Queues an NMT state command to be sent to a target CN or broadcast.
+    ///
+    /// # Arguments
+    /// * `command` - The NMT state command to send (e.g., `NmtCommand::StartNode`).
+    /// * `target` - The `NodeId` of the target CN, or `NodeId(C_ADR_BROADCAST_NODE_ID)` for broadcast.
+    pub fn queue_nmt_state_command(&mut self, command: NmtCommand, target: NodeId) {
+        info!(
+            "Queueing NMT State Command: {:?} for Node {}",
+            command, target.0
+        );
+        self.context
+            .pending_nmt_commands
+            .push((command, target, NmtCommandData::None));
+    }
+
+    /// Queues an NMTNetHostNameSet command to be sent to a target CN.
+    /// (Reference: EPSG DS 301, Section 7.3.2.1.1)
+    ///
+    /// # Arguments
+    /// * `target` - The `NodeId` of the target CN.
+    /// * `hostname` - The hostname to set (must be 32 chars or less).
+    pub fn set_hostname(
+        &mut self,
+        target: NodeId,
+        hostname: alloc::string::String,
+    ) -> Result<(), PowerlinkError> {
+        info!(
+            "Queueing NMTNetHostNameSet for Node {}: {}",
+            target.0, hostname
+        );
+        if hostname.len() > 32 {
+            return Err(PowerlinkError::ValidationError(
+                "Hostname exceeds 32 characters",
+            ));
+        }
+        self.context.pending_nmt_commands.push((
+            NmtCommand::NmtNetHostNameSet,
+            target,
+            NmtCommandData::HostName(hostname),
+        ));
+        Ok(())
+    }
+
+    /// Queues an NMTFlushArpEntry command to be sent as a broadcast.
+    /// (Reference: EPSG DS 301, Section 7.3.2.1.2)
+    ///
+    /// # Arguments
+    /// * `target` - The `NodeId` to flush, or `NodeId(C_ADR_BROADCAST_NODE_ID)` to flush all.
+    pub fn flush_arp_entry(&mut self, target: NodeId) {
+        info!("Queueing NMTFlushArpEntry for Node {}", target.0);
+        self.context.pending_nmt_commands.push((
+            NmtCommand::NmtFlushArpEntry,
+            NodeId(crate::types::C_ADR_BROADCAST_NODE_ID), // Command is always broadcast
+            NmtCommandData::FlushArp(target), // Payload contains the target to flush
+        ));
+    }
 
     /// Initiates an SDO Read (Upload) transfer from a target CN.
     pub fn read_object(

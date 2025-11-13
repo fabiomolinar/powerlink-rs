@@ -18,6 +18,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use log::{debug, error, trace, warn};
 
+// Import NmtCommandData
+use crate::node::mn::state::NmtCommandData;
+
 // Constants for OD access
 const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
 const OD_IDX_TPDO_MAPP_PARAM_BASE: u16 = 0x1A00;
@@ -339,6 +342,7 @@ pub(super) fn build_nmt_command_frame(
     context: &MnContext,
     command: NmtCommand,
     target_node_id: NodeId,
+    command_data: NmtCommandData,
 ) -> PowerlinkFrame {
     debug!(
         "[MN] Building ASnd(NMT Command={:?}) for Node {}",
@@ -369,7 +373,34 @@ pub(super) fn build_nmt_command_frame(
         };
         mac
     };
-    let nmt_payload = vec![command as u8, 0u8];
+
+    // --- Build NMT Command Payload ---
+    // (Reference: EPSG DS 301, Section 7.3.1.2, Table 123)
+    let nmt_payload = match command_data {
+        NmtCommandData::None => {
+            // Plain NMT State Command (2 bytes: CommandID + Reserved)
+            vec![command as u8, 0u8]
+        }
+        NmtCommandData::HostName(hostname) => {
+            // NMTNetHostNameSet (34 bytes: CommandID + Reserved + HostName[32])
+            // (Reference: EPSG DS 301, Section 7.3.2.1.1, Table 130)
+            let mut payload = Vec::with_capacity(34);
+            payload.push(command as u8); // NMTCommandID
+            payload.push(0u8); // Reserved
+            let hostname_bytes = hostname.as_bytes();
+            let len = hostname_bytes.len().min(32);
+            payload.extend_from_slice(&hostname_bytes[..len]);
+            payload.resize(34, 0u8); // Pad with zeros to 32 bytes
+            payload
+        }
+        NmtCommandData::FlushArp(flush_target_node) => {
+            // NMTFlushArpEntry (3 bytes: CommandID + Reserved + NodeID)
+            // (Reference: EPSG DS 301, Section 7.3.2.1.2, Table 132)
+            vec![command as u8, 0u8, flush_target_node.0]
+        }
+    };
+    // --- End of Payload Build ---
+
     PowerlinkFrame::ASnd(ASndFrame::new(
         context.core.mac_address,
         dest_mac,

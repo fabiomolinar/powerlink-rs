@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/mn/cycle.rs
 use super::state::{CnInfo, CyclePhase, MnContext};
 use crate::PowerlinkError;
 use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId};
@@ -16,6 +17,7 @@ use super::payload;
 use super::scheduler;
 use crate::frame::ASndFrame; // Import ASndFrame
 use crate::frame::ServiceId;
+use crate::node::mn::state::NmtCommandData; // Import NmtCommandData
 use crate::sdo::asnd::serialize_sdo_asnd_payload; // Import SDO ASnd serializer
 use crate::sdo::command::SdoCommand; // Import SdoCommand
 use crate::sdo::sequence::SequenceLayerHeader; // Import SequenceLayerHeader // Import ServiceId
@@ -243,6 +245,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                     context,
                     NmtCommand::StartNode,
                     NodeId(C_ADR_BROADCAST_NODE_ID),
+                    NmtCommandData::None,
                 ),
                 context,
             )
@@ -254,7 +257,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             info!("[MN] Queuing NMTStartNode (Unicast).");
             context
                 .pending_nmt_commands
-                .push((NmtCommand::StartNode, node_id));
+                .push((NmtCommand::StartNode, node_id, NmtCommandData::None));
         }
     } else if current_nmt_state < NmtState::NmtOperational {
         context.initial_operational_actions_done = false;
@@ -268,14 +271,16 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             // This logic was missing.
             context.current_phase = CyclePhase::Idle; // Consume the phase
 
-            if let Some((command, target_node_id)) = context.pending_nmt_commands.pop() {
+            if let Some((command, target_node_id, command_data)) =
+                context.pending_nmt_commands.pop()
+            {
                 // *** INCREMENT ASYNC TX COUNTER (NMT Command) ***
                 context.core.od.increment_counter(
                     constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                     constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
                 );
                 return serialize_frame_action(
-                    payload::build_nmt_command_frame(context, command, target_node_id),
+                    payload::build_nmt_command_frame(context, command, target_node_id, command_data),
                     context,
                 )
                 .unwrap_or(NodeAction::NoAction);
