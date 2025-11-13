@@ -14,7 +14,7 @@ powerlink-rs = { path = "../powerlink-rs", version = "0.0.0", default-features =
 log = { version = "0.4.28", default-features = false }
 
 # XML parsing. Disable default "std" feature.
-quick-xml = { version = "0.38.4", default-features = false, features = ["alloc", "serialize"] }
+quick-xml = { version = "0.38.4", default-features = false, features = ["serialize"] }
 
 # Serde for deserializing the XML structs. Disable default "std" feature.
 serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }

@@ -1,5 +1,5 @@
 // crates/powerlink-rs/src/node/mn/main.rs
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use super::events;
 use super::state::{CyclePhase, MnContext};

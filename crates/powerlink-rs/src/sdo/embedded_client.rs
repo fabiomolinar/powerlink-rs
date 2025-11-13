@@ -7,6 +7,7 @@ use crate::sdo::command::{CommandId, Segmentation};
 use crate::sdo::embedded::{PdoSdoCommand, PdoSequenceLayerHeader};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
+use alloc::vec;
 use log::{error, info, trace, warn};
 
 /// A request queued by the application to be sent via an embedded SDO client channel.
