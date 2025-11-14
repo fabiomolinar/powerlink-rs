@@ -255,6 +255,7 @@ fn get_data_type_size(
         }
     } else {
         // --- Fallback Logic: Use hard-coded hex IDs per EPSG 311, Table 56 ---
+        // This block is now corrected.
         match type_id {
             "0001" => Some(1), // Boolean
             "0002" => Some(1), // Integer8
@@ -278,7 +279,7 @@ fn get_data_type_size(
             "0401" => Some(6), // MAC_ADDRESS
             "0402" => Some(4), // IP_ADDRESS
             "0403" => Some(8), // NETTIME
-            // Variable-sized types:
+            // Variable-sized types (return None):
             "0009" // Visible_String
             | "000A" // Octet_String
             | "000B" // Unicode_String
