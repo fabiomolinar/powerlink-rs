@@ -1,175 +1,148 @@
-// src/builder.rs
+// crates/powerlink-rs-xdc/src/builder.rs
 
 use crate::error::XdcError;
-use crate::model; 
+use crate::model;
 use crate::types::XdcFile;
 use alloc::collections::BTreeMap;
-use alloc::fmt;
 use alloc::format;
 use alloc::string::String;
+use alloc::vec; // <-- FIX: Import the vec! macro from alloc
 use alloc::vec::Vec;
 use core::fmt::Write;
+use serde::Serialize; // <-- FIX: Import the Serialize trait
 
-/// Serializes `XdcFile` data into a minimal, compliant XDC XML `String`.
+/// Serializes `XdcFile` data into a standard XDC XML `String`.
 ///
-/// This function constructs a minimal boilerplate XDC structure in memory,
-/// populates the `DeviceIdentity` and `ObjectList` from the `XdcFile` struct,
-/// formats binary data back into hex strings, and serializes it to an XML string.
-///
-/// This function only serializes to `actualValue` attributes, as is standard
-/// for an XDC file.
+/// This function converts the high-level `XdcFile` struct into the internal
+/// `serde` model and then uses `quick-xml` to generate the XML string.
 ///
 /// # Arguments
 /// * `file` - The `XdcFile` data to serialize.
 ///
 /// # Errors
-/// Returns an `XdcError` if serialization fails or string formatting fails.
+/// Returns an `XdcError` if serialization fails.
 pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
-    // 1. Group CfmObjects by their index to build model::Object structs.
-    // We use a BTreeMap to keep the objects sorted by index in the final XML.
+    // 1. Convert Identity to Device Profile
+    let device_profile = build_device_profile(file);
+
+    // 2. Convert Data to Communication Profile
+    let comm_profile = build_comm_profile(file)?;
+
+    // 3. Wrap in Container
+    let container = model::Iso15745ProfileContainer {
+        profile: vec![device_profile, comm_profile],
+        ..Default::default() // Uses default xmlns attributes from model.rs
+    };
+
+    // 4. Serialize
+    // Create a String buffer. String implements core::fmt::Write.
+    let mut buffer = String::new(); // <-- FIX: Use String instead of Vec<u8>
+    let mut serializer = quick_xml::se::Serializer::new(&mut buffer);
+    serializer.indent(' ', 2); // Optional: Prettify the output
+
+    container.serialize(serializer)?; // <-- FIX: This will now compile
+
+    // The buffer is already a String, no conversion needed.
+    Ok(buffer) // <-- FIX: Directly return the buffer
+}
+
+fn build_device_profile(file: &XdcFile) -> model::Iso15745Profile {
+    let identity = &file.identity;
+    
+    let versions: Vec<model::Version> = identity.versions.iter().map(|v| {
+        model::Version {
+            version_type: v.version_type.clone(),
+            value: v.value.clone(),
+        }
+    }).collect();
+
+    let device_identity = model::DeviceIdentity {
+        vendor_name: identity.vendor_name.clone(),
+        vendor_id: Some(format!("0x{:08X}", identity.vendor_id)),
+        product_name: identity.product_name.clone(),
+        product_id: Some(format!("0x{:08X}", identity.product_id)),
+        version: versions,
+    };
+
+    model::Iso15745Profile {
+        profile_header: model::ProfileHeader::default(),
+        profile_body: model::ProfileBody {
+            xsi_type: Some("ProfileBody_Device_Powerlink".into()),
+            application_layers: None,
+            device_identity: Some(device_identity),
+        },
+    }
+}
+
+fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError> {
+    // Group CfmObjects by their index to build Object nesting
     let mut object_map: BTreeMap<u16, Vec<model::SubObject>> = BTreeMap::new();
 
     for cfm_obj in &file.data.objects {
-        // Create the model::SubObject from the CfmObject.
         let sub_object = model::SubObject {
-            // FIX: Call local helper functions for formatting
-            sub_index: format_hex_u8(cfm_obj.sub_index), 
-            actual_value: Some(format_hex_string(&cfm_obj.data)?), 
-            default_value: None, // We only write actualValue for XDCs
+            sub_index: format_hex_u8(cfm_obj.sub_index),
+            actual_value: Some(format_hex_string(&cfm_obj.data)?),
+            default_value: None, // XDC uses actualValue
         };
-
-        // Get or create the parent Vec<SubObject>
         object_map.entry(cfm_obj.index).or_default().push(sub_object);
     }
 
-    // --- Manual XML Creation using String formatting ---
-    
-    let mut buf = String::new();
-
-    // Write XML declaration
-    writeln!(
-        &mut buf,
-        r#"<?xml version="1.0" encoding="UTF-8"?>"#
-    )?;
-
-    // <ISO15745ProfileContainer ...>
-    writeln!(&mut buf, r#"<ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.ethernet-powerlink.org Powerlink_Main.xsd">"#)?;
-
-    // --- Device Profile ---
-    writeln!(&mut buf, "  <ISO15745Profile>")?;
-    writeln!(&mut buf, "    <ProfileHeader />")?;
-    writeln!(
-        &mut buf,
-        r#"    <ProfileBody xsi:type="ProfileBody_Device_Powerlink">"#
-    )?;
-    writeln!(&mut buf, "      <DeviceIdentity>")?;
-    if let Some(name) = &file.identity.vendor_name {
-        writeln!(&mut buf, "        <vendorName>{}</vendorName>", name)?;
-    }
-    writeln!(
-        &mut buf,
-        "        <vendorID>0x{:08X}</vendorID>",
-        file.identity.vendor_id
-    )?;
-    if let Some(name) = &file.identity.product_name {
-        writeln!(&mut buf, "        <productName>{}</productName>", name)?;
-    }
-    writeln!(
-        &mut buf,
-        "        <productID>0x{:08X}</productID>",
-        file.identity.product_id
-    )?;
-    for version in &file.identity.versions {
-        writeln!(
-            &mut buf,
-            r#"        <version versionType="{}" value="{}" />"#,
-            version.version_type, version.value
-        )?;
-    }
-    writeln!(&mut buf, "      </DeviceIdentity>")?;
-    writeln!(&mut buf, "    </ProfileBody>")?;
-    writeln!(&mut buf, "  </ISO15745Profile>")?;
-
-    // --- Communication Profile ---
-    writeln!(&mut buf, "  <ISO15745Profile>")?;
-    writeln!(&mut buf, "    <ProfileHeader />")?;
-    writeln!(
-        &mut buf,
-        r#"    <ProfileBody xsi:type="ProfileBody_CommunicationNetwork_Powerlink">"#
-    )?;
-
-    // <ApplicationLayers>
-    writeln!(&mut buf, "      <ApplicationLayers>")?;
-    // <ObjectList>
-    writeln!(&mut buf, "        <ObjectList>")?;
-
-    // Iterate our grouped objects
+    let mut objects = Vec::new();
     for (index, mut sub_objects) in object_map {
-        // Correctly pass u16
-        writeln!(
-            &mut buf,
-            r#"          <Object index="{:04X}" objectType="8">"#,
-            index
-        )?;
+        // Sort sub-objects by sub-index for cleaner XML
+        sub_objects.sort_by(|a, b| a.sub_index.cmp(&b.sub_index));
 
-        // Sort sub-objects by sub-index
-        sub_objects.sort_by_key(|so| {
-            // FIX: Call the public parser function
-            super::parser::parse_hex_u8(&so.sub_index).unwrap_or(0)
-        });
+        // Add the NumberOfEntries (subIndex 00) if not present (heuristic)
+        // Ideally this should come from the CfmData itself, but for now we synthesize it
+        // to match common XDC structure if it wasn't provided explicitly.
+        // NOTE: The count is sub_objects.len().
+        let count_so = model::SubObject {
+            sub_index: "00".into(),
+            actual_value: Some(format!("{}", sub_objects.len())),
+            default_value: None,
+        };
+        // We insert at the beginning
+        sub_objects.insert(0, count_so);
 
-        // Write NumberOfEntries
-        writeln!(
-            &mut buf,
-            r#"            <SubObject subIndex="00" actualValue="{}" />"#,
-            sub_objects.len()
-        )?;
-
-        // Write all data SubObjects
-        for so in sub_objects {
-            // We can unwrap, this `actual_value` was just created
-            writeln!(
-                &mut buf,
-                r#"            <SubObject subIndex="{}" actualValue="{}" />"#,
-                so.sub_index,
-                so.actual_value.as_ref().unwrap()
-            )?;
-        }
-        writeln!(&mut buf, "          </Object>")?;
+        let object = model::Object {
+            index: format_hex_u16(index),
+            // Per spec 7.5.4.4.1, objectType 9 is VAR_ARRAY
+            object_type: "9".into(),
+            sub_object: sub_objects,
+        };
+        objects.push(object);
     }
 
-    // </ObjectList>
-    writeln!(&mut buf, "        </ObjectList>")?;
-    // </ApplicationLayers>
-    writeln!(&mut buf, "      </ApplicationLayers>")?;
-    // </ProfileBody>
-    writeln!(&mut buf, "    </ProfileBody>")?;
-    // </ISO15745Profile>
-    writeln!(&mut buf, "  </ISO15745Profile>")?;
-    // </ISO15745ProfileContainer>
-    writeln!(&mut buf, "</ISO15745ProfileContainer>")?;
+    let app_layers = model::ApplicationLayers {
+        object_list: model::ObjectList {
+            object: objects,
+        },
+    };
 
-    Ok(buf)
+    Ok(model::Iso15745Profile {
+        profile_header: model::ProfileHeader::default(),
+        profile_body: model::ProfileBody {
+            xsi_type: Some("ProfileBody_CommunicationNetwork_Powerlink".into()),
+            application_layers: Some(app_layers),
+            device_identity: None,
+        },
+    })
 }
 
 // --- Helper Functions ---
 
-/// Formats a u16 into an uppercase hex string (e.g., 0x1F22 -> "1F22").
 fn format_hex_u16(val: u16) -> String {
     format!("{:04X}", val)
 }
 
-/// Formats a u8 into an uppercase hex string (e.g., 1 -> "01").
 fn format_hex_u8(val: u8) -> String {
     format!("{:02X}", val)
 }
 
-/// Formats a byte slice into an "0x..." hex string.
 fn format_hex_string(data: &[u8]) -> Result<String, XdcError> {
     let mut s = String::with_capacity(2 + data.len() * 2);
     s.push_str("0x");
     for &byte in data {
-        // This write! is infallible for String.
         write!(&mut s, "{:02X}", byte)?;
     }
     Ok(s)

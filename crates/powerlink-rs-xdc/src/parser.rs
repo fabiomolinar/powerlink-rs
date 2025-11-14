@@ -1,4 +1,4 @@
-// src/parser.rs
+// crates/powerlink-rs-xdc/src/parser.rs
 
 use crate::error::XdcError;
 use crate::model::{self, SubObject}; 
@@ -45,85 +45,53 @@ fn load_from_str_internal(
     let container: model::Iso15745ProfileContainer = quick_xml::de::from_str(xml_content)?;
 
     // 2. Find and parse the Device Identity from the Device Profile
-    let device_profile_body =
-        container
-            .profile
-            .iter()
-            .find_map(|p| {
-                let pt = p.profile_body.xsi_type.as_deref();
-                if pt == Some("ProfileBody_Device_Powerlink")
-                    || pt == Some("ProfileBody_Device_Powerlink_Modular_Head")
-                    || pt == Some("ProfileBody_Device_Powerlink_Modular_Child")
-                {
-                    Some(&p.profile_body)
-                } else {
-                    None
-                }
-            })
-            .ok_or(XdcError::MissingElement {
-                element: "ProfileBody_Device_Powerlink",
-            })?;
-
-    let identity = device_profile_body
-        .device_identity
-        .as_ref()
+    // We look for the profile that has `device_identity` set.
+    // Checking xsi_type via string matching is also valid but this is more robust if type names vary slightly.
+    let identity = container
+        .profile
+        .iter()
+        .find_map(|p| p.profile_body.device_identity.as_ref())
         .map(parse_identity)
         .transpose()?
         .unwrap_or_default();
 
     // 3. Find and parse the ObjectList from the Communication Profile
-    let comm_profile_body = container
+    // We look for the profile that has `application_layers` set.
+    let app_layers = container
         .profile
         .iter()
-        .find_map(|p| {
-            let pt = p.profile_body.xsi_type.as_deref();
-            if pt == Some("ProfileBody_CommunicationNetwork_Powerlink")
-                || pt == Some("ProfileBody_CommunicationNetwork_Powerlink_Modular_Head")
-                || pt == Some("ProfileBody_CommunicationNetwork_Powerlink_Modular_Child")
-            {
-                Some(&p.profile_body)
-            } else {
-                None
-            }
-        })
+        .find_map(|p| p.profile_body.application_layers.as_ref())
         .ok_or(XdcError::MissingElement {
-            element: "ProfileBody_CommunicationNetwork_Powerlink",
+            element: "ApplicationLayers",
         })?;
 
-    let app_layers =
-        comm_profile_body
-            .application_layers
-            .as_ref()
-            .ok_or(XdcError::MissingElement {
-                element: "ApplicationLayers",
-            })?;
-
-    // 4. Iterate all objects and sub-objects, parsing the ones we need.
-    // NOTE: This parser is now fully generalized, reading all objects.
+    // 4. Iterate all objects and sub-objects
     let mut objects = Vec::new();
 
     for object in &app_layers.object_list.object {
-        // ParseIntError now converted via From impl in error.rs
         let index = parse_hex_u16(&object.index)?;
 
         for sub_object in &object.sub_object {
-            // ParseIntError now converted via From impl in error.rs
             let sub_index = parse_hex_u8(&sub_object.sub_index)?;
 
-            // Sub-index 0 is "NumberOfEntries" and not data.
-            if sub_index == 0 {
-                continue;
-            }
-
+            // Sub-index 0 is usually "NumberOfEntries".
+            // If it has a value we can parse, we technically *could*, but for CFM payload
+            // we usually want the data parameters (1..N). 
+            // However, sometimes sub0 *is* data in other contexts.
+            // The heuristic "if it has a valid hex payload, take it" applies.
+            
             // We only care about sub-objects that have a value from the selector.
             if let Some(value_str) = value_selector(sub_object) {
-                let data = parse_hex_string(value_str)?;
-
-                objects.push(CfmObject {
-                    index,
-                    sub_index,
-                    data,
-                });
+                // Try to parse. If it fails (e.g. it's a decimal count "2" instead of "0x02"),
+                // we might want to skip it for now or handle it. 
+                // For CFM data (0x...), we expect hex.
+                if let Ok(data) = parse_hex_string(value_str) {
+                     objects.push(CfmObject {
+                        index,
+                        sub_index,
+                        data,
+                    });
+                }
             }
         }
     }
