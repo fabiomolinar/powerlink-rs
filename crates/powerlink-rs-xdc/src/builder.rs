@@ -74,6 +74,7 @@ fn build_device_profile(file: &XdcFile) -> model::Iso15745Profile {
             application_layers: None,
             device_identity: Some(device_identity),
             application_process: None,
+            network_management: None,
         },
     }
 }
@@ -164,6 +165,7 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
             application_layers: Some(app_layers),
             device_identity: None,
             application_process: None,
+            network_management: None,
         },
     })
 }
