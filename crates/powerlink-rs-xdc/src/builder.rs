@@ -37,6 +37,9 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
     // 4. Serialize
     // Create a String buffer. String implements core::fmt::Write.
     let mut buffer = String::new();
+    // We must write the XML declaration manually
+    write!(&mut buffer, "{}", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n")?;
+    
     let mut serializer = quick_xml::se::Serializer::new(&mut buffer);
     serializer.indent(' ', 2); // Optional: Prettify the output
 
@@ -79,13 +82,23 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
     // Group CfmObjects by their index to build Object nesting
     let mut object_map: BTreeMap<u16, Vec<model::SubObject>> = BTreeMap::new();
 
+    // Access the correct field `file.data.objects`
     for cfm_obj in &file.data.objects {
+        // FIX: Add all missing fields
         let sub_object = model::SubObject {
             sub_index: format_hex_u8(cfm_obj.sub_index),
-            actual_value: Some(format_hex_string(&cfm_obj.data)?),
-            default_value: None, // XDC uses actualValue
-            unique_id_ref: None,
+            name: "Sub".into(), // Required
+            object_type: "7".into(), // Required (VAR)
             data_type: None,
+            low_limit: None,
+            high_limit: None,
+            access_type: None,
+            default_value: None, // XDC uses actualValue
+            actual_value: Some(format_hex_string(&cfm_obj.data)?),
+            denotation: None,
+            pdo_mapping: None,
+            obj_flags: None,
+            unique_id_ref: None,
         };
         object_map.entry(cfm_obj.index).or_default().push(sub_object);
     }
@@ -96,25 +109,42 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
         sub_objects.sort_by(|a, b| a.sub_index.cmp(&b.sub_index));
 
         // Add the NumberOfEntries (subIndex 00) if not present (heuristic)
-        // Ideally this should come from the CfmData itself, but for now we synthesize it
-        // to match common XDC structure if it wasn't provided explicitly.
         // NOTE: The count is sub_objects.len().
+        // FIX: Add all missing fields
         let count_so = model::SubObject {
             sub_index: "00".into(),
-            actual_value: Some(format!("{}", sub_objects.len())),
-            default_value: None,
-            unique_id_ref: None,
+            name: "NumberOfEntries".into(), // Required
+            object_type: "7".into(), // Required (VAR)
             data_type: None,
+            low_limit: None,
+            high_limit: None,
+            access_type: None,
+            default_value: None,
+            actual_value: Some(format!("{}", sub_objects.len())),
+            denotation: None,
+            pdo_mapping: None,
+            obj_flags: None,
+            unique_id_ref: None,
         };
         // We insert at the beginning
         sub_objects.insert(0, count_so);
 
+        // FIX: Add all missing fields
         let object = model::Object {
             index: format_hex_u16(index),
+            name: "Obj".into(), // Required
             // Per spec 7.5.4.4.1, objectType 9 is VAR_ARRAY
-            object_type: "9".into(),
-            unique_id_ref: None,
+            object_type: "9".into(), // Required
             data_type: None,
+            low_limit: None,
+            high_limit: None,
+            access_type: None,
+            default_value: None,
+            actual_value: None, // Value is on SubObjects for RECORD
+            denotation: None,
+            pdo_mapping: None,
+            obj_flags: None,
+            unique_id_ref: None,
             sub_object: sub_objects,
         };
         objects.push(object);
@@ -151,6 +181,9 @@ fn format_hex_u8(val: u8) -> String {
 fn format_hex_string(data: &[u8]) -> Result<String, XdcError> {
     let mut s = String::with_capacity(2 + data.len() * 2);
     s.push_str("0x");
+    // This write! macro writes to a String, which implements core::fmt::Write.
+    // The `?` operator will correctly convert a `core::fmt::Error` into
+    // an `XdcError::FmtError` (via the From<fmt::Error> impl in src/error.rs).
     for &byte in data {
         write!(&mut s, "{:02X}", byte)?;
     }
