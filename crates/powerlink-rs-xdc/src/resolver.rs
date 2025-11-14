@@ -4,12 +4,13 @@
 //!
 //! This includes:
 //! 1. Parsing DeviceIdentity.
-//! 2. Building the parameter map from ApplicationProcess (Pass 1).
-//! 3. Resolving Object/SubObject values using uniqueIDRef (Pass 2).
-//! 4. Validating data types and lengths.
+//! 2. Building template and parameter maps from ApplicationProcess (Pass 1 & 2).
+//! 3. Building the DataType map from ApplicationLayers (Pass 2.5).
+//! 4. Resolving Object/SubObject values using uniqueIDRef (Pass 3).
+//! 5. Validating data types and lengths.
 
 use crate::error::XdcError;
-use crate::model::{self, Iso15745ProfileContainer, SubObject};
+use crate::model::{self, DataTypeName, Iso15745ProfileContainer, SubObject}; // <-- Import DataTypeName
 use crate::parser::{parse_hex_u16, parse_hex_u32, parse_hex_u8, parse_hex_string};
 use crate::types::{CfmData, CfmObject, Identity, Version, XdcFile};
 use alloc::collections::BTreeMap;
@@ -31,25 +32,55 @@ pub(crate) fn resolve_data(
         .transpose()?
         .unwrap_or_default();
 
-    // --- Pass 1: Build Parameter Map ---
-    let mut param_map: BTreeMap<String, String> = BTreeMap::new();
-    
+    // --- Pass 1: Build Template Map ---
+    let mut template_map: BTreeMap<String, String> = BTreeMap::new();
+
     // Find the Device Profile body, which contains the ApplicationProcess
-    if let Some(device_profile_body) = container.profile.iter().find(|p| {
-        p.profile_body.device_identity.is_some() || p.profile_body.application_process.is_some()
-    }) {
-        if let Some(app_process) = &device_profile_body.profile_body.application_process {
-            if let Some(param_list) = &app_process.parameter_list {
-                for param in &param_list.parameter {
-                    // We only care about parameters that have a uniqueID and a defaultValue
-                    if let Some(default_val) = &param.default_value {
-                        param_map.insert(param.unique_id.clone(), default_val.value.clone());
-                    }
+    let app_process = container
+        .profile
+        .iter()
+        .find_map(|p| p.profile_body.application_process.as_ref());
+
+    if let Some(app_process) = app_process {
+        if let Some(template_list) = &app_process.template_list {
+            for template in &template_list.parameter_template {
+                // We only care about templates that have a uniqueID and a defaultValue
+                if let Some(default_val) = &template.default_value {
+                    template_map.insert(template.unique_id.clone(), default_val.value.clone());
                 }
             }
         }
     }
     // --- End of Pass 1 ---
+
+    // --- Pass 2: Build Parameter Map (with template resolution) ---
+    let mut param_map: BTreeMap<String, String> = BTreeMap::new();
+    
+    if let Some(app_process) = app_process {
+        if let Some(param_list) = &app_process.parameter_list {
+            for param in &param_list.parameter {
+                // A parameter's value can come from:
+                // 1. Its own `defaultValue` element (highest priority).
+                // 2. A `defaultValue` inherited from its `templateIDRef` (fallback).
+                let value_opt = param
+                    .default_value
+                    .as_ref()
+                    .map(|v| v.value.clone())
+                    .or_else(|| {
+                        // If no direct value, try resolving templateIDRef
+                        param
+                            .template_id_ref
+                            .as_ref()
+                            .and_then(|template_id| template_map.get(template_id).cloned())
+                    });
+                
+                if let Some(value) = value_opt {
+                    param_map.insert(param.unique_id.clone(), value);
+                }
+            }
+        }
+    }
+    // --- End of Pass 2 ---
 
 
     // 3. Find and parse the ObjectList from the Communication Profile
@@ -61,7 +92,16 @@ pub(crate) fn resolve_data(
             element: "ApplicationLayers",
         })?;
 
-    // 4. --- Pass 2: Iterate objects and resolve values ---
+    // --- NEW: Pass 2.5 - Build Data Type Map ---
+    let mut type_map: BTreeMap<String, DataTypeName> = BTreeMap::new();
+    if let Some(data_type_list) = &app_layers.data_type_list {
+        for def_type in &data_type_list.def_type {
+            type_map.insert(def_type.data_type.clone(), def_type.type_name);
+        }
+    }
+    // --- End of Pass 2.5 ---
+
+    // 4. --- Pass 3: Iterate objects and resolve values ---
     let mut objects = Vec::new();
 
     for object in &app_layers.object_list.object {
@@ -94,7 +134,7 @@ pub(crate) fn resolve_data(
                 });
 
             // --- Type Validation Logic ---
-            let effective_data_type = sub_object.data_type.as_deref().or(object.data_type.as_deref());
+            let effective_data_type_id = sub_object.data_type.as_deref().or(object.data_type.as_deref());
 
             
             // We only care about sub-objects that have a value (either direct or resolved)
@@ -104,13 +144,14 @@ pub(crate) fn resolve_data(
                 // We only want to store binary CFM data.
                 if let Ok(data) = parse_hex_string(value_str) {
                     // --- Perform validation check ---
-                    if let Some(data_type_str) = effective_data_type {
-                        if let Some(expected_len) = get_data_type_size(data_type_str) {
+                    if let Some(data_type_id_str) = effective_data_type_id {
+                        // Pass the new type_map to the validation function
+                        if let Some(expected_len) = get_data_type_size(data_type_id_str, &type_map) {
                             if data.len() != expected_len {
                                 return Err(XdcError::TypeValidationError {
                                     index,
                                     sub_index,
-                                    data_type: data_type_str.to_string(),
+                                    data_type: data_type_id_str.to_string(),
                                     expected_bytes: expected_len,
                                     actual_bytes: data.len(),
                                 });
@@ -172,35 +213,75 @@ fn parse_identity(model: &model::DeviceIdentity) -> Result<Identity, XdcError> {
 }
 
 /// Maps a POWERLINK dataType ID (from EPSG 311, Table 56) to its expected byte size.
+/// It first attempts to resolve the ID using the file-provided `type_map`.
+/// If not found, it falls back to a hard-coded map.
 /// Returns `None` for variable-sized types (like strings) or unknown types.
-/// (Moved from parser.rs)
-fn get_data_type_size(data_type: &str) -> Option<usize> {
-    match data_type {
-        "0001" => Some(1), // Boolean
-        "0002" => Some(1), // Integer8
-        "0005" => Some(1), // Unsigned8
-        "0003" => Some(2), // Integer16
-        "0006" => Some(2), // Unsigned16
-        "0004" => Some(4), // Integer32
-        "0007" => Some(4), // Unsigned32
-        "0008" => Some(4), // Real32
-        "0010" => Some(3), // Integer24
-        "0016" => Some(3), // Unsigned24
-        "0012" => Some(5), // Integer40
-        "0018" => Some(5), // Unsigned40
-        "0013" => Some(6), // Integer48
-        "0019" => Some(6), // Unsigned48
-        "0014" => Some(7), // Integer56
-        "001A" => Some(7), // Unsigned56
-        "0011" => Some(8), // Real64
-        "0015" => Some(8), // Integer64
-        "001B" => Some(8), // Unsigned64
-        "0401" => Some(6), // MAC ADDRESS
-        "0402" => Some(4), // IP ADDRESS
-        "0403" => Some(8), // NETTIME
-        // Variable-sized types:
-        "0009" | "000A" | "000B" | "000D" | "000F" => None,
-        // Unknown types:
-        _ => None,
+fn get_data_type_size(
+    type_id: &str,
+    type_map: &BTreeMap<String, DataTypeName>,
+) -> Option<usize> {
+    if let Some(type_name) = type_map.get(type_id) {
+        // --- New Logic: Use the map from the XDD file ---
+        match type_name {
+            DataTypeName::Boolean => Some(1),
+            DataTypeName::Integer8 => Some(1),
+            DataTypeName::Unsigned8 => Some(1),
+            DataTypeName::Integer16 => Some(2),
+            DataTypeName::Unsigned16 => Some(2),
+            DataTypeName::Integer32 => Some(4),
+            DataTypeName::Unsigned32 => Some(4),
+            DataTypeName::Real32 => Some(4),
+            DataTypeName::Integer24 => Some(3),
+            DataTypeName::Unsigned24 => Some(3),
+            DataTypeName::Integer40 => Some(5),
+            DataTypeName::Unsigned40 => Some(5),
+            DataTypeName::Integer48 => Some(6),
+            DataTypeName::Unsigned48 => Some(6),
+            DataTypeName::Integer56 => Some(7),
+            DataTypeName::Unsigned56 => Some(7),
+            DataTypeName::Real64 => Some(8),
+            DataTypeName::Integer64 => Some(8),
+            DataTypeName::Unsigned64 => Some(8),
+            DataTypeName::MacAddress => Some(6),
+            DataTypeName::IpAddress => Some(4),
+            DataTypeName::NETTIME => Some(8),
+            // Variable-sized types:
+            DataTypeName::VisibleString
+            | DataTypeName::OctetString
+            | DataTypeName::UnicodeString
+            | DataTypeName::TimeOfDay
+            | DataTypeName::TimeDiff
+            | DataTypeName::Domain => None,
+        }
+    } else {
+        // --- Fallback Logic: Use hard-coded hex IDs ---
+        match type_id {
+            "0001" => Some(1), // Boolean
+            "0002" => Some(1), // Integer8
+            "0005" => Some(1), // Unsigned8
+            "0003" => Some(2), // Integer16
+            "0006" => Some(2), // Unsigned16
+            "0004" => Some(4), // Integer32
+            "0007" => Some(4), // Unsigned32
+            "0008" => Some(4), // Real32
+            "0010" => Some(3), // Integer24
+            "0016" => Some(3), // Unsigned24
+            "0012" => Some(5), // Integer40
+            "0018" => Some(5), // Unsigned40
+            "0013" => Some(6), // Integer48
+            "0019" => Some(6), // Unsigned48
+            "0014" => Some(7), // Integer56
+            "001A" => Some(7), // Unsigned56
+            "0011" => Some(8), // Real64
+            "0015" => Some(8), // Integer64
+            "001B" => Some(8), // Unsigned64
+            "0401" => Some(6), // MAC ADDRESS
+            "0402" => Some(4), // IP ADDRESS
+            "0403" => Some(8), // NETTIME
+            // Variable-sized types:
+            "0009" | "000A" | "000B" | "000D" | "000F" => None,
+            // Unknown types:
+            _ => None,
+        }
     }
 }

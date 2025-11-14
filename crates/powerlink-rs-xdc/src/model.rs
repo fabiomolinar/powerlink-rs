@@ -104,9 +104,14 @@ pub struct Version {
     pub value: String,
 }
 
-/// Contains the ObjectList.
+/// Contains the ObjectList and DataTypeList.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ApplicationLayers {
+    /// This optional list defines the mapping from hex ID to type name.
+    /// (EPSG 311, 7.5.4.3)
+    #[serde(rename = "DataTypeList", default, skip_serializing_if = "Option::is_none")]
+    pub data_type_list: Option<DataTypeList>,
+
     #[serde(rename = "ObjectList")]
     pub object_list: ObjectList,
 }
@@ -166,15 +171,107 @@ pub struct SubObject {
     pub data_type: Option<String>,
 }
 
-// --- NEW STRUCTS for ApplicationProcess ---
+// --- STRUCTS for DataTypeList (Comm Profile) ---
+
+/// Represents `<DataTypeList>` (EPSG 311, 7.5.4.3).
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct DataTypeList {
+    #[serde(rename = "defType", default, skip_serializing_if = "Vec::is_empty")]
+    pub def_type: Vec<DefType>,
+}
+
+/// Represents `<defType>` (EPSG 311, 7.5.4.3).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DefType {
+    /// The hex ID for the data type (e.g., "0006").
+    #[serde(rename = "@dataType")]
+    pub data_type: String,
+
+    /// This captures the name of the child element (e.g., `<Unsigned16/>`).
+    #[serde(rename = "$value")]
+    pub type_name: DataTypeName,
+}
+
+/// Represents the tag name of the child of `<defType>`.
+/// (Based on EPSG 311, Table 56).
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum DataTypeName {
+    Boolean,
+    Integer8,
+    Integer16,
+    Integer32,
+    Unsigned8,
+    Unsigned16,
+    Unsigned32,
+    Real32,
+    #[serde(rename = "Visible_String")]
+    VisibleString,
+    Integer24,
+    Real64,
+    Integer40,
+    Integer48,
+    Integer56,
+    Integer64,
+    #[serde(rename = "Octet_String")]
+    OctetString,
+    #[serde(rename = "Unicode_String")]
+    UnicodeString,
+    #[serde(rename = "Time_of_Day")]
+    TimeOfDay,
+    #[serde(rename = "Time_Diff")]
+    TimeDiff,
+    Domain,
+    Unsigned24,
+    Unsigned40,
+    Unsigned48,
+    Unsigned56,
+    Unsigned64,
+    #[serde(rename = "MAC_ADDRESS")]
+    MacAddress,
+    #[serde(rename = "IP_ADDRESS")]
+    IpAddress,
+    NETTIME,
+}
+
+// --- STRUCTS for ApplicationProcess ---
 
 /// Represents the `<ApplicationProcess>` block (EPSG 311, 7.4.7).
 /// This contains the device parameters, which are the source of default values.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ApplicationProcess {
+    /// Contains parameter definitions (EPSG 311, 7.4.7.7).
     #[serde(rename = "parameterList", default, skip_serializing_if = "Option::is_none")]
     pub parameter_list: Option<ParameterList>,
+
+    /// Contains parameter templates (EPSG 311, 7.4.7.6).
+    #[serde(rename = "templateList", default, skip_serializing_if = "Option::is_none")]
+    pub template_list: Option<TemplateList>,
+    
     // Other lists like dataTypeList, functionTypeList, etc., can be added here if needed.
+}
+
+/// Represents `<templateList>` (EPSG 311, 7.4.7.6).
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct TemplateList {
+    #[serde(rename = "parameterTemplate", default, skip_serializing_if = "Vec::is_empty")]
+    pub parameter_template: Vec<ParameterTemplate>,
+}
+
+/// Represents `<parameterTemplate>` (EPSG 311, 7.4.7.6).
+/// This is a simplified version, only capturing what we need for default value resolution.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct ParameterTemplate {
+    /// The unique ID (e.g., "Template_U16") that `templateIDRef` points to.
+    #[serde(rename = "@uniqueID")]
+    pub unique_id: String,
+
+    /// The `defaultValue` element, if present.
+    #[serde(rename = "defaultValue", default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<Value>,
+
+    /// The `actualValue` element, if present.
+    #[serde(rename = "actualValue", default, skip_serializing_if = "Option::is_none")]
+    pub actual_value: Option<Value>,
 }
 
 /// Represents `<parameterList>` (EPSG 311, 7.4.7.7).
@@ -191,6 +288,10 @@ pub struct Parameter {
     /// The unique ID (e.g., "Param1_Vendor_Specific") that `uniqueIDRef` points to.
     #[serde(rename = "@uniqueID")]
     pub unique_id: String,
+
+    /// An optional reference to a `<parameterTemplate>`.
+    #[serde(rename = "@templateIDRef", default, skip_serializing_if = "Option::is_none")]
+    pub template_id_ref: Option<String>,
     
     /// The `defaultValue` element, if present.
     #[serde(rename = "defaultValue", default, skip_serializing_if = "Option::is_none")]
