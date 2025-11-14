@@ -1,11 +1,12 @@
 // crates/powerlink-rs-xdc/src/error.rs
 
 use alloc::fmt;
+use alloc::string::String; // <-- FIX: Import String
 use core::num::ParseIntError;
 use hex::FromHexError;
 // FIX: Use the correct, public error types from the `errors::serialize` module
 use quick_xml::errors::serialize::DeError;
-use quick_xml::errors::serialize::SeError; // <-- FIX: The type is `SeError`, not `SerError`.
+use quick_xml::errors::serialize::SeError;
 use quick_xml::Error as XmlError;
 
 /// Errors that can occur during XDC parsing or serialization.
@@ -34,6 +35,15 @@ pub enum XdcError {
 
     /// An attribute (e.g., @index) had an invalid format.
     InvalidAttributeFormat { attribute: &'static str },
+
+    /// The parsed data length does not match the `dataType` attribute.
+    TypeValidationError {
+        index: u16,
+        sub_index: u8,
+        data_type: String,
+        expected_bytes: usize,
+        actual_bytes: usize,
+    },
 
     /// Functionality is not yet implemented.
     NotImplemented,

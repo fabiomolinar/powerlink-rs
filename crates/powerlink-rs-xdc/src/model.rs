@@ -133,6 +133,10 @@ pub struct Object {
     #[serde(rename = "@uniqueIDRef", default, skip_serializing_if = "Option::is_none")]
     pub unique_id_ref: Option<String>,
 
+    /// The POWERLINK data type (e.g., "0006" for Unsigned16).
+    #[serde(rename = "@dataType", default, skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<String>,
+
     /// A list of SubObjects (e.g., <SubObject subIndex="01"...>).
     #[serde(rename = "SubObject", default)]
     pub sub_object: Vec<SubObject>,
@@ -156,6 +160,10 @@ pub struct SubObject {
     /// This attribute references a Parameter's uniqueID in the ApplicationProcess.
     #[serde(rename = "@uniqueIDRef", default, skip_serializing_if = "Option::is_none")]
     pub unique_id_ref: Option<String>,
+
+    /// The POWERLINK data type (e.g., "0006" for Unsigned16).
+    #[serde(rename = "@dataType", default, skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<String>,
 }
 
 // --- NEW STRUCTS for ApplicationProcess ---

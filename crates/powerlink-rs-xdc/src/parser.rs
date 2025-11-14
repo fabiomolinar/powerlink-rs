@@ -122,6 +122,9 @@ fn load_from_str_internal(
                     }
                 });
 
+            // --- NEW: Type Validation Logic ---
+            let effective_data_type = sub_object.data_type.as_deref().or(object.data_type.as_deref());
+
             
             // We only care about sub-objects that have a value (either direct or resolved)
             if let Some(value_str) = value_str_opt {
@@ -129,6 +132,22 @@ fn load_from_str_internal(
                 // This will fail for "NumberOfEntries" (e.g., "2"), which is fine.
                 // We only want to store binary CFM data.
                 if let Ok(data) = parse_hex_string(value_str) {
+                    // --- NEW: Perform validation check ---
+                    if let Some(data_type_str) = effective_data_type {
+                        if let Some(expected_len) = get_data_type_size(data_type_str) {
+                            if data.len() != expected_len {
+                                return Err(XdcError::TypeValidationError {
+                                    index,
+                                    sub_index,
+                                    data_type: data_type_str.to_string(),
+                                    expected_bytes: expected_len,
+                                    actual_bytes: data.len(),
+                                });
+                            }
+                        }
+                    }
+                    // --- End of validation check ---
+                    
                      objects.push(CfmObject {
                         index,
                         sub_index,
@@ -178,6 +197,39 @@ fn parse_identity(model: &model::DeviceIdentity) -> Result<Identity, XdcError> {
         product_name: model.product_name.clone(),
         versions,
     })
+}
+
+/// Maps a POWERLINK dataType ID (from EPSG 311, Table 56) to its expected byte size.
+/// Returns `None` for variable-sized types (like strings) or unknown types.
+fn get_data_type_size(data_type: &str) -> Option<usize> {
+    match data_type {
+        "0001" => Some(1), // Boolean
+        "0002" => Some(1), // Integer8
+        "0005" => Some(1), // Unsigned8
+        "0003" => Some(2), // Integer16
+        "0006" => Some(2), // Unsigned16
+        "0004" => Some(4), // Integer32
+        "0007" => Some(4), // Unsigned32
+        "0008" => Some(4), // Real32
+        "0010" => Some(3), // Integer24
+        "0016" => Some(3), // Unsigned24
+        "0012" => Some(5), // Integer40
+        "0018" => Some(5), // Unsigned40
+        "0013" => Some(6), // Integer48
+        "0019" => Some(6), // Unsigned48
+        "0014" => Some(7), // Integer56
+        "001A" => Some(7), // Unsigned56
+        "0011" => Some(8), // Real64
+        "0015" => Some(8), // Integer64
+        "001B" => Some(8), // Unsigned64
+        "0401" => Some(6), // MAC ADDRESS
+        "0402" => Some(4), // IP ADDRESS
+        "0403" => Some(8), // NETTIME
+        // Variable-sized types:
+        "0009" | "000A" | "000B" | "000D" | "000F" => None,
+        // Unknown types:
+        _ => None,
+    }
 }
 
 // --- Helper Functions (Public for use in builder.rs) ---
