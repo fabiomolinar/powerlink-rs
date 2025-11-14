@@ -48,12 +48,77 @@ pub struct Iso15745Profile {
     pub profile_body: ProfileBody,
 }
 
-/// Header containing metadata. We don't parse its contents yet, but it must
-/// be present for serde to succeed.
+// --- Enums and Structs for ProfileHeader ---
+
+/// Represents the `<ProfileClassID>` element (from XSD `t_ProfileClassID`).
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileClassId {
+    DeviceProfile,
+    CommunicationNetworkProfile,
+    ApplicationLayerProfile,
+}
+
+impl Default for ProfileClassId {
+    fn default() -> Self {
+        // All fields in a struct with `#[derive(Default)]` must implement
+        // Default. `ProfileHeader` derives Default. While there's no
+        // "correct" default, `DeviceProfile` is the most common for XDC.
+        Self::DeviceProfile
+    }
+}
+
+
+/// Represents the `<ISO15745Reference>` element (from XSD `t_ISO15745Reference`).
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct Iso15745Reference {
+    #[serde(rename = "ISO15745Part")]
+    pub iso15745_part: u32,
+    #[serde(rename = "ISO15745Edition")]
+    pub iso15745_edition: u32,
+    #[serde(rename = "ProfileTechnology")]
+    pub profile_technology: String,
+}
+
+/// Represents the `<IASInterfaceType>` element wrapper (from XSD `t_IASInterfaceType`).
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct IasInterfaceType {
+    #[serde(rename = "IASInterfaceType")]
+    pub ias_interface_type: String,
+}
+
+/// Represents `<ProfileHeader>` (from XSD `t_ProfileHeader`).
+/// This contains metadata identifying the profile.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ProfileHeader {
-    // We can add fields here if we need them later (e.g., ProfileIdentification)
+    #[serde(rename = "ProfileIdentification")]
+    pub profile_identification: String,
+    
+    #[serde(rename = "ProfileRevision")]
+    pub profile_revision: String,
+
+    #[serde(rename = "ProfileName")]
+    pub profile_name: String,
+
+    #[serde(rename = "ProfileSource")]
+    pub profile_source: String,
+
+    #[serde(rename = "ProfileClassID")]
+    pub profile_class_id: ProfileClassId,
+
+    /// Stored as a string as `xs:date` (e.g., "2024-01-01")
+    #[serde(rename = "ProfileDate", default, skip_serializing_if = "Option::is_none")]
+    pub profile_date: Option<String>,
+
+    #[serde(rename = "AdditionalInformation", default, skip_serializing_if = "Option::is_none")]
+    pub additional_information: Option<String>,
+    
+    #[serde(rename = "ISO15745Reference", default, skip_serializing_if = "Vec::is_empty")]
+    pub iso15745_reference: Vec<Iso15745Reference>,
+    
+    #[serde(rename = "IASInterfaceType", default, skip_serializing_if = "Option::is_none")]
+    pub ias_interface_type: Option<IasInterfaceType>,
 }
+
 
 /// The main body containing either device or communication data.
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -232,7 +297,7 @@ pub struct SubObject {
     #[serde(rename = "@name")]
     pub name: String,
 
-    /// The object type (e.g., "7" for VAR).
+    /// The object type (e.t., "7" for VAR).
     #[serde(rename = "@objectType")]
     pub object_type: String,
 

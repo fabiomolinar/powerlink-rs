@@ -19,11 +19,13 @@ mod builder;
 mod error;
 mod model;
 mod parser;
-mod resolver; // <-- NEW: Add the resolver module
+mod resolver; // <-- Add the resolver module
 mod types;
 
 // --- Public API Re-exports ---
 
+// FIX: This is the correct public API based on the repository files.
+// It re-exports the *actual* functions from the builder and parser modules.
 pub use builder::save_xdc_to_string;
 pub use error::XdcError;
 pub use parser::{load_xdc_from_str, load_xdd_defaults_from_str};
