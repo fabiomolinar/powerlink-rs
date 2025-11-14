@@ -70,6 +70,7 @@ fn build_device_profile(file: &XdcFile) -> model::Iso15745Profile {
             xsi_type: Some("ProfileBody_Device_Powerlink".into()),
             application_layers: None,
             device_identity: Some(device_identity),
+            application_process: None, // <-- FIX: Initialize missing field
         },
     }
 }
@@ -83,6 +84,7 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
             sub_index: format_hex_u8(cfm_obj.sub_index),
             actual_value: Some(format_hex_string(&cfm_obj.data)?),
             default_value: None, // XDC uses actualValue
+            unique_id_ref: None, // <-- FIX: Initialize missing field
         };
         object_map.entry(cfm_obj.index).or_default().push(sub_object);
     }
@@ -100,6 +102,7 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
             sub_index: "00".into(),
             actual_value: Some(format!("{}", sub_objects.len())),
             default_value: None,
+            unique_id_ref: None, // <-- FIX: Initialize missing field
         };
         // We insert at the beginning
         sub_objects.insert(0, count_so);
@@ -108,6 +111,7 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
             index: format_hex_u16(index),
             // Per spec 7.5.4.4.1, objectType 9 is VAR_ARRAY
             object_type: "9".into(),
+            unique_id_ref: None, // <-- FIX: Initialize missing field
             sub_object: sub_objects,
         };
         objects.push(object);
@@ -125,6 +129,7 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
             xsi_type: Some("ProfileBody_CommunicationNetwork_Powerlink".into()),
             application_layers: Some(app_layers),
             device_identity: None,
+            application_process: None, // <-- FIX: Initialize missing field
         },
     })
 }
