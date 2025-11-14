@@ -4,8 +4,7 @@
 #![doc = "Parses and generates POWERLINK XDC (XML Device Configuration) files."]
 #![doc = ""]
 #![doc = "This `no_std + alloc` library provides type-safe parsing and serialization"]
-#![doc = "for POWERLINK XDC files, focusing on the CFM (Configuration Manager)"]
-#![doc = "data required by a Managing Node."]
+#![doc = "for POWERLINK XDC (Configuration Manager) data."]
 #![doc = ""]
 #![doc = "It supports:"]
 #![doc = "- `load_xdc_from_str`: Parsing `actualValue` attributes from an XDC."]
@@ -20,6 +19,7 @@ mod builder;
 mod error;
 mod model;
 mod parser;
+mod resolver; // <-- NEW: Add the resolver module
 mod types;
 
 // --- Public API Re-exports ---
