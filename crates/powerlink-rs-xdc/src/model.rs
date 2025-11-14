@@ -123,24 +123,95 @@ pub struct ObjectList {
     pub object: Vec<Object>,
 }
 
+// --- Enums for Object/SubObject Attributes ---
+
+/// Access types of an object / subobject (from XSD `t_ObjectAccessType`).
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectAccessType {
+    #[serde(rename = "ro")]
+    ReadOnly,
+    #[serde(rename = "wo")]
+    WriteOnly,
+    #[serde(rename = "rw")]
+    ReadWrite,
+    #[serde(rename = "const")]
+    Constant,
+}
+
+/// Ability to map an object / subobject to a PDO (from XSD `t_ObjectPDOMapping`).
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectPdoMapping {
+    #[serde(rename = "no")]
+    No,
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "optional")]
+    Optional,
+    #[serde(rename = "TPDO")]
+    Tpdo,
+    #[serde(rename = "RPDO")]
+    Rpdo,
+}
+
 /// Represents an Object Dictionary index (e.g., <Object index="1F22"...>).
+/// This struct includes attributes from the `ag_Powerlink_Object` group.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Object {
     /// The OD index as a hex string (e.g., "1F22").
     #[serde(rename = "@index")]
     pub index: String,
     
+    // --- Fields from ag_Powerlink_Object ---
+    
+    /// The name of the object.
+    #[serde(rename = "@name")]
+    pub name: String,
+
     /// The object type (e.g., "9" for RECORD).
     #[serde(rename = "@objectType")]
     pub object_type: String,
 
-    /// This attribute references a Parameter's uniqueID in the ApplicationProcess.
-    #[serde(rename = "@uniqueIDRef", default, skip_serializing_if = "Option::is_none")]
-    pub unique_id_ref: Option<String>,
-
     /// The POWERLINK data type (e.g., "0006" for Unsigned16).
     #[serde(rename = "@dataType", default, skip_serializing_if = "Option::is_none")]
     pub data_type: Option<String>,
+
+    /// The lower limit of the object's value.
+    #[serde(rename = "@lowLimit", default, skip_serializing_if = "Option::is_none")]
+    pub low_limit: Option<String>,
+
+    /// The upper limit of the object's value.
+    #[serde(rename = "@highLimit", default, skip_serializing_if = "Option::is_none")]
+    pub high_limit: Option<String>,
+
+    /// The access type (e.g., "ro", "rw").
+    #[serde(rename = "@accessType", default, skip_serializing_if = "Option::is_none")]
+    pub access_type: Option<ObjectAccessType>,
+
+    /// The default value of the object.
+    #[serde(rename = "@defaultValue", default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<String>,
+
+    /// The actual value of the object (used in XDC).
+    #[serde(rename = "@actualValue", default, skip_serializing_if = "Option::is_none")]
+    pub actual_value: Option<String>,
+
+    /// A denotation for the object.
+    #[serde(rename = "@denotation", default, skip_serializing_if = "Option::is_none")]
+    pub denotation: Option<String>,
+
+    /// The PDO mapping capability of the object.
+    #[serde(rename = "@PDOmapping", default, skip_serializing_if = "Option::is_none")]
+    pub pdo_mapping: Option<ObjectPdoMapping>,
+
+    /// Object flags.
+    #[serde(rename = "@objFlags", default, skip_serializing_if = "Option::is_none")]
+    pub obj_flags: Option<String>,
+
+    /// This attribute references a Parameter's uniqueID in the ApplicationProcess.
+    #[serde(rename = "@uniqueIDRef", default, skip_serializing_if = "Option::is_none")]
+    pub unique_id_ref: Option<String>,
+    
+    // --- End of fields from ag_Powerlink_Object ---
 
     /// A list of SubObjects (e.g., <SubObject subIndex="01"...>).
     #[serde(rename = "SubObject", default)]
@@ -148,27 +219,64 @@ pub struct Object {
 }
 
 /// Represents an Object Dictionary sub-index.
+/// This struct includes attributes from the `ag_Powerlink_Object` group.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct SubObject {
     /// The OD sub-index as a hex string (e.g., "01").
     #[serde(rename = "@subIndex")]
     pub sub_index: String,
     
-    /// The `actualValue` is the key data for an XDC file.
-    #[serde(rename = "@actualValue", default, skip_serializing_if = "Option::is_none")]
-    pub actual_value: Option<String>,
-    
+    // --- Fields from ag_Powerlink_Object ---
+
+    /// The name of the sub-object.
+    #[serde(rename = "@name")]
+    pub name: String,
+
+    /// The object type (e.g., "7" for VAR).
+    #[serde(rename = "@objectType")]
+    pub object_type: String,
+
+    /// The POWERLINK data type (e.g., "0006" for Unsigned16).
+    #[serde(rename = "@dataType", default, skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<String>,
+
+    /// The lower limit of the sub-object's value.
+    #[serde(rename = "@lowLimit", default, skip_serializing_if = "Option::is_none")]
+    pub low_limit: Option<String>,
+
+    /// The upper limit of the sub-object's value.
+    #[serde(rename = "@highLimit", default, skip_serializing_if = "Option::is_none")]
+    pub high_limit: Option<String>,
+
+    /// The access type (e.g., "ro", "rw").
+    #[serde(rename = "@accessType", default, skip_serializing_if = "Option::is_none")]
+    pub access_type: Option<ObjectAccessType>,
+
     /// The `defaultValue` is the key data for an XDD file.
     #[serde(rename = "@defaultValue", default, skip_serializing_if = "Option::is_none")]
     pub default_value: Option<String>,
+
+    /// The `actualValue` is the key data for an XDC file.
+    #[serde(rename = "@actualValue", default, skip_serializing_if = "Option::is_none")]
+    pub actual_value: Option<String>,
+
+    /// A denotation for the sub-object.
+    #[serde(rename = "@denotation", default, skip_serializing_if = "Option::is_none")]
+    pub denotation: Option<String>,
+
+    /// The PDO mapping capability of the sub-object.
+    #[serde(rename = "@PDOmapping", default, skip_serializing_if = "Option::is_none")]
+    pub pdo_mapping: Option<ObjectPdoMapping>,
+
+    /// Object flags.
+    #[serde(rename = "@objFlags", default, skip_serializing_if = "Option::is_none")]
+    pub obj_flags: Option<String>,
 
     /// This attribute references a Parameter's uniqueID in the ApplicationProcess.
     #[serde(rename = "@uniqueIDRef", default, skip_serializing_if = "Option::is_none")]
     pub unique_id_ref: Option<String>,
 
-    /// The POWERLINK data type (e.g., "0006" for Unsigned16).
-    #[serde(rename = "@dataType", default, skip_serializing_if = "Option::is_none")]
-    pub data_type: Option<String>,
+    // --- End of fields from ag_Powerlink_Object ---
 }
 
 // --- STRUCTS for DataTypeList (Comm Profile) ---
