@@ -80,12 +80,23 @@ This table tracks the crate's implementation status against the main features of
 - **Success Metric:** The crate can parse 100% of the elements and attributes defined in the EPSG DS 311 XSDs.
 - **Status:** 🔴 **Not Started**
 
-### Phase 3: Validation & Ergonomics
+### Phase 3: Comprehensive Testing & Validation
 
-- **Focus:** Move beyond simple parsing to provide data validation and creation (builder) tools.
+- **Focus:** Ensure the parser is robust, compliant, and correct by testing against a wide variety of real-world and malformed XDC files.
+- **Key Features:**
+  - Integrate a test suite of diverse, valid XDC files from different vendors.
+  - Create specification-driven unit tests for all resolver logic (e.g., `accessType` parsing, `PDOmapping` logic).
+  - Develop fuzz tests to handle malformed or unexpected XML structures.
+  - Add tests for edge-case data type parsing (e.g., `Unsigned24`, bit-packed structs).
+- **Success Metric:** The crate achieves >95% test coverage and correctly parses all valid XDC files in the test suite while returning descriptive errors for all malformed ones.
+- **Status:** 🔴 **Not Started**
+
+### Phase 4: Builder API & Serialization
+
+- **Focus:** Move beyond parsing to provide ergonomic data creation (builder) tools and serialization.
 - **Key Features:**
   - Implement the `builder.rs` API for programmatically creating new `XdcFile` structs.
-  - Add a `validate()` method to `XdcFile` that checks for common configuration errors (e.g., invalid PDO mappings, missing mandatory objects).
   - Implement `quick-xml` serialization to write an `XdcFile` struct back to an XML string.
+  - Add a high-level `validate()` method to `XdcFile` that checks for common *semantic* configuration errors (e.g., invalid PDO mappings).
 - **Success Metric:** A user can create a valid XDC file from scratch, serialize it to XML, parse it back, and get an identical struct.
 - **Status:** 🔴 **Not Started**
