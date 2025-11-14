@@ -3,7 +3,8 @@
 use crate::error::XdcError;
 use crate::model::{self, SubObject}; 
 use crate::types::{CfmData, CfmObject, Identity, Version, XdcFile};
-use alloc::string::String;
+use alloc::collections::BTreeMap; // <-- Import BTreeMap
+use alloc::string::{String, ToString}; // <-- Import ToString
 use alloc::vec::Vec;
 use core::num::ParseIntError;
 
@@ -19,6 +20,8 @@ use core::num::ParseIntError;
 /// Returns an `XdcError` if parsing fails, hex conversion fails, or
 /// critical elements are missing.
 pub fn load_xdc_from_str(xml_content: &str) -> Result<XdcFile, XdcError> {
+    // For XDC (configuration), we only care about `actualValue`.
+    // We do not resolve `uniqueIDRef` as `actualValue` is required to be present.
     load_from_str_internal(xml_content, |so| so.actual_value.as_ref())
 }
 
@@ -26,12 +29,15 @@ pub fn load_xdc_from_str(xml_content: &str) -> Result<XdcFile, XdcError> {
 /// from `defaultValue` attributes.
 ///
 /// This function is used to load the default factory configuration from
-/// a device description file.
+/// a device description file. It supports resolving `uniqueIDRef` attributes
+/// to the `ApplicationProcess` parameter list.
 ///
 /// # Errors
 /// Returns an `XdcError` if parsing fails, hex conversion fails, or
 /// critical elements are missing.
 pub fn load_xdd_defaults_from_str(xml_content: &str) -> Result<XdcFile, XdcError> {
+    // For XDD (description), we prioritize `defaultValue` but will
+    // fall back to resolving `uniqueIDRef` if it's not present.
     load_from_str_internal(xml_content, |so| so.default_value.as_ref())
 }
 
@@ -45,8 +51,6 @@ fn load_from_str_internal(
     let container: model::Iso15745ProfileContainer = quick_xml::de::from_str(xml_content)?;
 
     // 2. Find and parse the Device Identity from the Device Profile
-    // We look for the profile that has `device_identity` set.
-    // Checking xsi_type via string matching is also valid but this is more robust if type names vary slightly.
     let identity = container
         .profile
         .iter()
@@ -55,8 +59,29 @@ fn load_from_str_internal(
         .transpose()?
         .unwrap_or_default();
 
+    // --- NEW: Pass 1 - Build Parameter Map ---
+    // Create a lookup map for uniqueID -> defaultValue string
+    let mut param_map: BTreeMap<String, String> = BTreeMap::new();
+    
+    // Find the Device Profile body, which contains the ApplicationProcess
+    if let Some(device_profile_body) = container.profile.iter().find(|p| {
+        p.profile_body.device_identity.is_some() || p.profile_body.application_process.is_some()
+    }) {
+        if let Some(app_process) = &device_profile_body.profile_body.application_process {
+            if let Some(param_list) = &app_process.parameter_list {
+                for param in &param_list.parameter {
+                    // We only care about parameters that have a uniqueID and a defaultValue
+                    if let Some(default_val) = &param.default_value {
+                        param_map.insert(param.unique_id.clone(), default_val.value.clone());
+                    }
+                }
+            }
+        }
+    }
+    // --- End of Pass 1 ---
+
+
     // 3. Find and parse the ObjectList from the Communication Profile
-    // We look for the profile that has `application_layers` set.
     let app_layers = container
         .profile
         .iter()
@@ -65,7 +90,7 @@ fn load_from_str_internal(
             element: "ApplicationLayers",
         })?;
 
-    // 4. Iterate all objects and sub-objects
+    // 4. --- NEW: Pass 2 - Iterate objects and resolve values ---
     let mut objects = Vec::new();
 
     for object in &app_layers.object_list.object {
@@ -74,17 +99,35 @@ fn load_from_str_internal(
         for sub_object in &object.sub_object {
             let sub_index = parse_hex_u8(&sub_object.sub_index)?;
 
-            // Sub-index 0 is usually "NumberOfEntries".
-            // If it has a value we can parse, we technically *could*, but for CFM payload
-            // we usually want the data parameters (1..N). 
-            // However, sometimes sub0 *is* data in other contexts.
-            // The heuristic "if it has a valid hex payload, take it" applies.
+            // Logic to find the correct value string:
+            // 1. Try the direct selector (e.g., `actualValue` or `defaultValue` on the SubObject)
+            // 2. If that's None, try resolving the SubObject's `uniqueIDRef`
+            // 3. If that's None, try resolving the parent Object's `uniqueIDRef` (applies to SubIndex 00 only per spec)
             
-            // We only care about sub-objects that have a value from the selector.
-            if let Some(value_str) = value_selector(sub_object) {
-                // Try to parse. If it fails (e.g. it's a decimal count "2" instead of "0x02"),
-                // we might want to skip it for now or handle it. 
-                // For CFM data (0x...), we expect hex.
+            let value_str_opt = value_selector(sub_object)
+                .or_else(|| {
+                    // Try to resolve SubObject's uniqueIDRef
+                    sub_object.unique_id_ref.as_ref().and_then(|id_ref| {
+                        param_map.get(id_ref).map(|val_str| val_str)
+                    })
+                })
+                .or_else(|| {
+                    // If still None, and we are sub-index 0, check the parent Object's uniqueIDRef
+                    if sub_index == 0 {
+                         object.unique_id_ref.as_ref().and_then(|id_ref| {
+                            param_map.get(id_ref).map(|val_str| val_str)
+                        })
+                    } else {
+                        None
+                    }
+                });
+
+            
+            // We only care about sub-objects that have a value (either direct or resolved)
+            if let Some(value_str) = value_str_opt {
+                // Try to parse the value as hex.
+                // This will fail for "NumberOfEntries" (e.g., "2"), which is fine.
+                // We only want to store binary CFM data.
                 if let Ok(data) = parse_hex_string(value_str) {
                      objects.push(CfmObject {
                         index,
