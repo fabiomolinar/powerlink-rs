@@ -276,7 +276,7 @@ mod tests {
         // Correct the assertion: Expect BufferTooShort, not InvalidEthernetFrame
         assert!(matches!(
             result_header,
-            Err(PowerlinkError::BufferTooShort) // <-- FIX: Changed expected error
+            Err(PowerlinkError::BufferTooShort)
         ));
 
         // Test buffer that is too short for payload size indicated IN the frame

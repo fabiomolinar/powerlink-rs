@@ -1,10 +1,9 @@
 // crates/powerlink-rs-xdc/src/error.rs
 
 use alloc::fmt;
-use alloc::string::String; // <-- FIX: Import String
+use alloc::string::String;
 use core::num::ParseIntError;
 use hex::FromHexError;
-// FIX: Use the correct, public error types from the `errors::serialize` module
 use quick_xml::errors::serialize::DeError;
 use quick_xml::errors::serialize::SeError;
 use quick_xml::Error as XmlError;
@@ -16,7 +15,7 @@ pub enum XdcError {
     XmlParsing(DeError),
 
     /// An error from the underlying `quick-xml` serializer.
-    XmlSerializing(SeError), // <-- FIX: This now matches the import
+    XmlSerializing(SeError),
 
     /// An error from the underlying `quick-xml` writer (e.g., I/O).
     XmlWriting(XmlError),
@@ -55,7 +54,6 @@ impl From<DeError> for XdcError {
     }
 }
 
-// <-- FIX: Implement From for the correct `SeError` type -->
 impl From<SeError> for XdcError {
     fn from(e: SeError) -> Self {
         XdcError::XmlSerializing(e)

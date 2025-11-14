@@ -6,10 +6,10 @@ use crate::types::XdcFile;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
-use alloc::vec; // <-- FIX: Import the vec! macro from alloc
+use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Write;
-use serde::Serialize; // <-- FIX: Import the Serialize trait
+use serde::Serialize;
 
 /// Serializes `XdcFile` data into a standard XDC XML `String`.
 ///
@@ -36,14 +36,14 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
 
     // 4. Serialize
     // Create a String buffer. String implements core::fmt::Write.
-    let mut buffer = String::new(); // <-- FIX: Use String instead of Vec<u8>
+    let mut buffer = String::new();
     let mut serializer = quick_xml::se::Serializer::new(&mut buffer);
     serializer.indent(' ', 2); // Optional: Prettify the output
 
-    container.serialize(serializer)?; // <-- FIX: This will now compile
+    container.serialize(serializer)?;
 
     // The buffer is already a String, no conversion needed.
-    Ok(buffer) // <-- FIX: Directly return the buffer
+    Ok(buffer)
 }
 
 fn build_device_profile(file: &XdcFile) -> model::Iso15745Profile {
@@ -70,7 +70,7 @@ fn build_device_profile(file: &XdcFile) -> model::Iso15745Profile {
             xsi_type: Some("ProfileBody_Device_Powerlink".into()),
             application_layers: None,
             device_identity: Some(device_identity),
-            application_process: None, // <-- FIX: Initialize missing field
+            application_process: None,
         },
     }
 }
@@ -84,8 +84,8 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
             sub_index: format_hex_u8(cfm_obj.sub_index),
             actual_value: Some(format_hex_string(&cfm_obj.data)?),
             default_value: None, // XDC uses actualValue
-            unique_id_ref: None, // <-- FIX: Initialize missing field
-            data_type: None, // <-- FIX: Initialize missing field
+            unique_id_ref: None,
+            data_type: None,
         };
         object_map.entry(cfm_obj.index).or_default().push(sub_object);
     }
@@ -103,8 +103,8 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
             sub_index: "00".into(),
             actual_value: Some(format!("{}", sub_objects.len())),
             default_value: None,
-            unique_id_ref: None, // <-- FIX: Initialize missing field
-            data_type: None, // <-- FIX: Initialize missing field
+            unique_id_ref: None,
+            data_type: None,
         };
         // We insert at the beginning
         sub_objects.insert(0, count_so);
@@ -113,8 +113,8 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
             index: format_hex_u16(index),
             // Per spec 7.5.4.4.1, objectType 9 is VAR_ARRAY
             object_type: "9".into(),
-            unique_id_ref: None, // <-- FIX: Initialize missing field
-            data_type: None, // <-- FIX: Initialize missing field
+            unique_id_ref: None,
+            data_type: None,
             sub_object: sub_objects,
         };
         objects.push(object);
@@ -124,6 +124,7 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
         object_list: model::ObjectList {
             object: objects,
         },
+        data_type_list: None, // XDC files typically don't generate this
     };
 
     Ok(model::Iso15745Profile {
@@ -132,7 +133,7 @@ fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError
             xsi_type: Some("ProfileBody_CommunicationNetwork_Powerlink".into()),
             application_layers: Some(app_layers),
             device_identity: None,
-            application_process: None, // <-- FIX: Initialize missing field
+            application_process: None,
         },
     })
 }

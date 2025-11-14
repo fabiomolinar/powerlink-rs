@@ -339,7 +339,6 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
 
             if let Some(frame) = context.mn_async_send_queue.pop() {
                 // *** INCREMENT ASYNC TX COUNTER (Generic) ***
-                // FIX: Corrected typo N-Z-MT -> NMT
                 context.core.od.increment_counter(
                     constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                     constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,

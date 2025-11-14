@@ -126,7 +126,6 @@ impl Codec for ASndFrame {
             if buffer.len() < padded_pl_len {
                 return Err(PowerlinkError::BufferTooShort); // Need space for padding
             }
-            // FIX: Pad from end of data to padded length, not from total_pl_frame_size
             buffer[pl_frame_len..padded_pl_len].fill(0); // Pad with zeros
         }
 
@@ -156,7 +155,6 @@ impl Codec for ASndFrame {
         // This assumes padding is always zero and the actual payload doesn't end in zero.
         let potential_payload = &buffer[pl_header_size..];
         let min_eth_payload_after_header = 46; // 60 total - 14 eth header
-        // FIX: The buffer length is the length of the *PL* part, not the whole eth frame
         let payload = if buffer.len() == min_eth_payload_after_header {
             // If the PL frame section is *exactly* the minimum size, padding *might* exist.
             // Find the last non-zero byte. This assumes padding is always zero.

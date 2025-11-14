@@ -125,7 +125,6 @@ impl EmbeddedSdoServer {
             index: req.index,
             sub_index: req.sub_index,
             data: if let Some(code) = abort_code {
-                // FIX: Explicitly type `code` as u32
                 (code as u32).to_le_bytes().to_vec()
             } else {
                 data

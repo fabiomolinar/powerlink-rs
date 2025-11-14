@@ -233,7 +233,6 @@ pub trait PdoHandler<'s>: NodeContext<'s> {
                     "[SDO-PDO] Server: Received request on channel {:#06X}",
                     entry.index
                 );
-                // FIX: Borrow core_mut() once, then access od and server
                 let core = self.core_mut();
                 core.embedded_sdo_server.handle_request(
                     entry.index,

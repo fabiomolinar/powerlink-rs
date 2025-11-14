@@ -70,7 +70,6 @@ pub(super) fn determine_next_async_action(
     }
 
     // 5. Check for pending SDO client requests from the MN's new stateful manager.
-    // FIX: (E0609) Replaced pending_sdo_client_requests with sdo_client_manager
     if let Some((target_node_id, _seq, _cmd)) = context.sdo_client_manager.get_pending_request(
         context.current_cycle_start_time_us, // Use a current time
         &context.core.od,

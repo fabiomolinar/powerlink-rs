@@ -180,7 +180,6 @@ impl<'s> ManagingNode<'s> {
             _ => {
                 // SoC, PReq, SoA are sent *by* the MN, not received by it.
                 // Receiving one is a network error (e.g., another MN).
-                // FIX: Correctly log the message type
                 let frame_type_for_log = match &frame {
                     PowerlinkFrame::Soc(_) => MessageType::SoC,
                     PowerlinkFrame::PReq(_) => MessageType::PReq,
@@ -203,7 +202,6 @@ impl<'s> ManagingNode<'s> {
     fn process_ethernet_frame(&mut self, frame_bytes: &[u8], current_time_us: u64) -> NodeAction {
         // --- 1. Update NMT State (for Resetting) ---
         // NmtResetting is not a valid state, use NmtResetCommunication
-        // FIX: Corrected NMT state variant
         if self.context.nmt_state_machine.current_state() == NmtState::NmtGsResetCommunication {
             self.context.nmt_state_machine.process_event(
                 crate::nmt::events::NmtEvent::Error, // Use a generic event
@@ -484,7 +482,6 @@ impl<'s> ManagingNode<'s> {
                 &mut self.context,
                 event,
                 // Corrected: Use SocFrame::new with default values
-                // FIX: MacAddress needs Default
                 &PowerlinkFrame::Soc(SocFrame::new(
                     Default::default(),
                     Default::default(),
@@ -779,7 +776,6 @@ impl<'s> Node for ManagingNode<'s> {
 
         // Check all possible timers
         let sdo_server_time = self.context.core.sdo_server.next_action_time();
-        // FIX: Call the next_action_time method on SdoClientManager
         let sdo_client_time = self
             .context
             .sdo_client_manager

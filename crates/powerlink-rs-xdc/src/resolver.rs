@@ -10,7 +10,7 @@
 //! 5. Validating data types and lengths.
 
 use crate::error::XdcError;
-use crate::model::{self, DataTypeName, Iso15745ProfileContainer, SubObject}; // <-- Import DataTypeName
+use crate::model::{self, DataTypeName, Iso15745ProfileContainer, SubObject};
 use crate::parser::{parse_hex_u16, parse_hex_u32, parse_hex_u8, parse_hex_string};
 use crate::types::{CfmData, CfmObject, Identity, Version, XdcFile};
 use alloc::collections::BTreeMap;
@@ -221,27 +221,27 @@ fn get_data_type_size(
     type_map: &BTreeMap<String, DataTypeName>,
 ) -> Option<usize> {
     if let Some(type_name) = type_map.get(type_id) {
-        // --- New Logic: Use the map from the XDD file ---
+        // --- Logic: Use the map from the XDD file's <DataTypeList> ---
         match type_name {
             DataTypeName::Boolean => Some(1),
             DataTypeName::Integer8 => Some(1),
             DataTypeName::Unsigned8 => Some(1),
             DataTypeName::Integer16 => Some(2),
             DataTypeName::Unsigned16 => Some(2),
+            DataTypeName::Integer24 => Some(3),
+            DataTypeName::Unsigned24 => Some(3),
             DataTypeName::Integer32 => Some(4),
             DataTypeName::Unsigned32 => Some(4),
             DataTypeName::Real32 => Some(4),
-            DataTypeName::Integer24 => Some(3),
-            DataTypeName::Unsigned24 => Some(3),
             DataTypeName::Integer40 => Some(5),
             DataTypeName::Unsigned40 => Some(5),
             DataTypeName::Integer48 => Some(6),
             DataTypeName::Unsigned48 => Some(6),
             DataTypeName::Integer56 => Some(7),
             DataTypeName::Unsigned56 => Some(7),
-            DataTypeName::Real64 => Some(8),
             DataTypeName::Integer64 => Some(8),
             DataTypeName::Unsigned64 => Some(8),
+            DataTypeName::Real64 => Some(8),
             DataTypeName::MacAddress => Some(6),
             DataTypeName::IpAddress => Some(4),
             DataTypeName::NETTIME => Some(8),
@@ -254,32 +254,39 @@ fn get_data_type_size(
             | DataTypeName::Domain => None,
         }
     } else {
-        // --- Fallback Logic: Use hard-coded hex IDs ---
+        // --- Fallback Logic: Use hard-coded hex IDs per EPSG 311, Table 56 ---
         match type_id {
             "0001" => Some(1), // Boolean
             "0002" => Some(1), // Integer8
-            "0005" => Some(1), // Unsigned8
             "0003" => Some(2), // Integer16
-            "0006" => Some(2), // Unsigned16
             "0004" => Some(4), // Integer32
+            "0005" => Some(1), // Unsigned8
+            "0006" => Some(2), // Unsigned16
             "0007" => Some(4), // Unsigned32
             "0008" => Some(4), // Real32
             "0010" => Some(3), // Integer24
-            "0016" => Some(3), // Unsigned24
-            "0012" => Some(5), // Integer40
-            "0018" => Some(5), // Unsigned40
-            "0013" => Some(6), // Integer48
-            "0019" => Some(6), // Unsigned48
-            "0014" => Some(7), // Integer56
-            "001A" => Some(7), // Unsigned56
             "0011" => Some(8), // Real64
+            "0012" => Some(5), // Integer40
+            "0013" => Some(6), // Integer48
+            "0014" => Some(7), // Integer56
             "0015" => Some(8), // Integer64
+            "0016" => Some(3), // Unsigned24
+            "0017" => Some(5), // Unsigned40
+            "0018" => Some(6), // Unsigned48
+            "0019" => Some(7), // Unsigned56
             "001B" => Some(8), // Unsigned64
-            "0401" => Some(6), // MAC ADDRESS
-            "0402" => Some(4), // IP ADDRESS
+            "0401" => Some(6), // MAC_ADDRESS
+            "0402" => Some(4), // IP_ADDRESS
             "0403" => Some(8), // NETTIME
             // Variable-sized types:
-            "0009" | "000A" | "000B" | "000D" | "000F" => None,
+            "0009" // Visible_String
+            | "000A" // Octet_String
+            | "000B" // Unicode_String
+            | "000C" // Time_of_Day
+            | "000D" // Time_Diff
+            | "000F" // Domain
+            | "001A" // BITSTRING
+            => None,
             // Unknown types:
             _ => None,
         }
