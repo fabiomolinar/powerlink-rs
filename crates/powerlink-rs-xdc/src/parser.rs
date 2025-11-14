@@ -1,86 +1,82 @@
 // crates/powerlink-rs-xdc/src/parser.rs
 
+//! The internal XML parser and helper functions for parsing hex strings.
+
 use crate::error::XdcError;
-use crate::model::{self, SubObject};
-use crate::resolver; // <-- NEW: Import the resolver
-use crate::types::{XdcFile};
+use crate::model;
+use crate::resolver; // This module's functions are now called by `load_...`
+use crate::resolver::ValueMode; // Import the new ValueMode enum
+use crate::types::XdcFile;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::num::ParseIntError;
+use hex::FromHexError;
+use quick_xml::de::from_str;
 
-/// Parses an XDC (XML Device Configuration) string slice and extracts CFM object data
-/// from `actualValue` attributes.
+// --- Public API Functions ---
+
+/// Loads XDC data (using `actualValue`) from an XML string.
 ///
-/// This function is used to load a device's final configuration.
+/// This function parses the XML and resolves the data model by prioritizing
+/// the `actualValue` attributes, which is standard for XDC (Configuration) files.
+pub fn load_xdc_from_str(s: &str) -> Result<XdcFile, XdcError> {
+    let container = parse_xml_str(s)?;
+    // FIX: Call the new resolver with ValueMode::Actual
+    resolver::resolve_data(container, ValueMode::Actual)
+}
+
+/// Loads XDD default data (using `defaultValue`) from an XML string.
 ///
-/// # Arguments
-/// * `xml_content` - A string slice containing the full XDC XML file.
-///
-/// # Errors
-/// Returns an `XdcError` if parsing fails, hex conversion fails, or
-/// critical elements are missing.
-pub fn load_xdc_from_str(xml_content: &str) -> Result<XdcFile, XdcError> {
-    // For XDC (configuration), we only care about `actualValue`.
-    // We do not resolve `uniqueIDRef` as `actualValue` is required to be present.
-    load_from_str_internal(xml_content, |so| so.actual_value.as_ref())
+/// This function parses the XML and resolves the data model by prioritizing
+/// the `defaultValue` attributes, which is standard for XDD (Device Description) files.
+pub fn load_xdd_defaults_from_str(s: &str) -> Result<XdcFile, XdcError> {
+    let container = parse_xml_str(s)?;
+    // FIX: Call the new resolver with ValueMode::Default
+    resolver::resolve_data(container, ValueMode::Default)
 }
 
-/// Parses an XDD (XML Device Description) string slice and extracts CFM object data
-/// from `defaultValue` attributes.
-///
-/// This function is used to load the default factory configuration from
-/// a device description file. It supports resolving `uniqueIDRef` attributes
-/// to the `ApplicationProcess` parameter list.
-///
-/// # Errors
-/// Returns an `XdcError` if parsing fails, hex conversion fails, or
-/// critical elements are missing.
-pub fn load_xdd_defaults_from_str(xml_content: &str) -> Result<XdcFile, XdcError> {
-    // For XDD (description), we prioritize `defaultValue` but will
-    // fall back to resolving `uniqueIDRef` if it's not present.
-    load_from_str_internal(xml_content, |so| so.default_value.as_ref())
+// --- Internal XML Deserialization ---
+
+/// The core internal function that uses `quick-xml` to deserialize the string
+/// into the raw `model` structs.
+pub(crate) fn parse_xml_str(s: &str) -> Result<model::Iso15745ProfileContainer, XdcError> {
+    // quick-xml's deserializer is very efficient.
+    // It maps the XML structure directly to our `model` structs.
+    from_str(s).map_err(XdcError::from)
 }
 
-/// Internal parsing logic that accepts a closure to select the correct
-/// attribute (`actualValue` or `defaultValue`).
-fn load_from_str_internal(
-    xml_content: &str,
-    value_selector: impl Fn(&SubObject) -> Option<&String>,
-) -> Result<XdcFile, XdcError> {
-    // 1. Deserialize the raw XML string into our internal model.
-    let container: model::Iso15745ProfileContainer = quick_xml::de::from_str(xml_content)?;
+// --- Hex String Parsing Helpers ---
+// These are used by the resolver.
 
-    // 2. Pass the deserialized struct to the resolver for logic processing.
-    //    All complex logic (parameter mapping, value resolution, type validation)
-    //    is now handled by the resolver.
-    resolver::resolve_data(container, value_selector)
+/// Parses a "0x..." or "..." hex string into a `u32`.
+pub(crate) fn parse_hex_u32(s: &str) -> Result<u32, ParseIntError> {
+    let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
+    u32::from_str_radix(s_no_prefix, 16)
 }
 
-// --- Helper Functions (Public for use in builder.rs and resolver.rs) ---
-
-/// Parses a "0x..." or "..." hex string into a u32.
-pub fn parse_hex_u32(s: &str) -> Result<u32, ParseIntError> {
-    let trimmed = s.strip_prefix("0x").unwrap_or(s);
-    u32::from_str_radix(trimmed, 16)
+/// Parses a "0x..." or "..." hex string into a `u16`.
+pub(crate) fn parse_hex_u16(s: &str) -> Result<u16, ParseIntError> {
+    let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
+    u16::from_str_radix(s_no_prefix, 16)
 }
 
-/// Parses a "0x..." or "..." hex string into a u16.
-pub fn parse_hex_u16(s: &str) -> Result<u16, ParseIntError> {
-    let trimmed = s.strip_prefix("0x").unwrap_or(s);
-    u16::from_str_radix(trimmed, 16)
+/// Parses a "0x..." or "..." hex string into a `u8`.
+pub(crate) fn parse_hex_u8(s: &str) -> Result<u8, ParseIntError> {
+    let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
+    u8::from_str_radix(s_no_prefix, 16)
 }
 
-/// Parses a "0x..." or "..." hex string into a u8.
-pub fn parse_hex_u8(s: &str) -> Result<u8, ParseIntError> {
-    let trimmed = s.strip_prefix("0x").unwrap_or(s);
-    u8::from_str_radix(trimmed, 16)
-}
-
-/// Parses a "0x..." or "..." hex string into a Vec<u8>.
-pub fn parse_hex_string(s: &str) -> Result<Vec<u8>, XdcError> {
-    let trimmed = s.strip_prefix("0x").unwrap_or(s);
-    if trimmed.len() % 2 != 0 {
-        return Err(XdcError::HexParsing(hex::FromHexError::OddLength));
+/// Parses a "0x..." or "..." hex string into a byte vector.
+pub(crate) fn parse_hex_string(s: &str) -> Result<Vec<u8>, FromHexError> {
+    let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
+    
+    // Handle odd-length strings by padding with a leading zero
+    if s_no_prefix.len() % 2 != 0 {
+        let mut padded_s = String::with_capacity(s_no_prefix.len() + 1);
+        padded_s.push('0');
+        padded_s.push_str(s_no_prefix);
+        hex::decode(padded_s)
+    } else {
+        hex::decode(s_no_prefix)
     }
-    hex::decode(trimmed).map_err(XdcError::HexParsing)
 }

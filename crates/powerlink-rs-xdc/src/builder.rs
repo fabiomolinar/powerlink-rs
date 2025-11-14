@@ -2,11 +2,11 @@
 
 use crate::error::XdcError;
 use crate::model;
+use crate::types; // Use the main types module
 use crate::types::XdcFile;
-use alloc::collections::BTreeMap;
 use alloc::format;
-use alloc::string::String;
 use alloc::vec;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write;
 use serde::Serialize;
@@ -23,10 +23,10 @@ use serde::Serialize;
 /// Returns an `XdcError` if serialization fails.
 pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
     // 1. Convert Identity to Device Profile
-    let device_profile = build_device_profile(file);
+    let device_profile = build_device_profile(&file.header, &file.identity);
 
     // 2. Convert Data to Communication Profile
-    let comm_profile = build_comm_profile(file)?;
+    let comm_profile = build_comm_profile(&file.header, &file.object_dictionary)?;
 
     // 3. Wrap in Container
     let container = model::Iso15745ProfileContainer {
@@ -37,6 +37,7 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
     // 4. Serialize
     // Create a String buffer. String implements core::fmt::Write.
     let mut buffer = String::new();
+    
     // We must write the XML declaration manually
     write!(&mut buffer, "{}", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n")?;
     
@@ -49,15 +50,33 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
     Ok(buffer)
 }
 
-fn build_device_profile(file: &XdcFile) -> model::Iso15745Profile {
-    let identity = &file.identity;
-    
-    let versions: Vec<model::Version> = identity.versions.iter().map(|v| {
-        model::Version {
+/// Helper to build the `model::ProfileHeader` from the `types::ProfileHeader`.
+fn build_model_header(header: &types::ProfileHeader) -> model::ProfileHeader {
+    model::ProfileHeader {
+        profile_identification: header.identification.clone(),
+        profile_revision: header.revision.clone(),
+        profile_name: header.name.clone(),
+        profile_source: header.source.clone(),
+        profile_date: header.date.clone(),
+        ..Default::default() // Fills in ProfileClassID, etc.
+    }
+}
+
+/// Builds the Device Profile model from the public types.
+fn build_device_profile(
+    header: &types::ProfileHeader,
+    identity: &types::Identity,
+) -> model::Iso15745Profile {
+    let model_header = build_model_header(header);
+
+    let versions: Vec<model::Version> = identity
+        .versions
+        .iter()
+        .map(|v| model::Version {
             version_type: v.version_type.clone(),
             value: v.value.clone(),
-        }
-    }).collect();
+        })
+        .collect();
 
     let device_identity = model::DeviceIdentity {
         vendor_name: identity.vendor_name.clone(),
@@ -68,7 +87,7 @@ fn build_device_profile(file: &XdcFile) -> model::Iso15745Profile {
     };
 
     model::Iso15745Profile {
-        profile_header: model::ProfileHeader::default(),
+        profile_header: model_header,
         profile_body: model::ProfileBody {
             xsi_type: Some("ProfileBody_Device_Powerlink".into()),
             application_layers: None,
@@ -79,107 +98,103 @@ fn build_device_profile(file: &XdcFile) -> model::Iso15745Profile {
     }
 }
 
-fn build_comm_profile(file: &XdcFile) -> Result<model::Iso15745Profile, XdcError> {
-    // Group CfmObjects by their index to build Object nesting
-    let mut object_map: BTreeMap<u16, Vec<model::SubObject>> = BTreeMap::new();
+/// Builds the Communication Profile model from the public Object Dictionary.
+fn build_comm_profile(
+    header: &types::ProfileHeader,
+    od: &types::ObjectDictionary,
+) -> Result<model::Iso15745Profile, XdcError> {
+    let model_header = build_model_header(header);
 
-    // Access the correct field `file.data.objects`
-    for cfm_obj in &file.data.objects {
-        // FIX: Add all missing fields
-        let sub_object = model::SubObject {
-            sub_index: format_hex_u8(cfm_obj.sub_index),
-            name: "Sub".into(), // Required
-            object_type: "7".into(), // Required (VAR)
-            data_type: None,
-            low_limit: None,
-            high_limit: None,
-            access_type: None,
-            default_value: None, // XDC uses actualValue
-            actual_value: Some(format_hex_string(&cfm_obj.data)?),
-            denotation: None,
-            pdo_mapping: None,
-            obj_flags: None,
-            unique_id_ref: None,
-        };
-        object_map.entry(cfm_obj.index).or_default().push(sub_object);
-    }
+    let mut model_objects = Vec::new();
 
-    let mut objects = Vec::new();
-    for (index, mut sub_objects) in object_map {
-        // Sort sub-objects by sub-index for cleaner XML
-        sub_objects.sort_by(|a, b| a.sub_index.cmp(&b.sub_index));
+    // Iterate over the rich public `Object` type
+    for obj in &od.objects {
+        // Convert public `SubObject`s back to `model::SubObject`s
+        let model_sub_objects = obj
+            .sub_objects
+            .iter()
+            .map(|sub_obj| {
+                // Serialize the data back into a hex string
+                let actual_value = sub_obj
+                    .data
+                    .as_ref()
+                    .map(|d| format_hex_string(d))
+                    .transpose()?;
 
-        // Add the NumberOfEntries (subIndex 00) if not present (heuristic)
-        // NOTE: The count is sub_objects.len().
-        // FIX: Add all missing fields
-        let count_so = model::SubObject {
-            sub_index: "00".into(),
-            name: "NumberOfEntries".into(), // Required
-            object_type: "7".into(), // Required (VAR)
-            data_type: None,
-            low_limit: None,
-            high_limit: None,
-            access_type: None,
-            default_value: None,
-            actual_value: Some(format!("{}", sub_objects.len())),
-            denotation: None,
-            pdo_mapping: None,
-            obj_flags: None,
-            unique_id_ref: None,
-        };
-        // We insert at the beginning
-        sub_objects.insert(0, count_so);
+                Ok(model::SubObject {
+                    sub_index: format_hex_u8(sub_obj.sub_index),
+                    name: sub_obj.name.clone(),
+                    object_type: sub_obj.object_type.clone(),
+                    actual_value,
+                    // Fill in required fields from model
+                    data_type: None,
+                    low_limit: None,
+                    high_limit: None,
+                    access_type: None,
+                    default_value: None,
+                    denotation: None,
+                    pdo_mapping: None,
+                    obj_flags: None,
+                    unique_id_ref: None,
+                })
+            })
+            .collect::<Result<Vec<_>, XdcError>>()?;
+        
+        // Handle the value for VAR objects (value is on the object itself)
+        let object_actual_value = obj.data.as_ref().map(|d| format_hex_string(d)).transpose()?;
 
-        // FIX: Add all missing fields
-        let object = model::Object {
-            index: format_hex_u16(index),
-            name: "Obj".into(), // Required
-            // Per spec 7.5.4.4.1, objectType 9 is VAR_ARRAY
-            object_type: "9".into(), // Required
+        let model_object = model::Object {
+            index: format_hex_u16(obj.index),
+            name: obj.name.clone(),
+            object_type: obj.object_type.clone(),
+            actual_value: object_actual_value,
+            sub_object: model_sub_objects,
+            // Fill in required fields from model
             data_type: None,
             low_limit: None,
             high_limit: None,
             access_type: None,
             default_value: None,
-            actual_value: None, // Value is on SubObjects for RECORD
             denotation: None,
             pdo_mapping: None,
             obj_flags: None,
             unique_id_ref: None,
-            sub_object: sub_objects,
         };
-        objects.push(object);
+        model_objects.push(model_object);
     }
 
     let app_layers = model::ApplicationLayers {
         object_list: model::ObjectList {
-            object: objects,
+            object: model_objects,
         },
         data_type_list: None, // XDC files typically don't generate this
     };
 
     Ok(model::Iso15745Profile {
-        profile_header: model::ProfileHeader::default(),
+        profile_header: model_header,
         profile_body: model::ProfileBody {
             xsi_type: Some("ProfileBody_CommunicationNetwork_Powerlink".into()),
             application_layers: Some(app_layers),
             device_identity: None,
             application_process: None,
-            network_management: None,
+            network_management: None, // We are not serializing this yet
         },
     })
 }
 
 // --- Helper Functions ---
 
+/// Formats a u16 as a 4-digit hex string (e.g., "1F80").
 fn format_hex_u16(val: u16) -> String {
     format!("{:04X}", val)
 }
 
+/// Formats a u8 as a 2-digit hex string (e.g., "0A").
 fn format_hex_u8(val: u8) -> String {
     format!("{:02X}", val)
 }
 
+/// Formats a byte slice into a "0x..." hex string.
 fn format_hex_string(data: &[u8]) -> Result<String, XdcError> {
     let mut s = String::with_capacity(2 + data.len() * 2);
     s.push_str("0x");
