@@ -109,30 +109,51 @@ pub struct NetworkManagement {
 #[derive(Debug, Default)]
 pub struct GeneralFeatures {
     /// `@DLLFeatureMN`
-    pub dll_feature_mn: Option<bool>,
-    /// `@NMTBootTimeNotActive`
-    pub nmt_boot_time_not_active: Option<String>,
-    // Add other features as needed
+    pub dll_feature_mn: bool,
+    /// `@NMTBootTimeNotActive` (in microseconds)
+    pub nmt_boot_time_not_active: u32,
+    /// `@NMTCycleTimeMax` (in microseconds)
+    pub nmt_cycle_time_max: u32,
+    /// `@NMTCycleTimeMin` (in microseconds)
+    pub nmt_cycle_time_min: u32,
+    /// `@NMTErrorEntries`
+    pub nmt_error_entries: u32,
+    /// `@NMTMaxCNNumber`
+    pub nmt_max_cn_number: Option<u8>,
+    /// `@PDODynamicMapping`
+    pub pdo_dynamic_mapping: Option<bool>,
+    /// `@SDOClient`
+    pub sdo_client: Option<bool>,
+    /// `@SDOServer`
+    pub sdo_server: Option<bool>,
+    /// `@SDOSupportASnd`
+    pub sdo_support_asnd: Option<bool>,
+    /// `@SDOSupportUdpIp`
+    pub sdo_support_udp_ip: Option<bool>,
 }
 
 /// Represents `<MNFeatures>`.
 #[derive(Debug, Default)]
 pub struct MnFeatures {
-    /// `@NMTMNMaxCycInSync`
-    pub nmt_mn_max_cyc_in_sync: Option<String>,
-    /// `@NMTMNPResMax`
-    pub nmt_mn_pres_max: Option<String>,
-    // Add other features as needed
+    /// `@DLLMNFeatureMultiplex`
+    pub dll_mn_feature_multiplex: Option<bool>,
+    /// `@NMTMNPResChaining`
+    pub dll_mn_pres_chaining: Option<bool>,
+    /// `@NMTSimpleBoot`
+    pub nmt_simple_boot: bool,
 }
 
 /// Represents `<CNFeatures>`.
 #[derive(Debug, Default)]
 pub struct CnFeatures {
-    /// `@NMTCNPreOp2ToReady2Op`
-    pub nmt_cn_pre_op2_to_ready2_op: Option<String>,
-    /// `@NMTCNDNA`
-    pub nmt_cn_dna: Option<bool>, // Simplified from the model's enum for now
-    // Add other features as needed
+    /// `@DLLCNFeatureMultiplex`
+    pub dll_cn_feature_multiplex: Option<bool>,
+    /// `@DLLCNPResChaining`
+    pub dll_cn_pres_chaining: Option<bool>,
+    /// `@NMTCNPreOp2ToReady2Op` (in nanoseconds)
+    pub nmt_cn_pre_op2_to_ready2_op: Option<u32>,
+    /// `@NMTCNSoC2PReq` (in nanoseconds)
+    pub nmt_cn_soc_2_preq: u32,
 }
 
 /// Represents `<Diagnostic>` capabilities.
@@ -140,16 +161,38 @@ pub struct CnFeatures {
 pub struct Diagnostic {
     /// All defined `<Error>` elements.
     pub errors: Vec<ErrorDefinition>,
+    /// All defined `<ErrorBit>` elements from `<StaticErrorBitField>`.
+    pub static_error_bit_field: Option<Vec<StaticErrorBit>>,
 }
 
 /// Represents one `<Error>` in the `<ErrorList>`.
 #[derive(Debug, Default)]
 pub struct ErrorDefinition {
-    pub name: Option<String>,
+    pub name: String, // Changed to non-optional
+    // The model for this was simplified in model.rs, so label/desc are not present.
+    // pub label: Option<String>,
+    // pub description: Option<String>,
+    // pub error_type: Option<String>,
+    pub value: String, // Changed to non-optional
+    pub add_info: Vec<AddInfo>,
+}
+
+/// Represents one `<addInfo>` element from an `<Error>`.
+#[derive(Debug, Default)]
+pub struct AddInfo {
+    pub name: String,
+    pub bit_offset: u8,
+    pub len: u8,
+    pub description: Option<String>,
+}
+
+/// Represents one `<ErrorBit>` from the `<StaticErrorBitField>`.
+#[derive(Debug, Default)]
+pub struct StaticErrorBit {
+    pub name: String,
+    pub offset: u8,
     pub label: Option<String>,
     pub description: Option<String>,
-    pub error_type: Option<String>,
-    pub value: Option<String>,
 }
 
 // --- Object Dictionary ---
