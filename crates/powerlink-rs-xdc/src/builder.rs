@@ -12,7 +12,7 @@ use core::fmt::Write;
 use serde::Serialize;
 
 // Import new model paths
-use crate::model::app_layers::{Object, ObjectList, SubObject};
+use crate::model::app_layers::{Object, ObjectAccessType, ObjectList, ObjectPdoMapping, SubObject};
 use crate::model::common::ReadOnlyString;
 use crate::model::header::ProfileHeader;
 use crate::model::identity::{DeviceIdentity, Version};
@@ -89,17 +89,10 @@ fn build_device_profile(
         vendor_name: ReadOnlyString { value: identity.vendor_name.clone().unwrap_or_default(), ..Default::default() },
         vendor_id: Some(ReadOnlyString { value: format!("0x{:08X}", identity.vendor_id), ..Default::default() }),
         product_name: ReadOnlyString { value: identity.product_name.clone().unwrap_or_default(), ..Default::default() },
-        product_id: Some(ReadOnlyString { value: format!("{:X}", identity.product_id), ..Default::default() }), // Use format! not Some(format!)
+        product_id: Some(ReadOnlyString { value: format!("{:X}", identity.product_id), ..Default::default() }),
         version: versions,
-        // Fix: Add missing fields
-        vendor_text: None,
-        device_family: None,
-        product_family: None,
-        product_text: None,
-        order_number: Vec::new(),
-        build_date: None,
-        specification_revision: None,
-        instance_name: None,
+        // Use default for all other new fields
+        ..Default::default()
     };
 
     model::Iso15745Profile {
@@ -179,7 +172,7 @@ fn build_comm_profile(
         model_objects.push(model_object);
     }
 
-    let app_layers = model::ApplicationLayers {
+    let app_layers = model::app_layers::ApplicationLayers {
         object_list: ObjectList {
             object: model_objects,
         },
@@ -224,22 +217,22 @@ fn format_hex_string(data: &[u8]) -> Result<String, XdcError> {
 }
 
 /// Maps the public types enum back to the internal model enum.
-fn map_access_type_to_model(public: types::ObjectAccessType) -> model::ObjectAccessType {
+fn map_access_type_to_model(public: types::ObjectAccessType) -> ObjectAccessType {
     match public {
-        types::ObjectAccessType::ReadOnly => model::ObjectAccessType::ReadOnly,
-        types::ObjectAccessType::WriteOnly => model::ObjectAccessType::WriteOnly,
-        types::ObjectAccessType::ReadWrite => model::ObjectAccessType::ReadWrite,
-        types::ObjectAccessType::Constant => model::ObjectAccessType::Constant,
+        types::ObjectAccessType::ReadOnly => ObjectAccessType::ReadOnly,
+        types::ObjectAccessType::WriteOnly => ObjectAccessType::WriteOnly,
+        types::ObjectAccessType::ReadWrite => ObjectAccessType::ReadWrite,
+        types::ObjectAccessType::Constant => ObjectAccessType::Constant,
     }
 }
 
 /// Maps the public types enum back to the internal model enum.
-fn map_pdo_mapping_to_model(public: types::ObjectPdoMapping) -> model::ObjectPdoMapping {
+fn map_pdo_mapping_to_model(public: types::ObjectPdoMapping) -> ObjectPdoMapping {
     match public {
-        types::ObjectPdoMapping::No => model::ObjectPdoMapping::No,
-        types::ObjectPdoMapping::Default => model::ObjectPdoMapping::Default,
-        types::ObjectPdoMapping::Optional => model::ObjectPdoMapping::Optional,
-        types::ObjectPdoMapping::Tpdo => model::ObjectPdoMapping::Tpdo,
-        types::ObjectPdoMapping::Rpdo => model::ObjectPdoMapping::Rpdo,
+        types::ObjectPdoMapping::No => ObjectPdoMapping::No,
+        types::ObjectPdoMapping::Default => ObjectPdoMapping::Default,
+        types::ObjectPdoMapping::Optional => ObjectPdoMapping::Optional,
+        types::ObjectPdoMapping::Tpdo => ObjectPdoMapping::Tpdo,
+        types::ObjectPdoMapping::Rpdo => ObjectPdoMapping::Rpdo,
     }
 }
