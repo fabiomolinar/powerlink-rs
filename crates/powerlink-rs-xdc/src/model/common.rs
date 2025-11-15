@@ -124,28 +124,3 @@ pub struct DataTypeIDRef {
     #[serde(rename = "@uniqueIDRef")]
     pub unique_id_ref: String,
 }
-
-/// Represents the `g_simple` group (CommonElements.xsd).
-/// This is used by `varDeclaration` in `app_process.rs`.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub enum GSimple {
-    BOOL,
-    BITSTRING,
-    BYTE,
-    CHAR,
-    WORD,
-    DWORD,
-    LWORD,
-    SINT,
-    INT,
-    DINT,
-    LINT,
-    USINT,
-    UINT,
-    UDINT,
-    ULINT,
-    REAL,
-    LREAL,
-    STRING,
-    WSTRING,
-}

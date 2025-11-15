@@ -17,9 +17,9 @@ extern crate alloc;
 
 mod builder;
 mod error;
-mod model; // This now correctly refers to the `src/model/mod.rs` directory
+mod model;
 mod parser;
-mod resolver;
+mod resolver; // This now correctly refers to the `src/resolver/mod.rs` directory
 mod types;
 
 // --- Public API Re-exports ---
@@ -32,6 +32,6 @@ pub use parser::{load_xdc_from_str, load_xdd_defaults_from_str};
 // Public Types
 pub use types::{
     CnFeatures, Diagnostic, ErrorDefinition, GeneralFeatures, Identity, MnFeatures,
-    NetworkManagement, Object, ObjectDictionary, ObjectPdoMapping, ParameterAccess, // Fix: Renamed from ObjectAccessType
+    NetworkManagement, Object, ObjectDictionary, ObjectPdoMapping, ParameterAccess,
     ParameterSupport, ProfileHeader, SubObject, Version, XdcFile,
 };

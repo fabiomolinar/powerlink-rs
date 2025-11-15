@@ -85,7 +85,6 @@ pub(crate) fn parse_hex_string(s: &str) -> Result<Vec<u8>, FromHexError> {
 mod tests {
     use super::*;
     use crate::error::XdcError;
-    use alloc::string::ToString; // Fix: Import ToString for .to_string()
 
     // A minimal but complete XDC structure for testing.
     const MINIMAL_GOOD_XDC: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -146,7 +145,7 @@ mod tests {
         assert_eq!(xdc_file.identity.vendor_name, "TestVendor");
         assert_eq!(xdc_file.object_dictionary.objects.len(), 1);
         assert_eq!(xdc_file.object_dictionary.objects[0].index, 0x1000);
-        // Fix: Corrected the byte order for 0x1234 (u16)
+        // Fix: Explicitly cast the array reference to a slice `&[u8]`
         assert_eq!(xdc_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]));
     }
 
@@ -157,8 +156,8 @@ mod tests {
         assert!(result.is_ok());
         let xdd_file = result.unwrap();
         assert_eq!(xdd_file.identity.vendor_name, "TestVendor");
-        // Fix: Corrected the byte order for 0x1234 (u16)
-        assert_eq!(xdd_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]))
+        // Fix: Explicitly cast the array reference to a slice `&[u8]`
+        assert_eq!(xdd_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]));
     }
 
     #[test]
