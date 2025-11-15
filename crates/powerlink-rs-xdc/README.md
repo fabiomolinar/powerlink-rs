@@ -10,7 +10,7 @@ This crate is part of the `powerlink-rs` project. It is designed to parse, valid
 
 - **`no_std` Compatible:** Can be used in embedded and bare-metal environments (`alloc` required).
 - **High Performance:** Uses the event-based `quick-xml` parser to minimize allocations and efficiently handle large files.
-- **Ergonomic API:** Translates raw XML data into strongly-typed Rust structs and enums from the `powerlink-rs` crate (e.g., `AccessType`, `DataType`).
+- **Ergonomic API:** Translates raw XML data into strongly-typed Rust structs and enums.
 - **Safe:** Built with safe Rust, with no `unwrap()` or `expect()` in library code.
 - **Serialization:** Includes `save_xdc_to_string` to serialize configuration back into a standard XDC XML string.
 
@@ -18,7 +18,7 @@ This crate is part of the `powerlink-rs` project. It is designed to parse, valid
 
 The crate is designed around a three-stage pipeline: **Parse -> Resolve -> Expose**. This separation of concerns allows for a robust, maintainable, and testable codebase.
 
-[file.xdc] -> parser.rs -> model/ -> resolver.rs -> types.rs -> [Consumer]
+[file.xdc] -> `parser.rs` -> `model/` -> `resolver.rs` -> `types.rs` -> [Consumer]
 
 - **`src/parser.rs` (Entry Point)**
   - **Responsibility:** The main entry point for parsing an XDC file.
@@ -28,10 +28,10 @@ The crate is designed around a three-stage pipeline: **Parse -> Resolve -> Expos
   - **Details:** These structs are considered an implementation detail and are not exposed publicly. They are heavily annotated with `#[serde(...)]` attributes to guide `quick-xml`. Their goal is to capture the XML data as-is, including `String` representations of enums, hex values, etc.
 - **`src/resolver.rs` (Business Logic)**
   - **Responsibility:** The "brains" of the crate. It converts the "dumb" `model` structs into the "smart" public `types` structs.
-  - **Details:** This module contains all the business logic for parsing string values into enums, converting hex strings into `Vec<u8>`, validating data, and resolving data types. It bridges the gap between the raw XML and the ergonomic public API, handling all error conditions gracefully.
+  - **Details:** This module contains all the business logic for parsing string values into enums, converting hex strings into `Vec<u8>`, validating data, and resolving data types (e.g., handling `uniqueIDRef` lookups between `ObjectList` and `ApplicationProcess`).
 - **`src/types.rs` (Public API)**
   - **Responsibility:** Defines the public, ergonomic data structures that consumers of this crate will interact with.
-  - **Details:** These structs are clean, well-documented, and use rich types (e.g., enums, `u16`) instead of strings. Where possible and logical, they use types directly from the `powerlink-rs` crate (like `powerlink_rs::types::AccessType`) to ensure interoperability.
+  - **Details:** These structs are clean, well-documented, and use rich types (e.g., enums, `u16`) instead of strings.
 - **`src/error.rs`**
   - **Responsibility:** Defines the crate's custom `XdcError` enum.
   - **Details:** Provides detailed error information, distinguishing between XML parsing errors (from `quick-xml`) and data resolution errors (e.g., "Invalid AccessType string").
@@ -51,7 +51,7 @@ This table tracks the crate's implementation status against the main features of
 | **ProfileHeader** | `ProfileHeader_DataType` | 🟢 **Implemented** | All key fields modeled and resolved. |
 | **ProfileBody** | `ProfileBody_DataType` | 🟢 **Implemented** | |
 | ➡️ **DeviceIdentity** | `t_DeviceIdentity` | 🟢 **Implemented** | All fields from XSD are modeled and resolved. |
-| ➡️ **ApplicationProcess** | `t_ApplicationProcess` | 🟡 **In Progress** | `parameterList` and `templateList` are modeled. Resolver supports value lookups, but not all parameter attributes (e.g., `access`). |
+| ➡️ **ApplicationProcess** | `t_ApplicationProcess` | 🟡 **In Progress** | `parameterList` and `templateList` are fully modeled. Resolver correctly resolves attributes (`access`, `support`, `persistent`) and values via `uniqueIDRef`. `parameterGroupList` is not yet implemented. |
 | ➡️ **ObjectList** | `ag_Powerlink_ObjectList` | 🟢 **Implemented** | Fully modeled and resolved, including `uniqueIDRef` resolution from `ApplicationProcess`. |
 | ➡️ **Object** | `ag_Powerlink_Object` | 🟢 **Implemented** | All key attributes modeled and resolved. |
 | ➡️ **SubObject** | `ag_Powerlink_Object` | 🟢 **Implemented** | All key attributes modeled and resolved. |
@@ -80,9 +80,9 @@ This table tracks the crate's implementation status against the main features of
   - Add `serde` models for `NetworkManagement`, `GeneralFeatures`, `MNFeatures`, `CNFeatures`, and `Diagnostic`.
   - Add public `types` for the `NetworkManagement` data.
   - Implement `resolver.rs` logic to map and validate this data.
-  - Robustly model `ApplicationProcess` attributes.
+  - Robustly model `ApplicationProcess` attributes and resolve them via `uniqueIDRef`.
 - **Success Metric:** The crate can parse 100% of the elements and attributes defined in the EPSG DS 311 XSDs.
-- **Status:** 🟡 **In Progress** (Models are complete, resolver logic for `ApplicationProcess` attributes is pending).
+- **Status:** 🟡 **In Progress** (Core `ApplicationProcess` logic is complete. `parameterGroupList` and other minor elements are pending).
 
 ### Phase 3: Comprehensive Testing & Validation
 
