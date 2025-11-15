@@ -81,6 +81,8 @@ pub(super) fn resolve_identity(model: &model::identity::DeviceIdentity) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::common::{AttributedGlabels, Glabels, Label, LabelChoice, ReadOnlyString};
+    use crate::model::identity::{DeviceIdentity, Version};
     use crate::parser::load_xdc_from_str;
     use alloc::string::ToString;
     use alloc::vec;
@@ -134,6 +136,7 @@ mod tests {
     }
 
     /// Test for Task 3 & 4: Verifies the new fields in `types::Identity` are populated.
+    /// This is a good integration test for `resolve_identity`.
     #[test]
     fn test_resolve_identity() {
         let identity_xml = r#"
@@ -176,5 +179,105 @@ mod tests {
         assert_eq!(id.specification_revision, Some("1.0.0".to_string()));
         assert_eq!(id.instance_name, Some("MyCPU".to_string()));
         assert_eq!(id.versions[0].value, "1.0");
+    }
+
+    /// Unit test for `productID` parsing logic, checking hex and decimal.
+    #[test]
+    fn test_resolve_identity_product_id_parsing() {
+        // 1. Test standard hex value
+        let model_hex = DeviceIdentity {
+            product_id: Some(ReadOnlyString { value: "0x1234".to_string(), ..Default::default() }),
+            ..Default::default()
+        };
+        let identity_hex = resolve_identity(&model_hex).unwrap();
+        assert_eq!(identity_hex.product_id, 0x1234);
+
+        // 2. Test decimal value (common in some XDCs)
+        let model_dec = DeviceIdentity {
+            product_id: Some(ReadOnlyString { value: "1234".to_string(), ..Default::default() }),
+            ..Default::default()
+        };
+        let identity_dec = resolve_identity(&model_dec).unwrap();
+        assert_eq!(identity_dec.product_id, 1234);
+
+        // 3. Test invalid value
+        let model_invalid = DeviceIdentity {
+            product_id: Some(ReadOnlyString { value: "not-a-number".to_string(), ..Default::default() }),
+            ..Default::default()
+        };
+        let identity_invalid = resolve_identity(&model_invalid).unwrap();
+        assert_eq!(identity_invalid.product_id, 0); // Should parse to 0 on failure
+    }
+
+    /// Unit test for the `extract_label_from_glabels` helper.
+    #[test]
+    fn test_extract_label_from_glabels() {
+        // 1. Test empty
+        let glabels_empty = Glabels { items: vec![] };
+        assert_eq!(extract_label_from_glabels(&glabels_empty), None);
+
+        // 2. Test only description
+        let glabels_desc = Glabels {
+            items: vec![LabelChoice::Description(model::common::Description {
+                lang: "en".to_string(),
+                value: "A description".to_string(),
+                ..Default::default()
+            })],
+        };
+        assert_eq!(extract_label_from_glabels(&glabels_desc), None);
+
+        // 3. Test one label
+        let glabels_one = Glabels {
+            items: vec![LabelChoice::Label(Label {
+                lang: "en".to_string(),
+                value: "First Label".to_string(),
+            })],
+        };
+        assert_eq!(extract_label_from_glabels(&glabels_one), Some("First Label".to_string()));
+
+        // 4. Test multiple labels (should pick first)
+        let glabels_multi = Glabels {
+            items: vec![
+                LabelChoice::Description(model::common::Description {
+                    lang: "en".to_string(),
+                    value: "A description".to_string(),
+                    ..Default::default()
+                }),
+                LabelChoice::Label(Label {
+                    lang: "en".to_string(),
+                    value: "First Label".to_string(),
+                }),
+                LabelChoice::Label(Label {
+                    lang: "de".to_string(),
+                    value: "Zweite Beschriftung".to_string(),
+                }),
+            ],
+        };
+        assert_eq!(extract_label_from_glabels(&glabels_multi), Some("First Label".to_string()));
+    }
+    
+    /// Unit test for the `extract_label_from_attributed_glabels` helper.
+    #[test]
+    fn test_extract_label_from_attributed_glabels() {
+         let attributed = AttributedGlabels {
+            labels: Glabels {
+                items: vec![
+                    LabelChoice::Description(model::common::Description {
+                        lang: "en".to_string(),
+                        value: "A description".to_string(),
+                        ..Default::default()
+                    }),
+                    LabelChoice::Label(Label {
+                        lang: "en".to_string(),
+                        value: "The Label".to_string(),
+                    }),
+                ],
+            },
+            ..Default::default()
+         };
+         assert_eq!(extract_label_from_attributed_glabels(&attributed), Some("The Label".to_string()));
+
+         let attributed_empty = AttributedGlabels::default();
+         assert_eq!(extract_label_from_attributed_glabels(&attributed_empty), None);
     }
 }

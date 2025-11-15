@@ -89,3 +89,99 @@ impl From<ParseIntError> for XdcError {
         }
     }
 }
+
+impl fmt::Display for XdcError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            XdcError::XmlParsing(e) => write!(f, "XML parsing error: {}", e),
+            XdcError::XmlSerializing(e) => write!(f, "XML serializing error: {}", e),
+            XdcError::XmlWriting(e) => write!(f, "XML writing error: {}", e),
+            XdcError::HexParsing(e) => write!(f, "Hex parsing error: {}", e),
+            XdcError::FmtError(e) => write!(f, "Formatting error: {}", e),
+            XdcError::MissingElement { element } => {
+                write!(f, "Missing required XML element: {}", element)
+            }
+            XdcError::MissingAttribute { attribute } => {
+                write!(f, "Missing required attribute: {}", attribute)
+            }
+            XdcError::InvalidAttributeFormat { attribute } => {
+                write!(f, "Invalid format for attribute: {}", attribute)
+            }
+            XdcError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
+            XdcError::TypeValidationError {
+                index,
+                sub_index,
+                data_type,
+                expected_bytes,
+                actual_bytes,
+            } => write!(
+                f,
+                "Type validation error for index 0x{:04X} subIndex 0x{:02X} (dataType={}): expected {} bytes but got {} bytes",
+                index, sub_index, data_type, expected_bytes, actual_bytes
+            ),
+            XdcError::NotImplemented => write!(f, "Functionality not yet implemented"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::XdcError;
+    use alloc::string::ToString;
+    use core::fmt;
+    use hex;
+    use quick_xml;
+
+    #[test]
+    fn test_from_de_error() {
+        // Create a dummy DeError by failing to parse
+        let xml_err = quick_xml::de::from_str::<()>("invalid xml").unwrap_err();
+        let xdc_err: XdcError = xml_err.into();
+        assert!(matches!(xdc_err, XdcError::XmlParsing(_)));
+    }
+
+    #[test]
+    fn test_from_se_error() {
+        // Create a dummy SeError
+        let xml_err = quick_xml::errors::serialize::SeError::Custom("test error".to_string());
+        let xdc_err: XdcError = xml_err.into();
+        assert!(matches!(xdc_err, XdcError::XmlSerializing(_)));
+    }
+
+    #[test]
+    fn test_from_xml_error() {
+        // Create a dummy XmlError
+        let xml_err = quick_xml::Error::UnexpectedEof("test eof".to_string());
+        let xdc_err: XdcError = xml_err.into();
+        assert!(matches!(xdc_err, XdcError::XmlWriting(_)));
+    }
+
+    #[test]
+    fn test_from_hex_error() {
+        // Create a dummy FromHexError by parsing invalid hex
+        let hex_err = hex::decode("Z").unwrap_err();
+        let xdc_err: XdcError = hex_err.into();
+        assert!(matches!(xdc_err, XdcError::HexParsing(_)));
+    }
+
+    #[test]
+    fn test_from_fmt_error() {
+        // Create a dummy fmt::Error
+        let fmt_err = core::fmt::Error;
+        let xdc_err: XdcError = fmt_err.into();
+        assert!(matches!(xdc_err, XdcError::FmtError(_)));
+    }
+
+    #[test]
+    fn test_from_parse_int_error() {
+        // Create a dummy ParseIntError
+        let parse_err = "not a number".parse::<u16>().unwrap_err();
+        let xdc_err: XdcError = parse_err.into();
+        assert!(matches!(
+            xdc_err,
+            XdcError::InvalidAttributeFormat {
+                attribute: "index or subIndex"
+            }
+        ));
+    }
+}

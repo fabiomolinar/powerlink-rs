@@ -359,4 +359,32 @@ mod tests {
         assert_eq!(obj_list[1].sub_object[1].sub_index, "01");
         assert_eq!(obj_list[1].sub_object[1].actual_value, Some("0x78563412".to_string()));
     }
+
+    #[test]
+    fn test_map_access_type_to_model() {
+        use crate::model::app_layers::ObjectAccessType as ModelAccess;
+        use crate::types::ParameterAccess as PublicAccess;
+
+        assert_eq!(map_access_type_to_model(PublicAccess::ReadOnly), ModelAccess::ReadOnly);
+        assert_eq!(map_access_type_to_model(PublicAccess::WriteOnly), ModelAccess::WriteOnly);
+        assert_eq!(map_access_type_to_model(PublicAccess::ReadWrite), ModelAccess::ReadWrite);
+        assert_eq!(map_access_type_to_model(PublicAccess::Constant), ModelAccess::Constant);
+        
+        // Test the non-obvious mappings
+        assert_eq!(map_access_type_to_model(PublicAccess::ReadWriteInput), ModelAccess::ReadWrite);
+        assert_eq!(map_access_type_to_model(PublicAccess::ReadWriteOutput), ModelAccess::ReadWrite);
+        assert_eq!(map_access_type_to_model(PublicAccess::NoAccess), ModelAccess::ReadOnly);
+    }
+
+    #[test]
+    fn test_map_pdo_mapping_to_model() {
+        use crate::model::app_layers::ObjectPdoMapping as ModelPdo;
+        use crate::types::ObjectPdoMapping as PublicPdo;
+
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::No), ModelPdo::No);
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Default), ModelPdo::Default);
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Optional), ModelPdo::Optional);
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Tpdo), ModelPdo::Tpdo);
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Rpdo), ModelPdo::Rpdo);
+    }
 }

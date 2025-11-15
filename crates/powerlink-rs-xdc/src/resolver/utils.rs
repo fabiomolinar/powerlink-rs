@@ -156,3 +156,111 @@ pub(super) fn map_param_support(model: model::app_process::ParameterSupport) -> 
         model::app_process::ParameterSupport::Conditional => types::ParameterSupport::Conditional,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::app_layers::{DataTypeName, ObjectAccessType, ObjectPdoMapping};
+    use crate::model::app_process::{ParameterAccess as ParamAccessModel, ParameterSupport as ParamSupportModel};
+    use crate::types::{ParameterAccess as ParamAccessPublic, ParameterSupport as ParamSupportPublic, ObjectPdoMapping as PdoPublic};
+    use alloc::collections::BTreeMap;
+    use alloc::string::ToString;
+    use alloc::vec;
+
+    /// Helper to create a BTreeMap simulating a parsed <DataTypeList>
+    fn get_test_type_map() -> BTreeMap<String, DataTypeName> {
+        let mut map = BTreeMap::new();
+        map.insert("0005".to_string(), DataTypeName::Unsigned8);
+        map.insert("0007".to_string(), DataTypeName::Unsigned32);
+        map.insert("0009".to_string(), DataTypeName::VisibleString);
+        map.insert("0401".to_string(), DataTypeName::MacAddress);
+        map
+    }
+
+    #[test]
+    fn test_get_data_type_size_from_type_map() {
+        let type_map = get_test_type_map();
+        // Test types present in the map
+        assert_eq!(get_data_type_size("0005", &type_map), Some(1));
+        assert_eq!(get_data_type_size("0007", &type_map), Some(4));
+        assert_eq!(get_data_type_size("0401", &type_map), Some(6));
+        // Test variable-sized type
+        assert_eq!(get_data_type_size("0009", &type_map), None);
+    }
+
+    #[test]
+    fn test_get_data_type_size_from_fallback() {
+        let empty_map = BTreeMap::new();
+        // Test types not in the map but in the fallback
+        assert_eq!(get_data_type_size("0003", &empty_map), Some(2)); // Integer16
+        assert_eq!(get_data_type_size("0010", &empty_map), Some(3)); // Integer24
+        assert_eq!(get_data_type_size("001B", &empty_map), Some(8)); // Unsigned64
+        assert_eq!(get_data_type_size("0403", &empty_map), Some(8)); // NETTIME
+        
+        // Test variable-sized type
+        assert_eq!(get_data_type_size("000A", &empty_map), None); // Octet_String
+        // Test unknown type
+        assert_eq!(get_data_type_size("FFFF", &empty_map), None);
+    }
+
+    #[test]
+    fn test_validate_type() {
+        let type_map = get_test_type_map();
+        
+        // 1. Success case
+        let data_ok = vec![0x12, 0x34, 0x56, 0x78];
+        let result_ok = validate_type(0x1000, 1, &data_ok, "0007", &type_map);
+        assert!(result_ok.is_ok());
+
+        // 2. Failure case (length mismatch)
+        let data_fail = vec![0x12, 0x34]; // 2 bytes
+        let result_fail = validate_type(0x1000, 1, &data_fail, "0007", &type_map); // Expects 4 bytes
+        assert!(matches!(result_fail, Err(XdcError::TypeValidationError {
+            index: 0x1000,
+            sub_index: 1,
+            data_type: _,
+            expected_bytes: 4,
+            actual_bytes: 2,
+        })));
+
+        // 3. Success on variable-sized type (should always pass)
+        let data_var = vec![0x48, 0x69];
+        let result_var = validate_type(0x1008, 0, &data_var, "0009", &type_map);
+        assert!(result_var.is_ok());
+    }
+
+    #[test]
+    fn test_map_access_type() {
+        assert_eq!(map_access_type(ObjectAccessType::ReadOnly), ParamAccessPublic::ReadOnly);
+        assert_eq!(map_access_type(ObjectAccessType::WriteOnly), ParamAccessPublic::WriteOnly);
+        assert_eq!(map_access_type(ObjectAccessType::ReadWrite), ParamAccessPublic::ReadWrite);
+        assert_eq!(map_access_type(ObjectAccessType::Constant), ParamAccessPublic::Constant);
+    }
+
+    #[test]
+    fn test_map_pdo_mapping() {
+        assert_eq!(map_pdo_mapping(ObjectPdoMapping::No), PdoPublic::No);
+        assert_eq!(map_pdo_mapping(ObjectPdoMapping::Default), PdoPublic::Default);
+        assert_eq!(map_pdo_mapping(ObjectPdoMapping::Optional), PdoPublic::Optional);
+        assert_eq!(map_pdo_mapping(ObjectPdoMapping::Tpdo), PdoPublic::Tpdo);
+        assert_eq!(map_pdo_mapping(ObjectPdoMapping::Rpdo), PdoPublic::Rpdo);
+    }
+
+    #[test]
+    fn test_map_param_access() {
+        assert_eq!(map_param_access(ParamAccessModel::Const), ParamAccessPublic::Constant);
+        assert_eq!(map_param_access(ParamAccessModel::Read), ParamAccessPublic::ReadOnly);
+        assert_eq!(map_param_access(ParamAccessModel::Write), ParamAccessPublic::WriteOnly);
+        assert_eq!(map_param_access(ParamAccessModel::ReadWrite), ParamAccessPublic::ReadWrite);
+        assert_eq!(map_param_access(ParamAccessModel::ReadWriteInput), ParamAccessPublic::ReadWriteInput);
+        assert_eq!(map_param_access(ParamAccessModel::ReadWriteOutput), ParamAccessPublic::ReadWriteOutput);
+        assert_eq!(map_param_access(ParamAccessModel::NoAccess), ParamAccessPublic::NoAccess);
+    }
+
+    #[test]
+    fn test_map_param_support() {
+        assert_eq!(map_param_support(ParamSupportModel::Mandatory), ParamSupportPublic::Mandatory);
+        assert_eq!(map_param_support(ParamSupportModel::Optional), ParamSupportPublic::Optional);
+        assert_eq!(map_param_support(ParamSupportModel::Conditional), ParamSupportPublic::Conditional);
+    }
+}

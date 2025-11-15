@@ -85,6 +85,8 @@ pub(crate) fn parse_hex_string(s: &str) -> Result<Vec<u8>, FromHexError> {
 mod tests {
     use super::*;
     use crate::error::XdcError;
+    use alloc::vec;
+    use hex::FromHexError;
 
     // A minimal but complete XDC structure for testing.
     const MINIMAL_GOOD_XDC: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -146,6 +148,7 @@ mod tests {
         assert_eq!(xdc_file.object_dictionary.objects.len(), 1);
         assert_eq!(xdc_file.object_dictionary.objects[0].index, 0x1000);
         // Fix: Explicitly cast the array reference to a slice `&[u8]`
+        // The value "0x1234" is parsed as LE, so it becomes [0x34, 0x12].
         assert_eq!(xdc_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]));
     }
 
@@ -207,5 +210,62 @@ mod tests {
 
         let result = load_xdc_from_str(invalid_attr_xml);
         assert!(matches!(result, Err(XdcError::InvalidAttributeFormat { attribute: "index or subIndex" })));
+    }
+
+    // --- Unit Tests for Helpers ---
+
+    #[test]
+    fn test_parse_hex_u32() {
+        assert_eq!(parse_hex_u32("0x1A2B3C4D").unwrap(), 0x1A2B3C4D);
+        assert_eq!(parse_hex_u32("1234").unwrap(), 0x1234);
+        assert_eq!(parse_hex_u32("FFFFffff").unwrap(), 0xFFFFFFFF);
+        assert!(parse_hex_u32("0xGG").is_err());
+        assert!(parse_hex_u32("").is_err());
+    }
+
+    #[test]
+    fn test_parse_hex_u16() {
+        assert_eq!(parse_hex_u16("0x1A2B").unwrap(), 0x1A2B);
+        assert_eq!(parse_hex_u16("1234").unwrap(), 0x1234);
+        assert_eq!(parse_hex_u16("FFFF").unwrap(), 0xFFFF);
+        assert!(parse_hex_u16("0xGG").is_err());
+        assert!(parse_hex_u16("").is_err());
+    }
+
+    #[test]
+    fn test_parse_hex_u8() {
+        assert_eq!(parse_hex_u8("0x1A").unwrap(), 0x1A);
+        assert_eq!(parse_hex_u8("12").unwrap(), 0x12);
+        assert_eq!(parse_hex_u8("FF").unwrap(), 0xFF);
+        assert_eq!(parse_hex_u8("01").unwrap(), 0x01);
+        assert!(parse_hex_u8("0xGG").is_err());
+        assert!(parse_hex_u8("").is_err());
+    }
+
+    #[test]
+    fn test_parse_hex_string() {
+        assert_eq!(parse_hex_string("0x1A2B").unwrap(), vec![0x1A, 0x2B]);
+        assert_eq!(parse_hex_string("123456").unwrap(), vec![0x12, 0x34, 0x56]);
+        assert_eq!(parse_hex_string("FF").unwrap(), vec![0xFF]);
+        assert_eq!(parse_hex_string("").unwrap(), vec![]);
+    }
+
+    #[test]
+    fn test_parse_hex_string_odd_length() {
+        // Odd length string "1" becomes "01"
+        assert_eq!(parse_hex_string("1").unwrap(), vec![0x01]);
+        // Odd length string "0xABC" becomes "0ABC"
+        assert_eq!(parse_hex_string("0xABC").unwrap(), vec![0x0A, 0xBC]);
+        // Odd length string "123" becomes "0123"
+        assert_eq!(parse_hex_string("123").unwrap(), vec![0x01, 0x23]);
+    }
+
+    #[test]
+    fn test_parse_hex_string_invalid_chars() {
+        let result = parse_hex_string("0x123G");
+        assert!(matches!(result, Err(FromHexError::InvalidHexCharacter { .. })));
+
+        let result = parse_hex_string("NOPE");
+        assert!(matches!(result, Err(FromHexError::InvalidHexCharacter { .. })));
     }
 }

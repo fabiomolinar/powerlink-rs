@@ -152,3 +152,174 @@ pub(crate) fn resolve_data(
         object_dictionary,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{
+        app_layers::{ApplicationLayers, Object, ObjectList},
+        app_process::{ApplicationProcess, Parameter, ParameterDataType, ParameterList, Value},
+        common::ReadOnlyString,
+        header::ProfileHeader,
+        identity::DeviceIdentity,
+        net_mgmt::{GeneralFeatures, NetworkManagement},
+        Iso15745Profile, ProfileBody,
+    };
+    use alloc::{string::ToString, vec, vec::Vec};
+
+    /// Helper to create a minimal, valid `model::Iso15745ProfileContainer`
+    fn create_test_container(
+        include_device_profile: bool,
+        include_comm_profile: bool,
+    ) -> Iso15745ProfileContainer {
+        let mut profiles = Vec::new();
+
+        if include_device_profile {
+            profiles.push(Iso15745Profile {
+                profile_header: ProfileHeader {
+                    profile_name: "Device Profile".to_string(),
+                    ..Default::default()
+                },
+                profile_body: ProfileBody {
+                    xsi_type: Some("ProfileBody_Device_Powerlink".into()),
+                    device_identity: Some(DeviceIdentity {
+                        vendor_name: ReadOnlyString {
+                            value: "TestVendor".to_string(),
+                            ..Default::default()
+                        },
+                        product_name: ReadOnlyString {
+                            value: "TestProduct".to_string(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                    application_process: Some(ApplicationProcess {
+                        parameter_list: ParameterList {
+                            parameter: vec![Parameter {
+                                unique_id: "param1".to_string(),
+                                access: Some(model::app_process::ParameterAccess::ReadWrite),
+                                support: Some(model::app_process::ParameterSupport::Mandatory),
+                                persistent: true,
+                                labels: Default::default(),
+                                data_type: ParameterDataType::USINT,
+                                default_value: Some(Value {
+                                    value: "0x12".to_string(),
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }],
+                        },
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            });
+        }
+
+        if include_comm_profile {
+            profiles.push(Iso15745Profile {
+                profile_header: ProfileHeader {
+                    profile_name: "Comm Profile".to_string(),
+                    ..Default::default()
+                },
+                profile_body: ProfileBody {
+                    xsi_type: Some("ProfileBody_CommunicationNetwork_Powerlink".into()),
+                    application_layers: Some(ApplicationLayers {
+                        object_list: ObjectList {
+                            object: vec![Object {
+                                index: "1000".to_string(),
+                                name: "Device Type".to_string(),
+                                object_type: "7".to_string(),
+                                unique_id_ref: Some("param1".to_string()),
+                                ..Default::default()
+                            }],
+                        },
+                        ..Default::default()
+                    }),
+                    network_management: Some(NetworkManagement {
+                        general_features: GeneralFeatures {
+                            dll_feature_mn: false,
+                            nmt_boot_time_not_active: "0".to_string(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            });
+        }
+
+        Iso15745ProfileContainer {
+            profile: profiles,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_resolve_data_happy_path() {
+        let container = create_test_container(true, true);
+        let result = resolve_data(container, ValueMode::Default);
+        assert!(result.is_ok());
+        let xdc_file = result.unwrap();
+
+        // Check that Device Profile data was resolved
+        assert_eq!(xdc_file.identity.vendor_name, "TestVendor");
+        assert!(xdc_file.application_process.is_some());
+
+        // Check that Comm Profile data was resolved
+        assert_eq!(xdc_file.object_dictionary.objects.len(), 1);
+        let obj = &xdc_file.object_dictionary.objects[0];
+        assert_eq!(obj.index, 0x1000);
+
+        // Check that OD resolver correctly used the param_map
+        assert_eq!(obj.support, Some(types::ParameterSupport::Mandatory));
+        assert_eq!(obj.persistent, true);
+        assert_eq!(
+            obj.access_type,
+            Some(types::ParameterAccess::ReadWrite)
+        );
+        assert_eq!(obj.data.as_deref(), Some(&[0x12u8] as &[u8]));
+    }
+
+    #[test]
+    fn test_resolve_data_missing_comm_profile() {
+        let container = create_test_container(true, false);
+        let result = resolve_data(container, ValueMode::Default);
+
+        // A comm profile (with ApplicationLayers) is mandatory
+        assert!(matches!(
+            result,
+            Err(XdcError::MissingElement {
+                element: "Profile containing ApplicationLayers"
+            })
+        ));
+    }
+
+    #[test]
+    fn test_resolve_data_missing_device_profile() {
+        let container = create_test_container(false, true);
+        let result = resolve_data(container, ValueMode::Default);
+        assert!(result.is_ok());
+        let xdc_file = result.unwrap();
+
+        // Header should fall back to the Comm Profile's header
+        assert_eq!(xdc_file.header.name, "Comm Profile");
+
+        // Identity should be default (empty)
+        assert_eq!(xdc_file.identity.vendor_name, "");
+        assert_eq!(xdc_file.identity.vendor_id, 0);
+
+        // ApplicationProcess should be None
+        assert!(xdc_file.application_process.is_none());
+
+        // OD should be resolved, but attributes will be the defaults from the <Object>
+        // (since param_map is empty)
+        assert_eq!(xdc_file.object_dictionary.objects.len(), 1);
+        let obj = &xdc_file.object_dictionary.objects[0];
+        assert_eq!(obj.index, 0x1000);
+        assert_eq!(obj.support, None);
+        assert_eq!(obj.persistent, false);
+        assert_eq!(obj.access_type, None);
+        assert_eq!(obj.data, None); // No value, because param_map was empty
+    }
+}

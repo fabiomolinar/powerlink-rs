@@ -371,3 +371,336 @@ fn resolve_function_instance_list(
         .collect()
     // Note: We are not resolving <connection> elements yet.
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::app_process::{
+        AppArray, AppDataTypeChoice, AppDataTypeList, AppDerived, AppEnum, AppStruct, Count,
+        EnumValue, FunctionInstance, FunctionInstanceList, FunctionType, FunctionTypeList,
+        InterfaceList, ParameterDataType, ParameterGroup, ParameterGroupItem, ParameterGroupList,
+        ParameterRef, Subrange, VarDeclaration, VarList, VersionInfo,
+    };
+    use crate::model::common::{DataTypeIDRef, Glabels, Label, LabelChoice};
+    use crate::types;
+    use alloc::string::ToString;
+    use alloc::vec;
+
+    // --- Helper Function Tests ---
+
+    #[test]
+    fn test_extract_label() {
+        let labels = Glabels {
+            items: vec![
+                LabelChoice::Description(Default::default()),
+                LabelChoice::Label(Label {
+                    lang: "en".into(),
+                    value: "Test Label".into(),
+                }),
+            ],
+        };
+        assert_eq!(extract_label(&labels), Some("Test Label".to_string()));
+
+        let labels_no_label = Glabels {
+            items: vec![LabelChoice::Description(Default::default())],
+        };
+        assert_eq!(extract_label(&labels_no_label), None);
+    }
+
+    #[test]
+    fn test_extract_description() {
+        let labels = Glabels {
+            items: vec![
+                LabelChoice::Label(Default::default()),
+                LabelChoice::Description(model::common::Description {
+                    lang: "en".into(),
+                    value: "Test Desc".into(),
+                    ..Default::default()
+                }),
+            ],
+        };
+        assert_eq!(
+            extract_description(&labels),
+            Some("Test Desc".to_string())
+        );
+
+        let labels_no_desc = Glabels {
+            items: vec![LabelChoice::Label(Default::default())],
+        };
+        assert_eq!(extract_description(&labels_no_desc), None);
+    }
+
+    #[test]
+    fn test_get_data_type_name() {
+        assert_eq!(
+            get_data_type_name(&ParameterDataType::UINT),
+            "UINT".to_string()
+        );
+        assert_eq!(
+            get_data_type_name(&ParameterDataType::BITSTRING),
+            "BITSTRING".to_string()
+        );
+        let dt_ref = ParameterDataType::DataTypeIDRef(DataTypeIDRef {
+            unique_id_ref: "MyStructType".to_string(),
+        });
+        assert_eq!(get_data_type_name(&dt_ref), "MyStructType".to_string());
+    }
+
+    // --- Main Resolver Function Tests ---
+
+    #[test]
+    fn test_resolve_var_declaration() {
+        let model_var = VarDeclaration {
+            name: "TestVar".to_string(),
+            unique_id: "uid_var_1".to_string(),
+            size: Some("16".to_string()),
+            initial_value: Some("123".to_string()),
+            labels: Glabels {
+                items: vec![LabelChoice::Label(Label {
+                    lang: "en".into(),
+                    value: "My Variable".into(),
+                })],
+            },
+            data_type: ParameterDataType::UINT,
+        };
+
+        let pub_var = resolve_var_declaration(&model_var).unwrap();
+        assert_eq!(pub_var.name, "TestVar");
+        assert_eq!(pub_var.unique_id, "uid_var_1");
+        assert_eq!(pub_var.data_type, "UINT");
+        assert_eq!(pub_var.size, Some(16));
+        assert_eq!(pub_var.initial_value, Some("123".to_string()));
+        assert_eq!(pub_var.label, Some("My Variable".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_struct() {
+        let model_struct = AppStruct {
+            name: "MyStruct".to_string(),
+            unique_id: "uid_struct_1".to_string(),
+            labels: Glabels {
+                items: vec![LabelChoice::Label(Label {
+                    lang: "en".into(),
+                    value: "A Struct".into(),
+                })],
+            },
+            var_declaration: vec![VarDeclaration {
+                name: "Member1".to_string(),
+                unique_id: "uid_member_1".to_string(),
+                data_type: ParameterDataType::BOOL,
+                ..Default::default()
+            }],
+        };
+
+        let pub_struct = resolve_struct(&model_struct).unwrap();
+        assert_eq!(pub_struct.name, "MyStruct");
+        assert_eq!(pub_struct.unique_id, "uid_struct_1");
+        assert_eq!(pub_struct.label, Some("A Struct".to_string()));
+        assert_eq!(pub_struct.members.len(), 1);
+        assert_eq!(pub_struct.members[0].name, "Member1");
+        assert_eq!(pub_struct.members[0].data_type, "BOOL");
+    }
+
+    #[test]
+    fn test_resolve_array() {
+        let model_array = AppArray {
+            name: "MyArray".to_string(),
+            unique_id: "uid_array_1".to_string(),
+            labels: Default::default(),
+            subrange: vec![Subrange {
+                lower_limit: "1".to_string(),
+                upper_limit: "10".to_string(),
+            }],
+            data_type: ParameterDataType::DINT,
+        };
+
+        let pub_array = resolve_array(&model_array).unwrap();
+        assert_eq!(pub_array.name, "MyArray");
+        assert_eq!(pub_array.unique_id, "uid_array_1");
+        assert_eq!(pub_array.lower_limit, 1);
+        assert_eq!(pub_array.upper_limit, 10);
+        assert_eq!(pub_array.data_type, "DINT");
+    }
+
+    #[test]
+    fn test_resolve_enum() {
+        let model_enum = AppEnum {
+            name: "MyEnum".to_string(),
+            unique_id: "uid_enum_1".to_string(),
+            size: Some("8".to_string()),
+            labels: Default::default(),
+            enum_value: vec![EnumValue {
+                value: Some("0".to_string()),
+                labels: Glabels {
+                    items: vec![LabelChoice::Label(Label {
+                        lang: "en".into(),
+                        value: "Off".into(),
+                    })],
+                },
+            }],
+            data_type: Some(ParameterDataType::USINT),
+        };
+
+        let pub_enum = resolve_enum(&model_enum).unwrap();
+        assert_eq!(pub_enum.name, "MyEnum");
+        assert_eq!(pub_enum.unique_id, "uid_enum_1");
+        assert_eq!(pub_enum.data_type, "USINT");
+        assert_eq!(pub_enum.size_in_bits, Some(8));
+        assert_eq!(pub_enum.values.len(), 1);
+        assert_eq!(pub_enum.values[0].name, "Off");
+        assert_eq!(pub_enum.values[0].value, "0");
+    }
+
+    #[test]
+    fn test_resolve_derived() {
+        let model_derived = AppDerived {
+            name: "MyDerived".to_string(),
+            unique_id: "uid_derived_1".to_string(),
+            description: None,
+            labels: Default::default(),
+            count: Some(Count {
+                unique_id: "uid_count_1".to_string(),
+                access: Some(model::app_process::ParameterAccess::Const),
+                default_value: model::app_process::Value {
+                    value: "16".to_string(),
+                    ..Default::default()
+                },
+                allowed_values: None,
+                labels: Default::default(),
+            }),
+            data_type: ParameterDataType::BITSTRING,
+        };
+
+        let pub_derived = resolve_derived(&model_derived).unwrap();
+        assert_eq!(pub_derived.name, "MyDerived");
+        assert_eq!(pub_derived.unique_id, "uid_derived_1");
+        assert_eq!(pub_derived.data_type, "BITSTRING");
+        assert!(pub_derived.count.is_some());
+        let count = pub_derived.count.unwrap();
+        assert_eq!(count.unique_id, "uid_count_1");
+        assert_eq!(count.access, Some(types::ParameterAccess::Constant));
+        assert_eq!(count.default_value, Some("16".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_parameter_group() {
+        let model_group = ParameterGroup {
+            unique_id: "uid_group_1".to_string(),
+            labels: Glabels {
+                items: vec![LabelChoice::Label(Label {
+                    lang: "en".into(),
+                    value: "My Group".into(),
+                })],
+            },
+            items: vec![
+                ParameterGroupItem::ParameterRef(ParameterRef {
+                    unique_id_ref: "param_ref_1".to_string(),
+                    visible: true,
+                    locked: false,
+                    bit_offset: Some("8".to_string()),
+                    ..Default::default()
+                }),
+                ParameterGroupItem::ParameterGroup(ParameterGroup {
+                    unique_id: "uid_group_nested".to_string(),
+                    labels: Default::default(),
+                    items: vec![ParameterGroupItem::ParameterRef(ParameterRef {
+                        unique_id_ref: "param_ref_2".to_string(),
+                        ..Default::default()
+                    })],
+                    ..Default::default()
+                }),
+            ],
+            ..Default::default()
+        };
+
+        let pub_group = resolve_parameter_group(&model_group).unwrap();
+        assert_eq!(pub_group.unique_id, "uid_group_1");
+        assert_eq!(pub_group.label, Some("My Group".to_string()));
+        assert_eq!(pub_group.items.len(), 2);
+
+        // Check ParameterRef
+        if let types::ParameterGroupItem::Parameter(param) = &pub_group.items[0] {
+            assert_eq!(param.unique_id_ref, "param_ref_1");
+            assert_eq!(param.visible, true);
+            assert_eq!(param.locked, false);
+            assert_eq!(param.bit_offset, Some(8));
+        } else {
+            panic!("Expected ParameterRef");
+        }
+
+        // Check nested Group
+        if let types::ParameterGroupItem::Group(group) = &pub_group.items[1] {
+            assert_eq!(group.unique_id, "uid_group_nested");
+            assert_eq!(group.items.len(), 1);
+            if let types::ParameterGroupItem::Parameter(param) = &group.items[0] {
+                assert_eq!(param.unique_id_ref, "param_ref_2");
+            } else {
+                panic!("Expected nested ParameterRef");
+            }
+        } else {
+            panic!("Expected nested ParameterGroup");
+        }
+    }
+
+    #[test]
+    fn test_resolve_function_type_and_instance() {
+        let model_app_proc = model::app_process::ApplicationProcess {
+            function_type_list: Some(FunctionTypeList {
+                function_type: vec![FunctionType {
+                    name: "MyFunction".to_string(),
+                    unique_id: "uid_func_type_1".to_string(),
+                    package: None,
+                    labels: Default::default(),
+                    version_info: vec![VersionInfo {
+                        organization: "EPSG".to_string(),
+                        version: "1.0".to_string(),
+                        author: "Test".to_string(),
+                        date: "2024-01-01".to_string(),
+                        labels: Default::default(),
+                    }],
+                    interface_list: InterfaceList {
+                        input_vars: Some(VarList {
+                            var_declaration: vec![VarDeclaration {
+                                name: "InVar".to_string(),
+                                unique_id: "uid_invar_1".to_string(),
+                                data_type: ParameterDataType::BOOL,
+                                ..Default::default()
+                            }],
+                        }),
+                        ..Default::default()
+                    },
+                    function_instance_list: None,
+                }],
+            }),
+            function_instance_list: Some(FunctionInstanceList {
+                function_instance: vec![FunctionInstance {
+                    name: "Instance1".to_string(),
+                    unique_id: "uid_instance_1".to_string(),
+                    type_id_ref: "uid_func_type_1".to_string(),
+                    labels: Default::default(),
+                }],
+                connection: vec![],
+            }),
+            ..Default::default()
+        };
+
+        let pub_app_proc = resolve_application_process(&model_app_proc).unwrap();
+
+        // Check FunctionType
+        assert_eq!(pub_app_proc.function_types.len(), 1);
+        let ft = &pub_app_proc.function_types[0];
+        assert_eq!(ft.name, "MyFunction");
+        assert_eq!(ft.unique_id, "uid_func_type_1");
+        assert_eq!(ft.version_info.len(), 1);
+        assert_eq!(ft.version_info[0].version, "1.0");
+        assert_eq!(ft.interface.inputs.len(), 1);
+        assert_eq!(ft.interface.inputs[0].name, "InVar");
+
+        // Check FunctionInstance
+        assert_eq!(pub_app_proc.function_instances.len(), 1);
+        let fi = &pub_app_proc.function_instances[0];
+        assert_eq!(fi.name, "Instance1");
+        assert_eq!(fi.unique_id, "uid_instance_1");
+        assert_eq!(fi.type_id_ref, "uid_func_type_1");
+    }
+}

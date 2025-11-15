@@ -213,10 +213,10 @@ fn map_support_to_category(support: Option<types::ParameterSupport>) -> Category
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::SubObject;
+    use crate::types::SubObject; // Use the public types
+    use alloc::string::ToString;
     use alloc::vec;
-    use alloc::string::ToString; // Import ToString for .to_string()
-    use powerlink_rs::od::{Object, ObjectValue}; // Import the correct Object enum
+    use powerlink_rs::od::{AccessType, Category, Object, ObjectValue, PdoMapping}; // Import the core OD Object enum
 
     #[test]
     fn test_to_core_od_var_conversion() {
@@ -239,7 +239,7 @@ mod tests {
         };
 
         let core_od = to_core_od(&xdc_file).unwrap();
-        
+
         // Use the public API of the core OD to check the value
         let entry = core_od.read_object(0x1000).unwrap();
         if let Object::Variable(val) = entry {
@@ -306,23 +306,166 @@ mod tests {
     }
 
     #[test]
-    fn test_map_data_to_value() {
-        let data = vec![0x12, 0x34];
-        let value = map_data_to_value(&data, Some("0006"))
-            .unwrap()
-            .unwrap();
-        assert_eq!(value, ObjectValue::Unsigned16(0x3412));
+    fn test_to_core_od_array_conversion() {
+        let xdc_file = types::XdcFile {
+            object_dictionary: types::ObjectDictionary {
+                objects: vec![crate::types::Object {
+                    index: 0x2000,
+                    name: "MyArray".to_string(),
+                    object_type: "8".to_string(), // ARRAY
+                    sub_objects: vec![
+                        SubObject {
+                            sub_index: 0,
+                            name: "Count".to_string(),
+                            data: Some(vec![3]), // 3 entries
+                            ..Default::default()
+                        },
+                        SubObject {
+                            sub_index: 1,
+                            name: "Val1".to_string(),
+                            data_type: Some("0006".to_string()), // U16
+                            data: Some(vec![0x11, 0x22]),
+                            ..Default::default()
+                        },
+                        SubObject {
+                            sub_index: 2,
+                            name: "Val2".to_string(),
+                            data_type: Some("0006".to_string()),
+                            data: Some(vec![0xAA, 0xBB]),
+                            ..Default::default()
+                        },
+                        // Entry 3 is missing, should be dummy
+                    ],
+                    ..Default::default()
+                }],
+            },
+            ..Default::default()
+        };
 
-        let data = vec![0x01];
-        let value = map_data_to_value(&data, Some("0001"))
-            .unwrap()
-            .unwrap();
-        assert_eq!(value, ObjectValue::Boolean(1));
+        let core_od = to_core_od(&xdc_file).unwrap();
+        let entry = core_od.read_object(0x2000).unwrap();
+
+        // Check that the array is created with the correct length (from sub-index 0)
+        // and that missing entries are filled with dummy data.
+        if let Object::Array(vals) = entry {
+            assert_eq!(vals.len(), 3);
+            assert_eq!(vals[0], ObjectValue::Unsigned16(0x2211));
+            assert_eq!(vals[1], ObjectValue::Unsigned16(0xBBAA));
+            assert_eq!(vals[2], ObjectValue::Unsigned8(0)); // Dummy data
+        } else {
+            panic!("Expected Object::Array");
+        }
+    }
+
+    #[test]
+    fn test_map_data_to_value() {
+        // Test all fixed-size types
+        assert_eq!(
+            map_data_to_value(&[0x01], Some("0001")).unwrap().unwrap(),
+            ObjectValue::Boolean(1)
+        );
+        assert_eq!(
+            map_data_to_value(&[0x80], Some("0002")).unwrap().unwrap(),
+            ObjectValue::Integer8(-128)
+        );
+        assert_eq!(
+            map_data_to_value(&[0xFE, 0xFF], Some("0003")).unwrap().unwrap(),
+            ObjectValue::Integer16(-2)
+        );
+        assert_eq!(
+            map_data_to_value(&[0x01, 0x00, 0x00, 0x80], Some("0004")).unwrap().unwrap(),
+            ObjectValue::Integer32(-2147483647)
+        );
+        assert_eq!(
+            map_data_to_value(&[0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F], Some("0015")).unwrap().unwrap(),
+            ObjectValue::Integer64(i64::MAX - 1)
+        );
+        assert_eq!(
+            map_data_to_value(&[0x42], Some("0005")).unwrap().unwrap(),
+            ObjectValue::Unsigned8(0x42)
+        );
+        assert_eq!(
+            map_data_to_value(&[0x34, 0x12], Some("0006")).unwrap().unwrap(),
+            ObjectValue::Unsigned16(0x1234)
+        );
+        assert_eq!(
+            map_data_to_value(&[0x78, 0x56, 0x34, 0x12], Some("0007")).unwrap().unwrap(),
+            ObjectValue::Unsigned32(0x12345678)
+        );
+        assert_eq!(
+            map_data_to_value(&[0x44, 0x33, 0x22, 0x11, 0xEF, 0xCD, 0xAB, 0x89], Some("001B")).unwrap().unwrap(),
+            ObjectValue::Unsigned64(0x89ABCDEF11223344)
+        );
+        assert_eq!(
+            map_data_to_value(&[0x00, 0x00, 0xC0, 0x3F], Some("0008")).unwrap().unwrap(),
+            ObjectValue::Real32(1.5)
+        );
+        assert_eq!(
+            map_data_to_value(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x3F], Some("0011")).unwrap().unwrap(),
+            ObjectValue::Real64(1.5)
+        );
+
+        // Test variable-size types
+        let vs_data = vec![0x48, 0x65, 0x6C, 0x6C, 0x6F]; // "Hello"
+        assert_eq!(
+            map_data_to_value(&vs_data, Some("0009")).unwrap().unwrap(),
+            ObjectValue::VisibleString("Hello".to_string())
+        );
+        let os_data = vec![0x00, 0xDE, 0xAD, 0x00, 0xBE, 0xEF];
+        assert_eq!(
+            map_data_to_value(&os_data, Some("000A")).unwrap().unwrap(),
+            ObjectValue::OctetString(os_data.clone())
+        );
+        assert_eq!(
+            map_data_to_value(&os_data, Some("000F")).unwrap().unwrap(),
+            ObjectValue::Domain(os_data.clone())
+        );
+
+        // Test error cases
+        assert!(matches!(
+            map_data_to_value(&[0x01, 0x02], Some("0005")), // Expected 1 byte, got 2
+            Err(XdcError::ValidationError("Data length mismatch for type"))
+        ));
+        assert!(matches!(
+            map_data_to_value(&[0xFF], Some("0009")), // Invalid UTF-8
+            Err(XdcError::ValidationError("Invalid UTF-8"))
+        ));
         
-        let data = vec![0x48, 0x65, 0x6C, 0x6C, 0x6F]; // "Hello"
-        let value = map_data_to_value(&data, Some("0009"))
-            .unwrap()
-            .unwrap();
-        assert_eq!(value, ObjectValue::VisibleString("Hello".to_string()));
+        // Test unknown type
+        assert_eq!(
+            map_data_to_value(&[0x01, 0x02], Some("9999")).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_map_access_type() {
+        use types::ParameterAccess as Public;
+        assert_eq!(map_access_type(Public::Constant), AccessType::Constant);
+        assert_eq!(map_access_type(Public::ReadOnly), AccessType::ReadOnly);
+        assert_eq!(map_access_type(Public::WriteOnly), AccessType::WriteOnly);
+        assert_eq!(map_access_type(Public::ReadWrite), AccessType::ReadWrite);
+        assert_eq!(map_access_type(Public::ReadWriteInput), AccessType::ReadWrite);
+        assert_eq!(map_access_type(Public::ReadWriteOutput), AccessType::ReadWrite);
+        assert_eq!(map_access_type(Public::NoAccess), AccessType::ReadOnly);
+    }
+
+    #[test]
+    fn test_map_pdo_mapping() {
+        use types::ObjectPdoMapping as Public;
+        assert_eq!(map_pdo_mapping(Public::No), PdoMapping::No);
+        assert_eq!(map_pdo_mapping(Public::Default), PdoMapping::Default);
+        assert_eq!(map_pdo_mapping(Public::Optional), PdoMapping::Optional);
+        assert_eq!(map_pdo_mapping(Public::Tpdo), PdoMapping::Optional);
+        assert_eq!(map_pdo_mapping(Public::Rpdo), PdoMapping::Optional);
+    }
+
+    #[test]
+    fn test_map_support_to_category() {
+        use types::ParameterSupport as Public;
+        assert_eq!(map_support_to_category(Some(Public::Mandatory)), Category::Mandatory);
+        assert_eq!(map_support_to_category(Some(Public::Optional)), Category::Optional);
+        assert_eq!(map_support_to_category(Some(Public::Conditional)), Category::Conditional);
+        assert_eq!(map_support_to_category(None), Category::Optional);
     }
 }
