@@ -12,17 +12,18 @@ This crate is part of the `powerlink-rs` project. It is designed to parse, valid
 - **High Performance:** Uses the event-based `quick-xml` parser to minimize allocations and efficiently handle large files.
 - **Ergonomic API:** Translates raw XML data into strongly-typed Rust structs and enums from the `powerlink-rs` crate (e.g., `AccessType`, `DataType`).
 - **Safe:** Built with safe Rust, with no `unwrap()` or `expect()` in library code.
+- **Serialization:** Includes `save_xdc_to_string` to serialize configuration back into a standard XDC XML string.
 
 ## Architecture & Module Responsibilities
 
 The crate is designed around a three-stage pipeline: **Parse -> Resolve -> Expose**. This separation of concerns allows for a robust, maintainable, and testable codebase.
 
-[file.xdc] -> parser.rs -> model.rs -> resolver.rs -> types.rs -> [Consumer]
+[file.xdc] -> parser.rs -> model/ -> resolver.rs -> types.rs -> [Consumer]
 
 - **`src/parser.rs` (Entry Point)**
   - **Responsibility:** The main entry point for parsing an XDC file.
   - **Details:** It takes the XML string content and uses `quick-xml`'s `from_str` deserializer. Its *only* job is to orchestrate the deserialization of the raw XML into the internal `model::XmlRoot` struct.
-- **`src/model.rs` (Internal `serde` Model)**
+- **`src/model/` (Internal `serde` Model)**
   - **Responsibility:** Defines the raw, internal data structures that map 1:1 to the XDC XML schema.
   - **Details:** These structs are considered an implementation detail and are not exposed publicly. They are heavily annotated with `#[serde(...)]` attributes to guide `quick-xml`. Their goal is to capture the XML data as-is, including `String` representations of enums, hex values, etc.
 - **`src/resolver.rs` (Business Logic)**
@@ -38,8 +39,8 @@ The crate is designed around a three-stage pipeline: **Parse -> Resolve -> Expos
   - **Responsibility:** The main crate library entry point.
   - **Details:** Re-exports the public API from `src/types.rs` and the main `parse_xdc` function from `src/parser.rs`.
 - **`src/builder.rs`**
-  - **Responsibility (Future):** Will provide a "builder" API for programmatically constructing a new `XdcFile` struct from scratch.
-  - **Details:** This is planned for a future phase and will be essential for tools that need to create or modify XDC files, not just read them.
+  - **Responsibility:** Provides a `save_xdc_to_string` function for serializing a `types::XdcFile` struct back into XML.
+  - **Details:** This is essential for tools that need to create or modify XDC files, not just read them.
 
 ## XDC Specification Coverage
 
@@ -47,16 +48,18 @@ This table tracks the crate's implementation status against the main features of
 
 | Feature / Element | XSD Definition | Status | Notes |
 | :--- | :--- | :--- | :--- |
-| **ProfileHeader** | `ProfileHeader_DataType` | 🟡 **In Progress** | Core ISO 15745 fields are being added. |
-| **ProfileBody** | `ProfileBody_DataType` | 🟡 **InProgress** | |
-| ➡️ **ObjectList** | `ag_Powerlink_ObjectList` | 🟡 **InProgress** | Parsing objects, but attribute support is partial. |
-| ➡️ **Object** | `ag_Powerlink_Object` | 🔴 **Partial** | Missing `name`, `accessType`, `PDOmapping`, etc. |
-| ➡️ **SubObject** | `ag_Powerlink_Object` | 🔴 **Partial** | Missing `name`, `accessType`, `PDOmapping`, etc. |
-| ➡️ **NetworkManagement** | `ProfileBody_CommunicationNetwork_Powerlink.xsd` | 🔴 **Not Started** | Entire section is currently un-parsed. |
-| ➡️ **GeneralFeatures** | `ct_GeneralFeatures` | 🔴 **Not Started** | |
-| ➡️ **MNFeatures** | `ct_MNFeatures` | 🔴 **Not Started** | |
-| ➡️ **CNFeatures** | `ct_CNFeatures` | 🔴 **Not Started** | |
-| ➡️ **Diagnostic** | `ct_Diagnostic` | 🔴 **Not Started** | |
+| **ProfileHeader** | `ProfileHeader_DataType` | 🟢 **Implemented** | All key fields modeled and resolved. |
+| **ProfileBody** | `ProfileBody_DataType` | 🟢 **Implemented** | |
+| ➡️ **DeviceIdentity** | `t_DeviceIdentity` | 🟢 **Implemented** | All fields from XSD are modeled and resolved. |
+| ➡️ **ApplicationProcess** | `t_ApplicationProcess` | 🟡 **In Progress** | `parameterList` and `templateList` are modeled. Resolver supports value lookups, but not all parameter attributes (e.g., `access`). |
+| ➡️ **ObjectList** | `ag_Powerlink_ObjectList` | 🟢 **Implemented** | Fully modeled and resolved, including `uniqueIDRef` resolution from `ApplicationProcess`. |
+| ➡️ **Object** | `ag_Powerlink_Object` | 🟢 **Implemented** | All key attributes modeled and resolved. |
+| ➡️ **SubObject** | `ag_Powerlink_Object` | 🟢 **Implemented** | All key attributes modeled and resolved. |
+| ➡️ **NetworkManagement** | `t_NetworkManagement` | 🟢 **Implemented** | All key sub-elements modeled and resolved. |
+| ➡️ **GeneralFeatures** | `t_GeneralFeatures` | 🟢 **Implemented** | Key features are modeled and resolved. |
+| ➡️ **MNFeatures** | `t_MNFeatures` | 🟢 **Implemented** | Key features are modeled and resolved. |
+| ➡️ **CNFeatures** | `t_CNFeatures` | 🟢 **Implemented** | Key features are modeled and resolved. |
+| ➡️ **Diagnostic** | `t_Diagnostic` | 🟢 **Implemented** | `ErrorList` is modeled and resolved. |
 
 ## Roadmap
 
@@ -66,19 +69,20 @@ This table tracks the crate's implementation status against the main features of
 - **Key Features:**
   - Complete `serde` models for `ProfileHeader`.
   - Complete `serde` models for `Object` and `SubObject`, including all attributes (`name`, `accessType`, `PDOmapping`, `objFlags`, etc.).
-- **Success Metric:** The crate can successfully parse a real-world XDC file and provide full, typed access to its entire Object Dictionary.
-- **Status:** 🟢 **In Progress**
+  - Complete `serde` models for `DeviceIdentity`.
+- **Success Metric:** The crate can successfully parse a real-world XDC file and provide full, typed access to its entire Object Dictionary and Device Identity.
+- **Status:** 🟢 **Complete**
 
 ### Phase 2: Full Specification Compliance
 
-- **Focus:** Implement parsing for the remaining sections of the XDC schema, primarily `NetworkManagement`.
+- **Focus:** Implement parsing for the remaining sections of the XDC schema, primarily `NetworkManagement` and `ApplicationProcess`.
 - **Key Features:**
   - Add `serde` models for `NetworkManagement`, `GeneralFeatures`, `MNFeatures`, `CNFeatures`, and `Diagnostic`.
   - Add public `types` for the `NetworkManagement` data.
   - Implement `resolver.rs` logic to map and validate this data.
-  - Robustly handle all data types and complex parameter definitions.
+  - Robustly model `ApplicationProcess` attributes.
 - **Success Metric:** The crate can parse 100% of the elements and attributes defined in the EPSG DS 311 XSDs.
-- **Status:** 🔴 **Not Started**
+- **Status:** 🟡 **In Progress** (Models are complete, resolver logic for `ApplicationProcess` attributes is pending).
 
 ### Phase 3: Comprehensive Testing & Validation
 
@@ -91,12 +95,12 @@ This table tracks the crate's implementation status against the main features of
 - **Success Metric:** The crate achieves >95% test coverage and correctly parses all valid XDC files in the test suite while returning descriptive errors for all malformed ones.
 - **Status:** 🔴 **Not Started**
 
-### Phase 4: Builder API & Serialization
+### Phase 4: Serialization & Validation
 
-- **Focus:** Move beyond parsing to provide ergonomic data creation (builder) tools and serialization.
+- **Focus:** Provide ergonomic data creation tools and full serialization.
 - **Key Features:**
-  - Implement the `builder.rs` API for programmatically creating new `XdcFile` structs.
   - Implement `quick-xml` serialization to write an `XdcFile` struct back to an XML string.
   - Add a high-level `validate()` method to `XdcFile` that checks for common *semantic* configuration errors (e.g., invalid PDO mappings).
+  - Implement a `builder.rs` API for programmatically creating new `XdcFile` structs.
 - **Success Metric:** A user can create a valid XDC file from scratch, serialize it to XML, parse it back, and get an identical struct.
-- **Status:** 🔴 **Not Started**
+- **Status:** 🟡 **In Progress** (`save_xdc_to_string` is implemented).
