@@ -28,18 +28,26 @@ pub(super) fn resolve_identity(model: &model::identity::DeviceIdentity) -> Resul
     let vendor_id = model
         .vendor_id
         .as_ref()
-        .map(|v| parse_hex_u32(&v.value))
+        .map(|v| parse_hex_u32(&v.value)) // vendorID is always hex
         .transpose()?
         .unwrap_or(0);
 
-    // Try hex first, fall back to decimal if parsing fails (productID is often decimal)
+    // Try hex first (if "0x" prefix exists), fall back to decimal.
     let product_id = model
         .product_id
         .as_ref()
         .map(|p| {
-            parse_hex_u32(&p.value)
-                .or_else(|_| p.value.parse::<u32>().map_err(|_| XdcError::InvalidAttributeFormat { attribute: "productID" } ))
-                .ok()
+            if p.value.starts_with("0x") {
+                // Explicitly hex
+                parse_hex_u32(&p.value)
+            } else {
+                // Try decimal parse
+                p.value.parse::<u32>()
+            }
+            .map_err(|_| XdcError::InvalidAttributeFormat {
+                attribute: "productID",
+            })
+            .ok() // Convert Result to Option, discarding error details
         })
         .flatten()
         .unwrap_or(0);

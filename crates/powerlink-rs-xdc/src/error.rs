@@ -93,14 +93,16 @@ impl From<ParseIntError> for XdcError {
 #[cfg(test)]
 mod tests {
     use super::XdcError;
+    use crate::model; // Import model for test
     use alloc::string::ToString;
     use hex;
     use quick_xml;
 
     #[test]
     fn test_from_de_error() {
-        // Create a dummy DeError by failing to parse
-        let xml_err = quick_xml::de::from_str::<()>("invalid xml").unwrap_err();
+        // Create a dummy DeError by failing to parse a struct with required fields
+        let xml_err =
+            quick_xml::de::from_str::<model::header::ProfileHeader>("<Test></Test>").unwrap_err();
         let xdc_err: XdcError = xml_err.into();
         assert!(matches!(xdc_err, XdcError::XmlParsing(_)));
     }

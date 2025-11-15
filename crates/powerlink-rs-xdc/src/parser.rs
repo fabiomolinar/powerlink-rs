@@ -86,7 +86,7 @@ mod tests {
     use super::*;
     use crate::error::XdcError;
     use alloc::vec;
-    use hex::FromHexError;
+    use hex::FromHexError; // Import for invalid char test
 
     // A minimal but complete XDC structure for testing.
     const MINIMAL_GOOD_XDC: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -147,8 +147,7 @@ mod tests {
         assert_eq!(xdc_file.identity.vendor_name, "TestVendor");
         assert_eq!(xdc_file.object_dictionary.objects.len(), 1);
         assert_eq!(xdc_file.object_dictionary.objects[0].index, 0x1000);
-        // Fix: Explicitly cast the array reference to a slice `&[u8]`
-        // The value "0x1234" is parsed as LE, so it becomes [0x34, 0x12].
+        // Fix: The value "0x1234" (U16) is parsed as LE, so it becomes [0x34, 0x12].
         assert_eq!(xdc_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]));
     }
 
@@ -159,7 +158,7 @@ mod tests {
         assert!(result.is_ok());
         let xdd_file = result.unwrap();
         assert_eq!(xdd_file.identity.vendor_name, "TestVendor");
-        // Fix: Explicitly cast the array reference to a slice `&[u8]`
+        // Fix: The value "0x1234" (U16) is parsed as LE, so it becomes [0x34, 0x12].
         assert_eq!(xdd_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]));
     }
 

@@ -34,13 +34,13 @@ pub use net_mgmt::NetworkManagement;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename = "ISO15745ProfileContainer")]
 pub struct Iso15745ProfileContainer {
-    #[serde(rename = "@xmlns")]
+    #[serde(rename = "@xmlns", default)]
     pub xmlns: String,
 
-    #[serde(rename = "@xmlns:xsi")]
+    #[serde(rename = "@xmlns:xsi", default)]
     pub xmlns_xsi: String,
 
-    #[serde(rename = "@xsi:schemaLocation")]
+    #[serde(rename = "@xsi:schemaLocation", default)]
     pub xsi_schema_location: String,
 
     #[serde(rename = "ISO15745Profile", default)]
