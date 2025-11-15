@@ -33,7 +33,10 @@ pub use parser::{load_xdc_from_str, load_xdd_defaults_from_str};
 
 // Public Types
 pub use types::{
-    CnFeatures, Diagnostic, ErrorDefinition, GeneralFeatures, Identity, MnFeatures,
-    NetworkManagement, Object, ObjectDictionary, ObjectPdoMapping, ParameterAccess,
-    ParameterSupport, ProfileHeader, SubObject, Version, XdcFile,
+    AddInfo, AppArray, AppDataType, AppDerived, AppEnum, AppStruct, ApplicationProcess, CnFeatures,
+    Count, Diagnostic, EnumValue, ErrorDefinition, FunctionInstance, FunctionType,
+    GeneralFeatures, Identity, InterfaceList, MnFeatures, NetworkManagement, NmtCnDna, Object,
+    ObjectDictionary, ObjectPdoMapping, ParameterAccess, ParameterGroup, ParameterGroupItem,
+    ParameterRef, ParameterSupport, ProfileHeader, StaticErrorBit, StructMember, SubObject,
+    VarDeclaration, Version, VersionInfo, XdcFile,
 };

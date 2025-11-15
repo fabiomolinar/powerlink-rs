@@ -18,7 +18,7 @@ This crate is part of the `powerlink-rs` project. It is designed to parse, valid
 
 The crate is designed around a three-stage pipeline: **Parse -> Resolve -> Expose**. This separation of concerns allows for a robust, maintainable, and testable codebase.
 
-[file.xdc] -> `parser.rs` -> `model/` -> `resolver/` -> `types.rs` -> `converter.rs` -> [Node]
+[file.xdc] -> `parser.rs` -> `model/` -> `resolver.rs` -> `types.rs` -> [Consumer]
 
 - **`src/parser.rs` (Entry Point)**
   - **Responsibility:** The main entry point for parsing an XDC file.
@@ -51,7 +51,7 @@ This table tracks the crate's implementation status against the main features of
 | **ProfileHeader** | `ProfileHeader_DataType` | 🟢 **Implemented** | All key fields modeled and resolved. |
 | **ProfileBody** | `ProfileBody_DataType` | 🟢 **Implemented** | |
 | ➡️ **DeviceIdentity** | `t_DeviceIdentity` | 🟢 **Implemented** | All fields from XSD are modeled and resolved. |
-| ➡️ **ApplicationProcess** | `t_ApplicationProcess` | 🟡 **In Progress** | `parameterList` and `templateList` are fully modeled. Resolver correctly resolves attributes (`access`, `support`, `persistent`) and values via `uniqueIDRef`. `parameterGroupList` is not yet implemented. |
+| ➡️ **ApplicationProcess** | `t_ApplicationProcess` | 🟢 **Implemented** | All major sub-elements (`parameterList`, `dataTypeList`, `parameterGroupList`, `functionTypeList`, `functionInstanceList`) are modeled and resolved. |
 | ➡️ **ObjectList** | `ag_Powerlink_ObjectList` | 🟢 **Implemented** | Fully modeled and resolved, including `uniqueIDRef` resolution from `ApplicationProcess`. |
 | ➡️ **Object** | `ag_Powerlink_Object` | 🟢 **Implemented** | All key attributes modeled and resolved. |
 | ➡️ **SubObject** | `ag_Powerlink_Object` | 🟢 **Implemented** | All key attributes modeled and resolved. |
@@ -82,7 +82,7 @@ This table tracks the crate's implementation status against the main features of
   - Implement `resolver.rs` logic to map and validate this data.
   - Robustly model `ApplicationProcess` attributes and resolve them via `uniqueIDRef`.
 - **Success Metric:** The crate can parse 100% of the elements and attributes defined in the EPSG DS 311 XSDs.
-- **Status:** 🟡 **In Progress** (Core `ApplicationProcess` logic is complete. `parameterGroupList` and other minor elements are pending).
+- **Status:** 🟢 **Complete**
 
 ### Phase 3: Comprehensive Testing & Validation
 

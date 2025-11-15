@@ -88,7 +88,7 @@ pub struct Identity {
 }
 
 /// Represents a `<version>` element.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)] // Added Clone
 pub struct Version {
     /// `@versionType`
     pub version_type: String,
@@ -217,7 +217,10 @@ pub struct ApplicationProcess {
     pub data_types: Vec<AppDataType>,
     /// List of parameter groups.
     pub parameter_groups: Vec<ParameterGroup>,
-    // TODO: Add FunctionTypeList and FunctionInstanceList
+    /// List of function type definitions.
+    pub function_types: Vec<FunctionType>,
+    /// List of function instances.
+    pub function_instances: Vec<FunctionInstance>,
 }
 
 /// An enum representing a user-defined data type from `<dataTypeList>`.
@@ -336,6 +339,61 @@ pub struct ParameterRef {
     pub locked: bool,
     /// Optional bit offset for bit-packed groups.
     pub bit_offset: Option<u32>,
+}
+
+/// Represents a `<functionType>` (EPSG 311, 7.4.7.4).
+#[derive(Debug, Default)]
+pub struct FunctionType {
+    pub name: String,
+    pub unique_id: String,
+    pub package: Option<String>,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub version_info: Vec<VersionInfo>,
+    pub interface: InterfaceList,
+}
+
+/// Represents a `<versionInfo>` element (EPSG 311, 7.4.7.4.2).
+#[derive(Debug, Default)]
+pub struct VersionInfo {
+    pub organization: String,
+    pub version: String,
+    pub author: String,
+    pub date: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Represents an `<interfaceList>` for a function type (EPSG 311, 7.4.7.4.3).
+#[derive(Debug, Default)]
+pub struct InterfaceList {
+    pub inputs: Vec<VarDeclaration>,
+    pub outputs: Vec<VarDeclaration>,
+    pub configs: Vec<VarDeclaration>,
+}
+
+/// Represents a `<varDeclaration>` within an `<interfaceList>`.
+#[derive(Debug, Default)]
+pub struct VarDeclaration {
+    pub name: String,
+    pub unique_id: String,
+    pub data_type: String,
+    pub size: Option<u32>,
+    pub initial_value: Option<String>,
+    pub label: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Represents a `<functionInstance>` (EPSG 311, 7.4.7.5.2).
+#[derive(Debug, Default)]
+pub struct FunctionInstance {
+    pub name: String,
+    pub unique_id: String,
+    /// The `uniqueID` of the `<functionType>` this is an instance of.
+    pub type_id_ref: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    // Connections are not resolved onto the instance, they are app-level
 }
 
 // --- Object Dictionary ---

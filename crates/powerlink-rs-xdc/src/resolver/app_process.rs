@@ -80,9 +80,21 @@ pub(super) fn resolve_application_process(
         .as_ref()
         .map_or(Ok(Vec::new()), resolve_parameter_group_list)?;
 
+    let function_types = model
+        .function_type_list
+        .as_ref()
+        .map_or(Ok(Vec::new()), resolve_function_type_list)?;
+
+    let function_instances = model
+        .function_instance_list
+        .as_ref()
+        .map_or(Ok(Vec::new()), resolve_function_instance_list)?;
+
     Ok(types::ApplicationProcess {
         data_types,
         parameter_groups,
+        function_types,
+        function_instances,
     })
 }
 
@@ -107,6 +119,7 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
         .var_declaration
         .iter()
         .map(|var| {
+            // This is the fix: construct a types::StructMember directly
             Ok(types::StructMember {
                 name: var.name.clone(),
                 unique_id: var.unique_id.clone(),
@@ -239,4 +252,122 @@ fn resolve_parameter_group(
         description: extract_description(&model.labels),
         items,
     })
+}
+
+/// Helper to resolve `<functionTypeList>`.
+fn resolve_function_type_list(
+    list: &model::app_process::FunctionTypeList,
+) -> Result<Vec<types::FunctionType>, XdcError> {
+    list.function_type
+        .iter()
+        .map(resolve_function_type)
+        .collect()
+}
+
+/// Helper to resolve a single `<functionType>`.
+fn resolve_function_type(
+    model: &model::app_process::FunctionType,
+) -> Result<types::FunctionType, XdcError> {
+    let version_info = model
+        .version_info
+        .iter()
+        .map(|v| types::VersionInfo {
+            organization: v.organization.clone(),
+            version: v.version.clone(),
+            author: v.author.clone(),
+            date: v.date.clone(),
+            label: extract_label(&v.labels),
+            description: extract_description(&v.labels),
+        })
+        .collect();
+
+    let interface = resolve_interface_list(&model.interface_list)?;
+
+    // Note: We are not resolving the nested `functionInstanceList` inside a
+    // `functionType` yet, as it's less critical for OD mapping.
+
+    Ok(types::FunctionType {
+        name: model.name.clone(),
+        unique_id: model.unique_id.clone(),
+        package: model.package.clone(),
+        label: extract_label(&model.labels),
+        description: extract_description(&model.labels),
+        version_info,
+        interface,
+    })
+}
+
+/// Helper to resolve an `<interfaceList>`.
+fn resolve_interface_list(
+    model: &model::app_process::InterfaceList,
+) -> Result<types::InterfaceList, XdcError> {
+    let inputs = model
+        .input_vars
+        .as_ref()
+        .map_or(Ok(Vec::new()), |vars| {
+            vars.var_declaration
+                .iter()
+                .map(resolve_var_declaration)
+                .collect()
+        })?;
+
+    let outputs = model
+        .output_vars
+        .as_ref()
+        .map_or(Ok(Vec::new()), |vars| {
+            vars.var_declaration
+                .iter()
+                .map(resolve_var_declaration)
+                .collect()
+        })?;
+
+    let configs = model
+        .config_vars
+        .as_ref()
+        .map_or(Ok(Vec::new()), |vars| {
+            vars.var_declaration
+                .iter()
+                .map(resolve_var_declaration)
+                .collect()
+        })?;
+
+    Ok(types::InterfaceList {
+        inputs,
+        outputs,
+        configs,
+    })
+}
+
+/// Helper to resolve a `<varDeclaration>`.
+fn resolve_var_declaration(
+    model: &model::app_process::VarDeclaration,
+) -> Result<types::VarDeclaration, XdcError> {
+    Ok(types::VarDeclaration {
+        name: model.name.clone(),
+        unique_id: model.unique_id.clone(),
+        data_type: get_data_type_name(&model.data_type),
+        size: model.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
+        initial_value: model.initial_value.clone(),
+        label: extract_label(&model.labels),
+        description: extract_description(&model.labels),
+    })
+}
+
+/// Helper to resolve `<functionInstanceList>`.
+fn resolve_function_instance_list(
+    list: &model::app_process::FunctionInstanceList,
+) -> Result<Vec<types::FunctionInstance>, XdcError> {
+    list.function_instance
+        .iter()
+        .map(|inst| {
+            Ok(types::FunctionInstance {
+                name: inst.name.clone(),
+                unique_id: inst.unique_id.clone(),
+                type_id_ref: inst.type_id_ref.clone(),
+                label: extract_label(&inst.labels),
+                description: extract_description(&inst.labels),
+            })
+        })
+        .collect()
+    // Note: We are not resolving <connection> elements yet.
 }
