@@ -19,7 +19,6 @@ pub(super) fn resolve_header(model: &model::header::ProfileHeader) -> Result<typ
 mod tests {
     use super::*;
     use crate::model;
-    use crate::types;
     use alloc::string::ToString;
 
     #[test]

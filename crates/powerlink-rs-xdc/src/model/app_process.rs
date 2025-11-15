@@ -167,6 +167,13 @@ pub enum ParameterDataType {
     VariableRef(VariableRef),
 }
 
+// Add Default implementation
+impl Default for ParameterDataType {
+    fn default() -> Self {
+        ParameterDataType::BOOL
+    }
+}
+
 /// Represents `<conditionalSupport>` (EPSG 311, 7.4.7.7.2.2).
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct ConditionalSupport {
@@ -227,7 +234,7 @@ pub struct Property {
 
 /// Represents a `<parameter>` (EPSG 311, 7.4.7.7.2).
 /// (Updated for Task 5)
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Parameter {
     /// The unique ID (e.g., "Param1_Vendor_Specific") that `uniqueIDRef` points to.
     #[serde(rename = "@uniqueID")]
@@ -364,7 +371,7 @@ pub struct AppStruct {
 }
 
 /// Represents `<varDeclaration>` (EPSG 311, 7.4.7.2.4.2)
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct VarDeclaration {
     #[serde(rename = "@name")]
     pub name: String,
@@ -543,7 +550,7 @@ pub struct ParameterGroupList {
 }
 
 /// Represents `<parameterGroup>` (EPSG 311, 7.4.7.8.2)
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ParameterGroup {
     #[serde(rename = "@uniqueID")]
     pub unique_id: String,
@@ -577,7 +584,7 @@ pub enum ParameterGroupItem {
 }
 
 /// Represents `<parameterRef>` (EPSG 311, 7.4.7.8.3)
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ParameterRef {
     #[serde(rename = "@uniqueIDRef")]
     pub unique_id_ref: String, // xsd:IDREF

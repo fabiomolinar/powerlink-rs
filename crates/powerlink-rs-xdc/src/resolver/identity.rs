@@ -82,7 +82,7 @@ pub(super) fn resolve_identity(model: &model::identity::DeviceIdentity) -> Resul
 mod tests {
     use super::*;
     use crate::model::common::{AttributedGlabels, Glabels, Label, LabelChoice, ReadOnlyString};
-    use crate::model::identity::{DeviceIdentity, Version};
+    use crate::model::identity::DeviceIdentity;
     use crate::parser::load_xdc_from_str;
     use alloc::string::ToString;
     use alloc::vec;

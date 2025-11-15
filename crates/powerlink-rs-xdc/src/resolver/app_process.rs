@@ -376,10 +376,10 @@ fn resolve_function_instance_list(
 mod tests {
     use super::*;
     use crate::model::app_process::{
-        AppArray, AppDataTypeChoice, AppDataTypeList, AppDerived, AppEnum, AppStruct, Count,
+        AppArray, AppDerived, AppEnum, AppStruct, Count,
         EnumValue, FunctionInstance, FunctionInstanceList, FunctionType, FunctionTypeList,
-        InterfaceList, ParameterDataType, ParameterGroup, ParameterGroupItem, ParameterGroupList,
-        ParameterRef, Subrange, VarDeclaration, VarList, VersionInfo,
+        InterfaceList, ParameterDataType, ParameterGroup, ParameterGroupItem, ParameterRef,
+        Subrange, VarDeclaration, VarList, VersionInfo,
     };
     use crate::model::common::{DataTypeIDRef, Glabels, Label, LabelChoice};
     use crate::types;

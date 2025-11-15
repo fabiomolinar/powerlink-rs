@@ -12,10 +12,6 @@ fn parse_u32_attr(s: Option<String>) -> u32 {
     s.and_then(|val| val.parse().ok()).unwrap_or(0)
 }
 
-/// Helper to parse a string attribute as a u8.
-fn parse_u8_attr(s: Option<String>) -> u8 {
-    s.and_then(|val| val.parse().ok()).unwrap_or(0)
-}
 
 /// Helper to extract the first available `<label>` value from a `g_labels` group.
 fn extract_label(labels: &Option<Glabels>) -> Option<String> {
@@ -140,6 +136,11 @@ mod tests {
     use crate::types;
     use alloc::string::ToString;
     use alloc::vec;
+
+    /// Helper to parse a string attribute as a u8.
+    fn parse_u8_attr(s: Option<String>) -> u8 {
+        s.and_then(|val| val.parse().ok()).unwrap_or(0)
+    }
 
     // --- Helper Function Tests ---
 

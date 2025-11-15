@@ -31,7 +31,7 @@ pub(super) fn is_false(b: &bool) -> bool {
 // --- Structs for g_labels (CommonElements.xsd) ---
 
 /// Represents `<label lang="en">Value</label>`
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Label {
     #[serde(rename = "@lang")]
     pub lang: String,
@@ -40,7 +40,7 @@ pub struct Label {
 }
 
 /// Represents `<description lang="en" URI="...">Value</description>`
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Description {
     #[serde(rename = "@lang")]
     pub lang: String,

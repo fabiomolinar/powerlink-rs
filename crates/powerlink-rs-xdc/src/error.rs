@@ -90,45 +90,10 @@ impl From<ParseIntError> for XdcError {
     }
 }
 
-impl fmt::Display for XdcError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            XdcError::XmlParsing(e) => write!(f, "XML parsing error: {}", e),
-            XdcError::XmlSerializing(e) => write!(f, "XML serializing error: {}", e),
-            XdcError::XmlWriting(e) => write!(f, "XML writing error: {}", e),
-            XdcError::HexParsing(e) => write!(f, "Hex parsing error: {}", e),
-            XdcError::FmtError(e) => write!(f, "Formatting error: {}", e),
-            XdcError::MissingElement { element } => {
-                write!(f, "Missing required XML element: {}", element)
-            }
-            XdcError::MissingAttribute { attribute } => {
-                write!(f, "Missing required attribute: {}", attribute)
-            }
-            XdcError::InvalidAttributeFormat { attribute } => {
-                write!(f, "Invalid format for attribute: {}", attribute)
-            }
-            XdcError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
-            XdcError::TypeValidationError {
-                index,
-                sub_index,
-                data_type,
-                expected_bytes,
-                actual_bytes,
-            } => write!(
-                f,
-                "Type validation error for index 0x{:04X} subIndex 0x{:02X} (dataType={}): expected {} bytes but got {} bytes",
-                index, sub_index, data_type, expected_bytes, actual_bytes
-            ),
-            XdcError::NotImplemented => write!(f, "Functionality not yet implemented"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::XdcError;
     use alloc::string::ToString;
-    use core::fmt;
     use hex;
     use quick_xml;
 
@@ -151,7 +116,7 @@ mod tests {
     #[test]
     fn test_from_xml_error() {
         // Create a dummy XmlError
-        let xml_err = quick_xml::Error::UnexpectedEof("test eof".to_string());
+        let xml_err = quick_xml::Error::Syntax(quick_xml::errors::SyntaxError::InvalidBangMarkup);
         let xdc_err: XdcError = xml_err.into();
         assert!(matches!(xdc_err, XdcError::XmlWriting(_)));
     }
