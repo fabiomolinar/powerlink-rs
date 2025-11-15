@@ -80,3 +80,133 @@ pub(crate) fn parse_hex_string(s: &str) -> Result<Vec<u8>, FromHexError> {
         hex::decode(s_no_prefix)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::XdcError;
+    use alloc::string::ToString; // Fix: Import ToString for .to_string()
+
+    // A minimal but complete XDC structure for testing.
+    const MINIMAL_GOOD_XDC: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.ethernet-powerlink.org Powerlink_Main.xsd">
+  <ISO15745Profile>
+    <ProfileHeader>
+      <ProfileIdentification>Test</ProfileIdentification>
+      <ProfileRevision>1.0</ProfileRevision>
+      <ProfileName>Test Profile</ProfileName>
+      <ProfileSource>Test</ProfileSource>
+      <ProfileClassID>Device</ProfileClassID>
+      <ISO15745Reference>
+        <ISO15745Part>4</ISO15745Part>
+        <ISO15745Edition>1</ISO15745Edition>
+        <ProfileTechnology>Powerlink</ProfileTechnology>
+      </ISO15745Reference>
+    </ProfileHeader>
+    <ProfileBody xsi:type="ProfileBody_Device_Powerlink" fileName="test.xdd" fileCreator="Test" fileCreationDate="2024-01-01" fileVersion="1">
+      <DeviceIdentity>
+        <vendorName>TestVendor</vendorName>
+        <productName>TestProduct</productName>
+      </DeviceIdentity>
+    </ProfileBody>
+  </ISO15745Profile>
+  <ISO15745Profile>
+    <ProfileHeader>
+      <ProfileIdentification>Test</ProfileIdentification>
+      <ProfileRevision>1.0</ProfileRevision>
+      <ProfileName>Test Profile</ProfileName>
+      <ProfileSource>Test</ProfileSource>
+      <ProfileClassID>CommunicationNetwork</ProfileClassID>
+      <ISO15745Reference>
+        <ISO15745Part>4</ISO15745Part>
+        <ISO15745Edition>1</ISO15745Edition>
+        <ProfileTechnology>Powerlink</ProfileTechnology>
+      </ISO15745Reference>
+    </ProfileHeader>
+    <ProfileBody xsi:type="ProfileBody_CommunicationNetwork_Powerlink" fileName="test.xdd" fileCreator="Test" fileCreationDate="2024-01-01" fileVersion="1">
+      <ApplicationLayers>
+        <ObjectList>
+          <Object index="1000" name="Device Type" objectType="7" dataType="0006" actualValue="0x1234" />
+        </ObjectList>
+      </ApplicationLayers>
+      <NetworkManagement>
+        <GeneralFeatures DLLFeatureMN="false" NMTBootTimeNotActive="0" NMTCycleTimeMax="0" NMTCycleTimeMin="0" NMTErrorEntries="0" />
+      </NetworkManagement>
+    </ProfileBody>
+  </ISO15745Profile>
+</ISO15745ProfileContainer>"#;
+
+    #[test]
+    fn test_load_xdc_from_str_happy_path() {
+        let result = load_xdc_from_str(MINIMAL_GOOD_XDC);
+        assert!(result.is_ok());
+        let xdc_file = result.unwrap();
+        // Fix: Use `name` field, not `profile_name`
+        assert_eq!(xdc_file.header.name, "Test Profile");
+        assert_eq!(xdc_file.identity.vendor_name, "TestVendor");
+        assert_eq!(xdc_file.object_dictionary.objects.len(), 1);
+        assert_eq!(xdc_file.object_dictionary.objects[0].index, 0x1000);
+        // Fix: Corrected the byte order for 0x1234 (u16)
+        assert_eq!(xdc_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]));
+    }
+
+    #[test]
+    fn test_load_xdd_defaults_from_str_happy_path() {
+        let xdd_xml = MINIMAL_GOOD_XDC.replace("actualValue", "defaultValue");
+        let result = load_xdd_defaults_from_str(&xdd_xml);
+        assert!(result.is_ok());
+        let xdd_file = result.unwrap();
+        assert_eq!(xdd_file.identity.vendor_name, "TestVendor");
+        // Fix: Corrected the byte order for 0x1234 (u16)
+        assert_eq!(xdd_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]))
+    }
+
+    #[test]
+    fn test_load_xdc_malformed_xml() {
+        let malformed_xml = "<ISO15745ProfileContainer><ProfileHeader>"; // Missing closing tags
+        let result = load_xdc_from_str(malformed_xml);
+        assert!(matches!(result, Err(XdcError::XmlParsing(_))));
+    }
+
+    #[test]
+    fn test_load_xdc_invalid_attribute() {
+        // Contains `index="1FGG"`, which is not valid hex.
+        let invalid_attr_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.ethernet-powerlink.org Powerlink_Main.xsd">
+  <ISO15745Profile>
+    <ProfileHeader>
+      <ProfileIdentification>Test</ProfileIdentification>
+      <ProfileRevision>1.0</ProfileRevision>
+      <ProfileName>Test Profile</ProfileName>
+      <ProfileSource>Test</ProfileSource>
+      <ProfileClassID>Device</ProfileClassID>
+    </ProfileHeader>
+    <ProfileBody xsi:type="ProfileBody_Device_Powerlink" fileName="test.xdd" fileCreator="Test" fileCreationDate="2024-01-01" fileVersion="1">
+      <DeviceIdentity><vendorName>Test</vendorName><productName>Test</productName></DeviceIdentity>
+    </ProfileBody>
+  </ISO15745Profile>
+  <ISO15745Profile>
+    <ProfileHeader>
+      <ProfileIdentification>Test</ProfileIdentification>
+      <ProfileRevision>1.0</ProfileRevision>
+      <ProfileName>Test Profile</ProfileName>
+      <ProfileSource>Test</ProfileSource>
+      <ProfileClassID>CommunicationNetwork</ProfileClassID>
+    </ProfileHeader>
+    <ProfileBody xsi:type="ProfileBody_CommunicationNetwork_Powerlink" fileName="test.xdd" fileCreator="Test" fileCreationDate="2024-01-01" fileVersion="1">
+      <ApplicationLayers>
+        <ObjectList>
+          <Object index="1FGG" name="Device Type" objectType="7" dataType="0007" actualValue="0x1234" />
+        </ObjectList>
+      </ApplicationLayers>
+      <NetworkManagement>
+        <GeneralFeatures DLLFeatureMN="false" NMTBootTimeNotActive="0" NMTCycleTimeMax="0" NMTCycleTimeMin="0" NMTErrorEntries="0" />
+      </NetworkManagement>
+    </ProfileBody>
+  </ISO15745Profile>
+</ISO15745ProfileContainer>"#;
+
+        let result = load_xdc_from_str(invalid_attr_xml);
+        assert!(matches!(result, Err(XdcError::InvalidAttributeFormat { attribute: "index or subIndex" })));
+    }
+}

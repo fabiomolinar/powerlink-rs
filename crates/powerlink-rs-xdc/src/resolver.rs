@@ -644,3 +644,279 @@ fn map_param_support(model: model::app_process::ParameterSupport) -> types::Para
         model::app_process::ParameterSupport::Conditional => types::ParameterSupport::Conditional,
     }
 }
+
+// Fix: Add the missing test module from the previous step
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::load_xdd_defaults_from_str;
+    use crate::parser::load_xdc_from_str;
+    use crate::types::{ParameterAccess, ParameterSupport};
+    use alloc::vec;
+    use alloc::format; // Fix: Import alloc::format
+
+    /// Creates a minimal, reusable XML string with a DeviceIdentity block.
+    fn create_test_xml(device_identity: &str, app_layers: &str, app_process: &str) -> String {
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.ethernet-powerlink.org Powerlink_Main.xsd">
+  <ISO15745Profile>
+    <ProfileHeader>
+      <ProfileIdentification>Test</ProfileIdentification>
+      <ProfileRevision>1.0</ProfileRevision>
+      <ProfileName>Test Profile</ProfileName>
+      <ProfileSource>B&amp;R</ProfileSource>
+      <ProfileClassID>Device</ProfileClassID>
+      <ISO15745Reference>
+        <ISO15745Part>4</ISO15745Part>
+        <ISO15745Edition>1</ISO15745Edition>
+        <ProfileTechnology>Powerlink</ProfileTechnology>
+      </ISO15745Reference>
+    </ProfileHeader>
+    <ProfileBody xsi:type="ProfileBody_Device_Powerlink" fileName="test.xdd" fileCreator="B&amp;R" fileCreationDate="2024-01-01" fileVersion="1">
+      {device_identity}
+      {app_process}
+    </ProfileBody>
+  </ISO15745Profile>
+  <ISO15745Profile>
+    <ProfileHeader>
+      <ProfileIdentification>Test</ProfileIdentification>
+      <ProfileRevision>1.0</ProfileRevision>
+      <ProfileName>Test Profile</ProfileName>
+      <ProfileSource>B&amp;R</ProfileSource>
+      <ProfileClassID>CommunicationNetwork</ProfileClassID>
+      <ISO15745Reference>
+        <ISO15745Part>4</ISO15745Part>
+        <ISO15745Edition>1</ISO15745Edition>
+        <ProfileTechnology>Powerlink</ProfileTechnology>
+      </ISO15745Reference>
+    </ProfileHeader>
+    <ProfileBody xsi:type="ProfileBody_CommunicationNetwork_Powerlink" fileName="test.xdd" fileCreator="B&amp;R" fileCreationDate="2024-01-01" fileVersion="1">
+      {app_layers}
+      <NetworkManagement>
+        <GeneralFeatures DLLFeatureMN="false" NMTBootTimeNotActive="0" NMTCycleTimeMax="0" NMTCycleTimeMin="0" NMTErrorEntries="0" />
+      </NetworkManagement>
+    </ProfileBody>
+  </ISO15745Profile>
+</ISO15745ProfileContainer>"#
+        )
+    }
+
+    /// Test for Task 3 & 4: Verifies the new fields in `types::Identity` are populated.
+    #[test]
+    fn test_resolve_identity() {
+        let identity_xml = r#"
+      <DeviceIdentity>
+        <vendorName>B&amp;R</vendorName>
+        <vendorID>0x0000001A</vendorID>
+        <vendorText>
+          <label lang="en">B&amp;R Industrial Automation</label>
+        </vendorText>
+        <deviceFamily>
+          <label lang="en">X20 System</label>
+        </deviceFamily>
+        <productFamily readOnly="true">X20</productFamily>
+        <productName readOnly="true">X20CP1584</productName>
+        <productID readOnly="true">0x22B8</productID>
+        <productText>
+          <label lang="en">X20 CPU</label>
+        </productText>
+        <orderNumber readOnly="true">X20CP1584</orderNumber>
+        <version versionType="HW" readOnly="true" value="1.0" />
+        <buildDate>2024-01-01</buildDate>
+        <specificationRevision readOnly="true">1.0.0</specificationRevision>
+        <instanceName readOnly="false">MyCPU</instanceName>
+      </DeviceIdentity>"#;
+
+        let xml = create_test_xml(identity_xml, "<ApplicationLayers><ObjectList/></ApplicationLayers>", "");
+        let xdc_file = load_xdc_from_str(&xml).unwrap();
+
+        let id = &xdc_file.identity;
+        assert_eq!(id.vendor_name, "B&R");
+        assert_eq!(id.vendor_id, 0x1A);
+        assert_eq!(id.product_name, "X20CP1584");
+        assert_eq!(id.product_id, 0x22B8);
+        assert_eq!(id.vendor_text, Some("B&R Industrial Automation".to_string()));
+        assert_eq!(id.device_family, Some("X20 System".to_string()));
+        assert_eq!(id.product_family, Some("X20".to_string()));
+        assert_eq!(id.product_text, Some("X20 CPU".to_string()));
+        assert_eq!(id.order_number, vec!["X20CP1584".to_string()]);
+        assert_eq!(id.build_date, Some("2024-01-01".to_string()));
+        assert_eq!(id.specification_revision, Some("1.0.0".to_string()));
+        assert_eq!(id.instance_name, Some("MyCPU".to_string()));
+        assert_eq!(id.versions[0].value, "1.0");
+    }
+
+    /// Test for Task 8 & 9: Verifies that attributes from `<parameter>`
+    /// correctly override attributes from `<Object>`.
+    #[test]
+    fn test_resolve_unique_id_ref_attributes() {
+        let app_layers_xml = r#"
+        <ApplicationLayers>
+          <ObjectList>
+            <Object index="2000" name="Var1" objectType="7" dataType="0005"
+                    accessType="ro" uniqueIDRef="param_1" />
+          </ObjectList>
+        </ApplicationLayers>"#;
+        
+        let app_process_xml = r#"
+        <ApplicationProcess>
+          <parameterList>
+            <parameter uniqueID="param_1" access="readWrite" support="optional" persistent="true">
+              <USINT />
+            </parameter>
+          </parameterList>
+        </ApplicationProcess>"#;
+
+        let xml = create_test_xml("", app_layers_xml, app_process_xml);
+        let xdc_file = load_xdc_from_str(&xml).unwrap();
+
+        let obj = &xdc_file.object_dictionary.objects[0];
+        assert_eq!(obj.index, 0x2000);
+        // Verify attributes were overridden by the <parameter>
+        assert_eq!(obj.access_type, Some(ParameterAccess::ReadWrite));
+        assert_eq!(obj.support, Some(ParameterSupport::Optional));
+        assert_eq!(obj.persistent, true);
+    }
+    
+    /// Test for Task 8 & 9: Verifies that attributes from `<Object>`
+    /// are used when `uniqueIDRef` is absent.
+    #[test]
+    fn test_resolve_no_unique_id_ref() {
+        let app_layers_xml = r#"
+        <ApplicationLayers>
+          <ObjectList>
+            <Object index="2000" name="Var1" objectType="7" dataType="0005" accessType="const" />
+          </ObjectList>
+        </ApplicationLayers>"#;
+
+        let xml = create_test_xml("", app_layers_xml, "");
+        let xdc_file = load_xdc_from_str(&xml).unwrap();
+
+        let obj = &xdc_file.object_dictionary.objects[0];
+        assert_eq!(obj.index, 0x2000);
+        // Verify attributes come from the <Object>
+        assert_eq!(obj.access_type, Some(ParameterAccess::Constant));
+        assert_eq!(obj.support, None);
+        assert_eq!(obj.persistent, false);
+    }
+
+    /// Test for Task 8 & 9: Verifies value resolution logic for XDC (actualValue)
+    /// vs. XDD (defaultValue) when using `uniqueIDRef`.
+    #[test]
+    fn test_resolve_unique_id_ref_value() {
+        let app_layers_xml = r#"
+        <ApplicationLayers>
+          <ObjectList>
+            <Object index="2000" name="Var1" objectType="7" dataType="0005"
+                    actualValue="0x11" defaultValue="0x22" uniqueIDRef="param_1" />
+          </ObjectList>
+        </ApplicationLayers>"#;
+        
+        let app_process_xml = r#"
+        <ApplicationProcess>
+          <parameterList>
+            <parameter uniqueID="param_1">
+              <USINT />
+              <actualValue value="0x88" />
+              <defaultValue value="0x99" />
+            </parameter>
+          </parameterList>
+        </ApplicationProcess>"#;
+
+        let xml = create_test_xml("", app_layers_xml, app_process_xml);
+
+        // 1. Test XDC loading (prioritizes `actualValue`)
+        // The <Object> has `actualValue="0x11"`.
+        // The <parameter> has `actualValue="0x88"`.
+        // The <Object> `actualValue` should win.
+        let xdc_file = load_xdc_from_str(&xml).unwrap();
+        let xdc_obj = &xdc_file.object_dictionary.objects[0];
+        assert_eq!(xdc_obj.data.as_deref(), Some(&[0x11_u8] as &[u8]));
+        
+        // 2. Test XDD loading (prioritizes `defaultValue`)
+        // The <Object> has `defaultValue="0x22"`.
+        // The <parameter> has `defaultValue="0x99"`.
+        // The <Object> `defaultValue` should win.
+        let xdd_file = load_xdd_defaults_from_str(&xml).unwrap();
+        let xdd_obj = &xdd_file.object_dictionary.objects[0];
+        assert_eq!(xdd_obj.data.as_deref(), Some(&[0x22_u8] as &[u8]));
+    }
+    
+    /// Test for Task 8 & 9: Verifies value resolution fallback to `uniqueIDRef`
+    /// when direct values are missing.
+    #[test]
+    fn test_resolve_unique_id_ref_value_fallback() {
+        let app_layers_xml = r#"
+        <ApplicationLayers>
+          <ObjectList>
+            <Object index="2000" name="Var1" objectType="7" dataType="0005"
+                    uniqueIDRef="param_1" />
+          </ObjectList>
+        </ApplicationLayers>"#;
+        
+        let app_process_xml = r#"
+        <ApplicationProcess>
+          <parameterList>
+            <parameter uniqueID="param_1">
+              <USINT />
+              <actualValue value="0x88" />
+              <defaultValue value="0x99" />
+            </parameter>
+          </parameterList>
+        </ApplicationProcess>"#;
+
+        let xml = create_test_xml("", app_layers_xml, app_process_xml);
+
+        // 1. Test XDC loading (no `actualValue` on <Object>, falls back to <parameter>)
+        let xdc_file = load_xdc_from_str(&xml).unwrap();
+        let xdc_obj = &xdc_file.object_dictionary.objects[0];
+        assert_eq!(xdc_obj.data.as_deref(), Some(&[0x88_u8] as &[u8]));
+        
+        // 2. Test XDD loading (no `defaultValue` on <Object>, falls back to <parameter>)
+        let xdd_file = load_xdd_defaults_from_str(&xml).unwrap();
+        let xdd_obj = &xdd_file.object_dictionary.objects[0];
+        assert_eq!(xdd_obj.data.as_deref(), Some(&[0x99_u8] as &[u8]));
+    }
+    
+    /// Test for Task 8 & 9: Verifies value resolution from a `parameterTemplate`
+    /// when the `parameter` itself has no value.
+    #[test]
+    fn test_resolve_template_id_ref_value() {
+        let app_layers_xml = r#"
+        <ApplicationLayers>
+          <ObjectList>
+            <Object index="2000" name="Var1" objectType="7" dataType="0005"
+                    uniqueIDRef="param_1" />
+          </ObjectList>
+        </ApplicationLayers>"#;
+        
+        let app_process_xml = r#"
+        <ApplicationProcess>
+          <templateList>
+            <parameterTemplate uniqueID="template_1">
+              <USINT />
+              <actualValue value="0xAA" />
+              <defaultValue value="0xBB" />
+            </parameterTemplate>
+          </templateList>
+          <parameterList>
+            <parameter uniqueID="param_1" templateIDRef="template_1">
+              <USINT />
+            </parameter>
+          </parameterList>
+        </ApplicationProcess>"#;
+
+        let xml = create_test_xml("", app_layers_xml, app_process_xml);
+
+        // 1. Test XDC loading (falls back to template's `actualValue`)
+        let xdc_file = load_xdc_from_str(&xml).unwrap();
+        let xdc_obj = &xdc_file.object_dictionary.objects[0];
+        assert_eq!(xdc_obj.data.as_deref(), Some(&[0xAA_u8] as &[u8]));
+        
+        // 2. Test XDD loading (falls back to template's `defaultValue`)
+        let xdd_file = load_xdd_defaults_from_str(&xml).unwrap();
+        let xdd_obj = &xdd_file.object_dictionary.objects[0];
+        assert_eq!(xdd_obj.data.as_deref(), Some(&[0xBB_u8] as &[u8]));
+    }
+}
