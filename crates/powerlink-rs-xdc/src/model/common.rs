@@ -18,6 +18,11 @@ pub(super) fn is_true(b: &bool) -> bool {
     *b
 }
 
+/// Helper function for `#[serde(default = "bool_false")]`
+pub(super) fn bool_false() -> bool {
+    false
+}
+
 /// Helper function for `#[serde(skip_serializing_if = "is_false")]`
 pub(super) fn is_false(b: &bool) -> bool {
     !*b

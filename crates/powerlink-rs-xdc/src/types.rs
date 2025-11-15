@@ -22,6 +22,9 @@ pub struct XdcFile {
     /// Information from the `<NetworkManagement>` block.
     /// This is `None` if the file is a standard Device Profile (XDD).
     pub network_management: Option<NetworkManagement>,
+
+    /// Information from the `<ApplicationProcess>` block.
+    pub application_process: Option<ApplicationProcess>,
     
     /// The complete Object Dictionary for the device.
     pub object_dictionary: ObjectDictionary,
@@ -181,12 +184,8 @@ pub struct Diagnostic {
 /// Represents one `<Error>` in the `<ErrorList>`.
 #[derive(Debug, Default)]
 pub struct ErrorDefinition {
-    pub name: String, // Changed to non-optional
-    // The model for this was simplified in model.rs, so label/desc are not present.
-    // pub label: Option<String>,
-    // pub description: Option<String>,
-    // pub error_type: Option<String>,
-    pub value: String, // Changed to non-optional
+    pub name: String,
+    pub value: String, 
     pub add_info: Vec<AddInfo>,
 }
 
@@ -206,6 +205,137 @@ pub struct StaticErrorBit {
     pub offset: u8,
     pub label: Option<String>,
     pub description: Option<String>,
+}
+
+// --- Application Process ---
+
+/// Represents the `<ApplicationProcess>` block, containing user-defined
+/// data types, parameters, and groupings.
+#[derive(Debug, Default)]
+pub struct ApplicationProcess {
+    /// List of user-defined data types.
+    pub data_types: Vec<AppDataType>,
+    /// List of parameter groups.
+    pub parameter_groups: Vec<ParameterGroup>,
+    // TODO: Add FunctionTypeList and FunctionInstanceList
+}
+
+/// An enum representing a user-defined data type from `<dataTypeList>`.
+#[derive(Debug)]
+pub enum AppDataType {
+    Struct(AppStruct),
+    Array(AppArray),
+    Enum(AppEnum),
+    Derived(AppDerived),
+}
+
+/// Represents a `<struct>` data type.
+#[derive(Debug, Default)]
+pub struct AppStruct {
+    pub name: String,
+    pub unique_id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub members: Vec<StructMember>,
+}
+
+/// Represents a `<varDeclaration>` within a `<struct>`.
+#[derive(Debug, Default)]
+pub struct StructMember {
+    pub name: String,
+    pub unique_id: String,
+    /// The data type of this member (e.g., "UINT", "BOOL", or a `uniqueIDRef`
+    /// to another type in the `dataTypeList`).
+    pub data_type: String,
+    /// Size in bits, if applicable (e.g., for `BITSTRING`).
+    pub size: Option<u32>,
+    pub label: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Represents an `<array>` data type.
+#[derive(Debug, Default)]
+pub struct AppArray {
+    pub name: String,
+    pub unique_id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub lower_limit: u32,
+    pub upper_limit: u32,
+    /// The data type of the array elements (e.g., "UINT", "BOOL", or a `uniqueIDRef`).
+    pub data_type: String,
+}
+
+/// Represents an `<enum>` data type.
+#[derive(Debug, Default)]
+pub struct AppEnum {
+    pub name: String,
+    pub unique_id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    /// The base data type for the enum (e.g., "USINT", "UINT").
+    pub data_type: String,
+    pub size_in_bits: Option<u32>,
+    pub values: Vec<EnumValue>,
+}
+
+/// Represents a single `<enumValue>` within an `<enum>`.
+#[derive(Debug, Default)]
+pub struct EnumValue {
+    pub name: String,
+    pub value: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Represents a `<derived>` data type.
+#[derive(Debug, Default)]
+pub struct AppDerived {
+    pub name: String,
+    pub unique_id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    /// The base data type this is derived from (e.g., "UINT", "BOOL", or a `uniqueIDRef`).
+    pub data_type: String,
+    pub count: Option<Count>,
+}
+
+/// Represents a `<count>` element within a `<derived>` type.
+#[derive(Debug, Default)]
+pub struct Count {
+    pub unique_id: String,
+    pub access: Option<ParameterAccess>,
+    pub default_value: Option<String>,
+}
+
+/// Represents a `<parameterGroup>` from the `<parameterGroupList>`.
+#[derive(Debug, Default)]
+pub struct ParameterGroup {
+    pub unique_id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    /// Nested groups or parameter references.
+    pub items: Vec<ParameterGroupItem>,
+}
+
+/// An enum representing an item inside a `<parameterGroup>`.
+#[derive(Debug)]
+pub enum ParameterGroupItem {
+    /// A nested parameter group.
+    Group(ParameterGroup),
+    /// A reference to a parameter.
+    Parameter(ParameterRef),
+}
+
+/// Represents a `<parameterRef>` inside a `<parameterGroup>`.
+#[derive(Debug, Default)]
+pub struct ParameterRef {
+    /// The `uniqueID` of the parameter being referenced.
+    pub unique_id_ref: String,
+    pub visible: bool,
+    pub locked: bool,
+    /// Optional bit offset for bit-packed groups.
+    pub bit_offset: Option<u32>,
 }
 
 // --- Object Dictionary ---

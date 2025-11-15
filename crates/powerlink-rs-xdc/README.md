@@ -18,7 +18,7 @@ This crate is part of the `powerlink-rs` project. It is designed to parse, valid
 
 The crate is designed around a three-stage pipeline: **Parse -> Resolve -> Expose**. This separation of concerns allows for a robust, maintainable, and testable codebase.
 
-[file.xdc] -> `parser.rs` -> `model/` -> `resolver.rs` -> `types.rs` -> [Consumer]
+[file.xdc] -> `parser.rs` -> `model/` -> `resolver/` -> `types.rs` -> `converter.rs` -> [Node]
 
 - **`src/parser.rs` (Entry Point)**
   - **Responsibility:** The main entry point for parsing an XDC file.
@@ -103,4 +103,4 @@ This table tracks the crate's implementation status against the main features of
   - Add a high-level `validate()` method to `XdcFile` that checks for common *semantic* configuration errors (e.g., invalid PDO mappings).
   - Implement a `builder.rs` API for programmatically creating new `XdcFile` structs.
 - **Success Metric:** A user can create a valid XDC file from scratch, serialize it to XML, parse it back, and get an identical struct.
-- **Status:** 🟡 **In Progress** (`save_xdc_to_string` is implemented).
+- **Status:** 🟡 **In Progress** (`save_xdc_to_string` and `to_core_od` converter are implemented).

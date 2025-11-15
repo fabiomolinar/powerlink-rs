@@ -15,6 +15,7 @@ use alloc::string::String;
 
 // --- Sub-modules ---
 
+mod app_process; // Add the new module
 mod header;
 mod identity;
 mod net_mgmt;
@@ -87,12 +88,12 @@ pub(crate) fn resolve_data(
     let mut param_map: BTreeMap<&String, &model::app_process::Parameter> = BTreeMap::new();
 
     if let Some(app_process) = app_process {
-        if let Some(param_list) = &app_process.parameter_list {
-            for param in &param_list.parameter {
-                // Just store a reference to the parameter itself.
-                // Value resolution will happen in Pass 3.
-                param_map.insert(&param.unique_id, param);
-            }
+        // This is the line that caused the error.
+        // `parameter_list` is NOT an Option, so we remove `if let Some(...)`
+        for param in &app_process.parameter_list.parameter {
+            // Just store a reference to the parameter itself.
+            // Value resolution will happen in Pass 3.
+            param_map.insert(&param.unique_id, param);
         }
     }
     // --- End of Pass 2 ---
@@ -134,6 +135,11 @@ pub(crate) fn resolve_data(
         .map(net_mgmt::resolve_network_management)
         .transpose()?;
 
+    // Resolve the ApplicationProcess (new)
+    let application_process = app_process
+        .map(app_process::resolve_application_process)
+        .transpose()?;
+
     let object_dictionary =
         od::resolve_object_dictionary(app_layers, &param_map, &template_map, &type_map, mode)?;
     
@@ -142,6 +148,7 @@ pub(crate) fn resolve_data(
         header,
         identity,
         network_management,
+        application_process, // Add the resolved data
         object_dictionary,
     })
 }
