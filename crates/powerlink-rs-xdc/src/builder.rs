@@ -12,6 +12,7 @@ use core::fmt::Write;
 use serde::Serialize;
 
 // Import new model paths
+// Use fully qualified paths
 use crate::model::app_layers::{Object, ObjectAccessType, ObjectList, ObjectPdoMapping, SubObject};
 use crate::model::common::ReadOnlyString;
 use crate::model::header::ProfileHeader;
@@ -86,9 +87,9 @@ fn build_device_profile(
         .collect();
 
     let device_identity = DeviceIdentity {
-        vendor_name: ReadOnlyString { value: identity.vendor_name.clone().unwrap_or_default(), ..Default::default() },
+        vendor_name: ReadOnlyString { value: identity.vendor_name.clone(), ..Default::default() },
         vendor_id: Some(ReadOnlyString { value: format!("0x{:08X}", identity.vendor_id), ..Default::default() }),
-        product_name: ReadOnlyString { value: identity.product_name.clone().unwrap_or_default(), ..Default::default() },
+        product_name: ReadOnlyString { value: identity.product_name.clone(), ..Default::default() },
         product_id: Some(ReadOnlyString { value: format!("{:X}", identity.product_id), ..Default::default() }),
         version: versions,
         // Use default for all other new fields

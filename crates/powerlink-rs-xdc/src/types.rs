@@ -49,18 +49,39 @@ pub struct ProfileHeader {
 // --- Device Identity ---
 
 /// Represents the `<DeviceIdentity>` block.
+/// (Updated for Task 3)
 #[derive(Debug, Default)]
 pub struct Identity {
-    /// `<vendorName>`
-    pub vendor_name: Option<String>,
+    /// `<vendorName>` (Mandatory)
+    pub vendor_name: String,
     /// `<vendorID>` (as a u32, parsed from hex)
     pub vendor_id: u32,
-    /// `<productName>`
-    pub product_name: Option<String>,
+    /// `<vendorText>` (First available label)
+    pub vendor_text: Option<String>,
+    
+    /// `<deviceFamily>` (First available label)
+    pub device_family: Option<String>,
+    /// `<productFamily>`
+    pub product_family: Option<String>,
+    
+    /// `<productName>` (Mandatory)
+    pub product_name: String,
     /// `<productID>` (as a u32, parsed from hex)
     pub product_id: u32,
+    /// `<productText>` (First available label)
+    pub product_text: Option<String>,
+    
+    /// All `<orderNumber>` elements.
+    pub order_number: Vec<String>,
     /// All `<version>` elements.
     pub versions: Vec<Version>,
+    
+    /// `<buildDate>`
+    pub build_date: Option<String>,
+    /// `<specificationRevision>`
+    pub specification_revision: Option<String>,
+    /// `<instanceName>`
+    pub instance_name: Option<String>,
 }
 
 /// Represents a `<version>` element.

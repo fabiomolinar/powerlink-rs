@@ -13,7 +13,9 @@
 
 use crate::error::XdcError;
 use crate::model;
-use crate::model::app_layers::DataTypeName; // Corrected path
+// Use full paths to the new sub-modules
+use crate::model::app_layers::DataTypeName;
+use crate::model::common::{AttributedGlabels, Glabels, LabelChoice};
 use crate::model::Iso15745ProfileContainer;
 use crate::parser::{parse_hex_u16, parse_hex_u32, parse_hex_u8, parse_hex_string};
 use crate::types; // Import the new public types
@@ -171,12 +173,29 @@ fn resolve_header(model: &model::header::ProfileHeader) -> Result<types::Profile
     })
 }
 
+/// Helper to extract the first available `<label>` value from a `g_labels` group.
+fn extract_label_from_glabels(labels: &Glabels) -> Option<String> {
+    labels.items.iter().find_map(|item| {
+        if let LabelChoice::Label(label) = item {
+            Some(label.value.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Helper to extract the first available `<label>` value from an `AttributedGlabels` struct.
+fn extract_label_from_attributed_glabels(attributed_labels: &AttributedGlabels) -> Option<String> {
+    extract_label_from_glabels(&attributed_labels.labels)
+}
+
 /// Parses a `model::DeviceIdentity` into a clean `types::Identity`.
+/// (Updated for Task 4)
 fn resolve_identity(model: &model::identity::DeviceIdentity) -> Result<types::Identity, XdcError> {
     let vendor_id = model
         .vendor_id
         .as_ref()
-        .map(|v| parse_hex_u32(&v.value)) // Fix: Access .value field
+        .map(|v| parse_hex_u32(&v.value))
         .transpose()?
         .unwrap_or(0);
 
@@ -185,8 +204,8 @@ fn resolve_identity(model: &model::identity::DeviceIdentity) -> Result<types::Id
         .product_id
         .as_ref()
         .map(|p| {
-            parse_hex_u32(&p.value) // Fix: Access .value field
-                .or_else(|_| p.value.parse::<u32>().map_err(|_| XdcError::InvalidAttributeFormat { attribute: "productID" } )) // Fix: Access .value field
+            parse_hex_u32(&p.value)
+                .or_else(|_| p.value.parse::<u32>().map_err(|_| XdcError::InvalidAttributeFormat { attribute: "productID" } ))
                 .ok()
         })
         .flatten()
@@ -200,13 +219,29 @@ fn resolve_identity(model: &model::identity::DeviceIdentity) -> Result<types::Id
             value: v.value.clone(),
         })
         .collect();
+        
+    let order_number = model
+        .order_number
+        .iter()
+        .map(|on| on.value.clone())
+        .collect();
 
     Ok(types::Identity {
         vendor_id,
         product_id,
-        vendor_name: Some(model.vendor_name.value.clone()), // Fix: Access .value and wrap in Some
-        product_name: Some(model.product_name.value.clone()), // Fix: Access .value and wrap in Some
+        vendor_name: model.vendor_name.value.clone(),
+        product_name: model.product_name.value.clone(),
         versions,
+        
+        // --- New fields ---
+        vendor_text: model.vendor_text.as_ref().and_then(extract_label_from_attributed_glabels),
+        device_family: model.device_family.as_ref().and_then(extract_label_from_attributed_glabels),
+        product_family: model.product_family.as_ref().map(|pf| pf.value.clone()),
+        product_text: model.product_text.as_ref().and_then(extract_label_from_attributed_glabels),
+        order_number,
+        build_date: model.build_date.clone(),
+        specification_revision: model.specification_revision.as_ref().map(|sr| sr.value.clone()),
+        instance_name: model.instance_name.as_ref().map(|i| i.value.clone()),
     })
 }
 
