@@ -21,7 +21,7 @@ use quick_xml::de::from_str;
 /// the `actualValue` attributes, which is standard for XDC (Configuration) files.
 pub fn load_xdc_from_str(s: &str) -> Result<XdcFile, XdcError> {
     let container = parse_xml_str(s)?;
-    // FIX: Call the new resolver with ValueMode::Actual
+    // Call the resolver with ValueMode::Actual
     resolver::resolve_data(container, ValueMode::Actual)
 }
 
@@ -31,7 +31,7 @@ pub fn load_xdc_from_str(s: &str) -> Result<XdcFile, XdcError> {
 /// the `defaultValue` attributes, which is standard for XDD (Device Description) files.
 pub fn load_xdd_defaults_from_str(s: &str) -> Result<XdcFile, XdcError> {
     let container = parse_xml_str(s)?;
-    // FIX: Call the new resolver with ValueMode::Default
+    // Call the resolver with ValueMode::Default
     resolver::resolve_data(container, ValueMode::Default)
 }
 

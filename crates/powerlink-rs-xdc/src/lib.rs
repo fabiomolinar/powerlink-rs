@@ -17,7 +17,7 @@ extern crate alloc;
 
 mod builder;
 mod error;
-mod model;
+mod model; // This now correctly refers to the `src/model/mod.rs` directory
 mod parser;
 mod resolver;
 mod types;

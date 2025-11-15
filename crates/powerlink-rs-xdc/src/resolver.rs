@@ -12,7 +12,9 @@
 //! 7. Validating data types and lengths.
 
 use crate::error::XdcError;
-use crate::model::{self, DataTypeName, Iso15745ProfileContainer};
+use crate::model;
+use crate::model::app_layers::DataTypeName; // Corrected path
+use crate::model::Iso15745ProfileContainer;
 use crate::parser::{parse_hex_u16, parse_hex_u32, parse_hex_u8, parse_hex_string};
 use crate::types; // Import the new public types
 use alloc::collections::BTreeMap;
@@ -36,7 +38,6 @@ pub(crate) fn resolve_data(
     mode: ValueMode,
 ) -> Result<types::XdcFile, XdcError> {
     // Find the distinct profile bodies.
-    // FIX: Find the entire `Iso15745Profile` for each, not just the `ProfileBody`.
     
     // The Device Profile contains Identity and ApplicationProcess.
     let device_profile = container
@@ -129,7 +130,6 @@ pub(crate) fn resolve_data(
     // 4. --- Pass 3: Resolve all public-facing types ---
 
     // The header is mandatory in both profiles; prefer the device one.
-    // FIX: Access the header from the `Iso15745Profile` struct.
     let header_model = device_profile
         .map(|p| &p.profile_header)
         .unwrap_or(&comm_profile.profile_header);
@@ -161,7 +161,7 @@ pub(crate) fn resolve_data(
 }
 
 /// Parses a `model::ProfileHeader` into a `types::ProfileHeader`.
-fn resolve_header(model: &model::ProfileHeader) -> Result<types::ProfileHeader, XdcError> {
+fn resolve_header(model: &model::header::ProfileHeader) -> Result<types::ProfileHeader, XdcError> {
     Ok(types::ProfileHeader {
         identification: model.profile_identification.clone(),
         revision: model.profile_revision.clone(),
@@ -172,11 +172,11 @@ fn resolve_header(model: &model::ProfileHeader) -> Result<types::ProfileHeader, 
 }
 
 /// Parses a `model::DeviceIdentity` into a clean `types::Identity`.
-fn resolve_identity(model: &model::DeviceIdentity) -> Result<types::Identity, XdcError> {
+fn resolve_identity(model: &model::identity::DeviceIdentity) -> Result<types::Identity, XdcError> {
     let vendor_id = model
         .vendor_id
         .as_ref()
-        .map(|v| parse_hex_u32(v))
+        .map(|v| parse_hex_u32(&v.value)) // Fix: Access .value field
         .transpose()?
         .unwrap_or(0);
 
@@ -185,8 +185,8 @@ fn resolve_identity(model: &model::DeviceIdentity) -> Result<types::Identity, Xd
         .product_id
         .as_ref()
         .map(|p| {
-            parse_hex_u32(p)
-                .or_else(|_| p.parse::<u32>().map_err(|_| XdcError::InvalidAttributeFormat { attribute: "productID" } ))
+            parse_hex_u32(&p.value) // Fix: Access .value field
+                .or_else(|_| p.value.parse::<u32>().map_err(|_| XdcError::InvalidAttributeFormat { attribute: "productID" } )) // Fix: Access .value field
                 .ok()
         })
         .flatten()
@@ -204,15 +204,15 @@ fn resolve_identity(model: &model::DeviceIdentity) -> Result<types::Identity, Xd
     Ok(types::Identity {
         vendor_id,
         product_id,
-        vendor_name: model.vendor_name.clone(),
-        product_name: model.product_name.clone(),
+        vendor_name: Some(model.vendor_name.value.clone()), // Fix: Access .value and wrap in Some
+        product_name: Some(model.product_name.value.clone()), // Fix: Access .value and wrap in Some
         versions,
     })
 }
 
 /// Parses a `model::NetworkManagement` into a `types::NetworkManagement`.
 fn resolve_network_management(
-    model: &model::NetworkManagement,
+    model: &model::net_mgmt::NetworkManagement,
 ) -> Result<types::NetworkManagement, XdcError> {
     let general_features = types::GeneralFeatures {
         dll_feature_mn: model.general_features.dll_feature_mn,
@@ -226,7 +226,7 @@ fn resolve_network_management(
 
     let cn_features = model.cn_features.as_ref().map(|cn| types::CnFeatures {
         nmt_cn_pre_op2_to_ready2_op: cn.nmt_cn_pre_op2_to_ready2_op.clone(),
-        nmt_cn_dna: cn.nmt_cn_dna.map(|dna| dna == model::CnFeaturesNmtCnDna::ClearOnPreOp1ToPreOp2),
+        nmt_cn_dna: cn.nmt_cn_dna.map(|dna| dna == model::net_mgmt::CnFeaturesNmtCnDna::ClearOnPreOp1ToPreOp2),
     });
 
     let diagnostic = model.diagnostic.as_ref().map(resolve_diagnostic).transpose()?;
@@ -240,7 +240,7 @@ fn resolve_network_management(
 }
 
 /// Parses a `model::Diagnostic` into a `types::Diagnostic`.
-fn resolve_diagnostic(model: &model::Diagnostic) -> Result<types::Diagnostic, XdcError> {
+fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diagnostic, XdcError> {
     let errors = model
         .error_list
         .as_ref()
@@ -262,7 +262,7 @@ fn resolve_diagnostic(model: &model::Diagnostic) -> Result<types::Diagnostic, Xd
 
 /// Iterates the `model::ObjectList` and resolves it into a rich, public `types::ObjectDictionary`.
 fn resolve_object_dictionary(
-    app_layers: &model::ApplicationLayers,
+    app_layers: &model::app_layers::ApplicationLayers,
     param_map: &BTreeMap<String, String>,
     type_map: &BTreeMap<String, DataTypeName>,
     mode: ValueMode,
@@ -359,7 +359,7 @@ fn resolve_object_dictionary(
 
 /// Helper to get the raw value string for a VAR object.
 fn get_value_str_for_object<'a>(
-    model_obj: &'a model::Object,
+    model_obj: &'a model::app_layers::Object,
     mode: ValueMode,
     param_map: &'a BTreeMap<String, String>,
 ) -> Option<&'a String> {
@@ -379,7 +379,7 @@ fn get_value_str_for_object<'a>(
 
 /// Helper to get the raw value string for a SubObject.
 fn get_value_str_for_subobject<'a>(
-    model_sub_obj: &'a model::SubObject,
+    model_sub_obj: &'a model::app_layers::SubObject,
     mode: ValueMode,
     param_map: &'a BTreeMap<String, String>,
     parent_unique_id_ref: Option<&'a String>,
@@ -487,13 +487,13 @@ fn get_data_type_size(
             "0010" => Some(3), // Integer24
             "0011" => Some(8), // Real64
             "0012" => Some(5), // Integer40
-            "0S013" => Some(6), // Integer48
+            "0013" => Some(6), // Integer48 - Corrected
             "0014" => Some(7), // Integer56
             "0015" => Some(8), // Integer64
             "0016" => Some(3), // Unsigned24
-            "0017" => Some(5), // Unsigned40
-            "0018" => Some(6), // Unsigned48
-            "0019" => Some(7), // Unsigned56
+            "0018" => Some(5), // Unsigned40 - Corrected
+            "0019" => Some(6), // Unsigned48 - Corrected
+            "001A" => Some(7), // Unsigned56 - Corrected
             "001B" => Some(8), // Unsigned64
             "0401" => Some(6), // MAC_ADDRESS
             "0402" => Some(4), // IP_ADDRESS
@@ -505,7 +505,7 @@ fn get_data_type_size(
             | "000C" // Time_of_Day
             | "000D" // Time_Diff
             | "000F" // Domain
-            | "001A" // BITSTRING
+            // | "001A" // BITSTRING - This is listed as Unsigned56 in Table 56
             => None,
             // Unknown types:
             _ => None,
@@ -514,22 +514,22 @@ fn get_data_type_size(
 }
 
 /// Maps the internal model enum to the public types enum.
-fn map_access_type(model: model::ObjectAccessType) -> types::ObjectAccessType {
+fn map_access_type(model: model::app_layers::ObjectAccessType) -> types::ObjectAccessType {
     match model {
-        model::ObjectAccessType::ReadOnly => types::ObjectAccessType::ReadOnly,
-        model::ObjectAccessType::WriteOnly => types::ObjectAccessType::WriteOnly,
-        model::ObjectAccessType::ReadWrite => types::ObjectAccessType::ReadWrite,
-        model::ObjectAccessType::Constant => types::ObjectAccessType::Constant,
+        model::app_layers::ObjectAccessType::ReadOnly => types::ObjectAccessType::ReadOnly,
+        model::app_layers::ObjectAccessType::WriteOnly => types::ObjectAccessType::WriteOnly,
+        model::app_layers::ObjectAccessType::ReadWrite => types::ObjectAccessType::ReadWrite,
+        model::app_layers::ObjectAccessType::Constant => types::ObjectAccessType::Constant,
     }
 }
 
 /// Maps the internal model enum to the public types enum.
-fn map_pdo_mapping(model: model::ObjectPdoMapping) -> types::ObjectPdoMapping {
+fn map_pdo_mapping(model: model::app_layers::ObjectPdoMapping) -> types::ObjectPdoMapping {
     match model {
-        model::ObjectPdoMapping::No => types::ObjectPdoMapping::No,
-        model::ObjectPdoMapping::Default => types::ObjectPdoMapping::Default,
-        model::ObjectPdoMapping::Optional => types::ObjectPdoMapping::Optional,
-        model::ObjectPdoMapping::Tpdo => types::ObjectPdoMapping::Tpdo,
-        model::ObjectPdoMapping::Rpdo => types::ObjectPdoMapping::Rpdo,
+        model::app_layers::ObjectPdoMapping::No => types::ObjectPdoMapping::No,
+        model::app_layers::ObjectPdoMapping::Default => types::ObjectPdoMapping::Default,
+        model::app_layers::ObjectPdoMapping::Optional => types::ObjectPdoMapping::Optional,
+        model::app_layers::ObjectPdoMapping::Tpdo => types::ObjectPdoMapping::Tpdo,
+        model::app_layers::ObjectPdoMapping::Rpdo => types::ObjectPdoMapping::Rpdo,
     }
 }

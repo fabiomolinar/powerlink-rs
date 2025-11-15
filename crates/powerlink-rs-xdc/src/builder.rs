@@ -11,6 +11,12 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 use serde::Serialize;
 
+// Import new model paths
+use crate::model::app_layers::{Object, ObjectList, SubObject};
+use crate::model::common::ReadOnlyString;
+use crate::model::header::ProfileHeader;
+use crate::model::identity::{DeviceIdentity, Version};
+
 /// Serializes `XdcFile` data into a standard XDC XML `String`.
 ///
 /// This function converts the high-level `XdcFile` struct into the internal
@@ -51,8 +57,8 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
 }
 
 /// Helper to build the `model::ProfileHeader` from the `types::ProfileHeader`.
-fn build_model_header(header: &types::ProfileHeader) -> model::ProfileHeader {
-    model::ProfileHeader {
+fn build_model_header(header: &types::ProfileHeader) -> ProfileHeader {
+    model::header::ProfileHeader {
         profile_identification: header.identification.clone(),
         profile_revision: header.revision.clone(),
         profile_name: header.name.clone(),
@@ -69,21 +75,31 @@ fn build_device_profile(
 ) -> model::Iso15745Profile {
     let model_header = build_model_header(header);
 
-    let versions: Vec<model::Version> = identity
+    let versions: Vec<Version> = identity
         .versions
         .iter()
-        .map(|v| model::Version {
+        .map(|v| Version {
             version_type: v.version_type.clone(),
             value: v.value.clone(),
+            read_only: true, // Fix: Add missing field
         })
         .collect();
 
-    let device_identity = model::DeviceIdentity {
-        vendor_name: identity.vendor_name.clone(),
-        vendor_id: Some(format!("0x{:08X}", identity.vendor_id)),
-        product_name: identity.product_name.clone(),
-        product_id: Some(format!("0x{:08X}", identity.product_id)),
+    let device_identity = DeviceIdentity {
+        vendor_name: ReadOnlyString { value: identity.vendor_name.clone().unwrap_or_default(), ..Default::default() },
+        vendor_id: Some(ReadOnlyString { value: format!("0x{:08X}", identity.vendor_id), ..Default::default() }),
+        product_name: ReadOnlyString { value: identity.product_name.clone().unwrap_or_default(), ..Default::default() },
+        product_id: Some(ReadOnlyString { value: format!("{:X}", identity.product_id), ..Default::default() }), // Use format! not Some(format!)
         version: versions,
+        // Fix: Add missing fields
+        vendor_text: None,
+        device_family: None,
+        product_family: None,
+        product_text: None,
+        order_number: Vec::new(),
+        build_date: None,
+        specification_revision: None,
+        instance_name: None,
     };
 
     model::Iso15745Profile {
@@ -121,21 +137,21 @@ fn build_comm_profile(
                     .map(|d| format_hex_string(d))
                     .transpose()?;
 
-                Ok(model::SubObject {
+                Ok(SubObject {
                     sub_index: format_hex_u8(sub_obj.sub_index),
                     name: sub_obj.name.clone(),
                     object_type: sub_obj.object_type.clone(),
                     actual_value,
                     // Fill in required fields from model
-                    data_type: None,
-                    low_limit: None,
-                    high_limit: None,
-                    access_type: None,
-                    default_value: None,
+                    data_type: sub_obj.data_type.clone(), // Pass through
+                    low_limit: sub_obj.low_limit.clone(), // Pass through
+                    high_limit: sub_obj.high_limit.clone(), // Pass through
+                    access_type: sub_obj.access_type.map(map_access_type_to_model), // Map back
+                    default_value: None, // We only serialize actualValue for XDC
                     denotation: None,
-                    pdo_mapping: None,
-                    obj_flags: None,
-                    unique_id_ref: None,
+                    pdo_mapping: sub_obj.pdo_mapping.map(map_pdo_mapping_to_model), // Map back
+                    obj_flags: sub_obj.obj_flags.clone(), // Pass through
+                    unique_id_ref: None, // Not supported in builder yet
                 })
             })
             .collect::<Result<Vec<_>, XdcError>>()?;
@@ -143,28 +159,28 @@ fn build_comm_profile(
         // Handle the value for VAR objects (value is on the object itself)
         let object_actual_value = obj.data.as_ref().map(|d| format_hex_string(d)).transpose()?;
 
-        let model_object = model::Object {
+        let model_object = Object {
             index: format_hex_u16(obj.index),
             name: obj.name.clone(),
             object_type: obj.object_type.clone(),
             actual_value: object_actual_value,
             sub_object: model_sub_objects,
             // Fill in required fields from model
-            data_type: None,
-            low_limit: None,
-            high_limit: None,
-            access_type: None,
-            default_value: None,
+            data_type: obj.data_type.clone(), // Pass through
+            low_limit: obj.low_limit.clone(), // Pass through
+            high_limit: obj.high_limit.clone(), // Pass through
+            access_type: obj.access_type.map(map_access_type_to_model), // Map back
+            default_value: None, // We only serialize actualValue for XDC
             denotation: None,
-            pdo_mapping: None,
-            obj_flags: None,
-            unique_id_ref: None,
+            pdo_mapping: obj.pdo_mapping.map(map_pdo_mapping_to_model), // Map back
+            obj_flags: obj.obj_flags.clone(), // Pass through
+            unique_id_ref: None, // Not supported in builder yet
         };
         model_objects.push(model_object);
     }
 
     let app_layers = model::ApplicationLayers {
-        object_list: model::ObjectList {
+        object_list: ObjectList {
             object: model_objects,
         },
         data_type_list: None, // XDC files typically don't generate this
@@ -205,4 +221,25 @@ fn format_hex_string(data: &[u8]) -> Result<String, XdcError> {
         write!(&mut s, "{:02X}", byte)?;
     }
     Ok(s)
+}
+
+/// Maps the public types enum back to the internal model enum.
+fn map_access_type_to_model(public: types::ObjectAccessType) -> model::ObjectAccessType {
+    match public {
+        types::ObjectAccessType::ReadOnly => model::ObjectAccessType::ReadOnly,
+        types::ObjectAccessType::WriteOnly => model::ObjectAccessType::WriteOnly,
+        types::ObjectAccessType::ReadWrite => model::ObjectAccessType::ReadWrite,
+        types::ObjectAccessType::Constant => model::ObjectAccessType::Constant,
+    }
+}
+
+/// Maps the public types enum back to the internal model enum.
+fn map_pdo_mapping_to_model(public: types::ObjectPdoMapping) -> model::ObjectPdoMapping {
+    match public {
+        types::ObjectPdoMapping::No => model::ObjectPdoMapping::No,
+        types::ObjectPdoMapping::Default => model::ObjectPdoMapping::Default,
+        types::ObjectPdoMapping::Optional => model::ObjectPdoMapping::Optional,
+        types::ObjectPdoMapping::Tpdo => model::ObjectPdoMapping::Tpdo,
+        types::ObjectPdoMapping::Rpdo => model::ObjectPdoMapping::Rpdo,
+    }
 }
