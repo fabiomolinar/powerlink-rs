@@ -16,6 +16,7 @@ extern crate alloc;
 // --- Crate Modules ---
 
 mod builder;
+mod converter; // Add the new module
 mod error;
 mod model;
 mod parser;
@@ -26,6 +27,7 @@ mod types;
 
 // Functions
 pub use builder::save_xdc_to_string;
+pub use converter::to_core_od; // Export the new converter function
 pub use error::XdcError;
 pub use parser::{load_xdc_from_str, load_xdd_defaults_from_str};
 

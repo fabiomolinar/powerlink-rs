@@ -1,4 +1,4 @@
-// crates/powerlink-rs-xdc/src/resolver/util.rs
+// crates/powerlink-rs-xdc/src/resolver/utils.rs
 
 //! Utility functions for the resolver.
 

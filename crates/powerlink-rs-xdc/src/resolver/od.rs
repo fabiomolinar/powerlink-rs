@@ -34,6 +34,7 @@ pub(super) fn resolve_object_dictionary<'a>(
         // Check if a parameter reference overrides these attributes
         if let Some(id_ref) = model_obj.unique_id_ref.as_ref() {
             if let Some(param) = param_map.get(id_ref) {
+                // The parameter's attributes take precedence.
                 resolved_access = param.access.map(utils::map_param_access);
                 resolved_support = param.support.map(utils::map_param_support);
                 resolved_persistent = param.persistent;
@@ -60,13 +61,15 @@ pub(super) fn resolve_object_dictionary<'a>(
                 let sub_index = parse_hex_u8(&model_sub_obj.sub_index)?;
 
                 // --- Start: Resolve SubObject Attributes (Task 9) ---
+                // Set defaults from the <SubObject> tag itself
                 let mut sub_resolved_access = model_sub_obj.access_type.map(utils::map_access_type);
                 let mut sub_resolved_support = None;
                 let mut sub_resolved_persistent = false;
 
                 // Check if a parameter reference overrides these attributes
                 if let Some(id_ref) = model_sub_obj.unique_id_ref.as_ref() {
-                     if let Some(param) = param_map.get(id_ref) {
+                    if let Some(param) = param_map.get(id_ref) {
+                        // The parameter's attributes take precedence.
                         sub_resolved_access = param.access.map(utils::map_param_access);
                         sub_resolved_support = param.support.map(utils::map_param_support);
                         sub_resolved_persistent = param.persistent;
@@ -108,7 +111,7 @@ pub(super) fn resolve_object_dictionary<'a>(
                     access_type: sub_resolved_access, // Use resolved value
                     pdo_mapping,
                     obj_flags: model_sub_obj.obj_flags.clone(),
-                    support: sub_resolved_support, // Use resolved value
+                    support: sub_resolved_support,   // Use resolved value
                     persistent: sub_resolved_persistent, // Use resolved value
                     data,
                 });
@@ -127,7 +130,7 @@ pub(super) fn resolve_object_dictionary<'a>(
             access_type: resolved_access, // Use resolved value
             pdo_mapping,
             obj_flags: model_obj.obj_flags.clone(),
-            support: resolved_support, // Use resolved value
+            support: resolved_support,   // Use resolved value
             persistent: resolved_persistent, // Use resolved value
             data: object_data,
             sub_objects: od_sub_objects,

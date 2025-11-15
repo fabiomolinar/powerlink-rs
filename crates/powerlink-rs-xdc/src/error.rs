@@ -35,6 +35,9 @@ pub enum XdcError {
     /// An attribute (e.g., @index) had an invalid format.
     InvalidAttributeFormat { attribute: &'static str },
 
+    /// A generic validation error.
+    ValidationError(&'static str),
+
     /// The parsed data length does not match the `dataType` attribute.
     TypeValidationError {
         index: u16,
