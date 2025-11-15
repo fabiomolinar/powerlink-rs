@@ -143,6 +143,17 @@ pub struct MnFeatures {
     pub nmt_simple_boot: bool,
 }
 
+/// Public representation of the `@NMTCNDNA` attribute (Dynamic Node Addressing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NmtCnDna {
+    /// "0" = Do not clear.
+    DoNotClear,
+    /// "1" = Clear on PRE_OP1 -> PRE_OP2.
+    ClearOnPreOp1ToPreOp2,
+    /// "2" = Clear on NMT_Reset_Node.
+    ClearOnNmtResetNode,
+}
+
 /// Represents `<CNFeatures>`.
 #[derive(Debug, Default)]
 pub struct CnFeatures {
@@ -154,6 +165,8 @@ pub struct CnFeatures {
     pub nmt_cn_pre_op2_to_ready2_op: Option<u32>,
     /// `@NMTCNSoC2PReq` (in nanoseconds)
     pub nmt_cn_soc_2_preq: u32,
+    /// `@NMTCNDNA`
+    pub nmt_cn_dna: Option<NmtCnDna>, // Changed from Option<bool>
 }
 
 /// Represents `<Diagnostic>` capabilities.

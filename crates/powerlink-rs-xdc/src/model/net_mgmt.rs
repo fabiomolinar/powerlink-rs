@@ -258,8 +258,11 @@ pub struct CnFeatures {
     pub nmt_cn_soc_2_preq: String, // xsd:unsignedInt
     #[serde(rename = "@NMTCNSetNodeNumberTime", default, skip_serializing_if = "Option::is_none")]
     pub nmt_cn_set_node_number_time: Option<String>, // xsd:unsignedInt
+    
+    // This is the corrected field, using the enum instead of Option<bool>
     #[serde(rename = "@NMTCNDNA", default, skip_serializing_if = "Option::is_none")]
-    pub nmt_cn_dna: Option<bool>, // Schema shows 'bool' but also an enum? Sticking with bool.
+    pub nmt_cn_dna: Option<CnFeaturesNmtCnDna>, 
+    
     #[serde(rename = "@NMTCNMaxAInv", default, skip_serializing_if = "Option::is_none")]
     pub nmt_cn_max_ainv: Option<String>, // xsd:unsignedInt
     #[serde(rename = "@DLLCNLossOfSoCToleranceMax", default, skip_serializing_if = "Option::is_none")]

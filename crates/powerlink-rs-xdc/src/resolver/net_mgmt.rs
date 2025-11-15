@@ -70,6 +70,11 @@ pub(super) fn resolve_network_management(
         dll_cn_pres_chaining: cn.dll_cn_pres_chaining,
         nmt_cn_pre_op2_to_ready2_op: cn.nmt_cn_pre_op2_to_ready2_op.clone().and_then(|s| s.parse().ok()),
         nmt_cn_soc_2_preq: parse_u32_attr(Some(cn.nmt_cn_soc_2_preq.clone())),
+        nmt_cn_dna: cn.nmt_cn_dna.map(|dna_model| match dna_model {
+            model::net_mgmt::CnFeaturesNmtCnDna::DoNotClear => types::NmtCnDna::DoNotClear,
+            model::net_mgmt::CnFeaturesNmtCnDna::ClearOnPreOp1ToPreOp2 => types::NmtCnDna::ClearOnPreOp1ToPreOp2,
+            model::net_mgmt::CnFeaturesNmtCnDna::ClearOnNmtResetNode => types::NmtCnDna::ClearOnNmtResetNode,
+        }),
     });
 
     let diagnostic = model.diagnostic.as_ref().map(resolve_diagnostic).transpose()?;
@@ -92,8 +97,8 @@ fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diag
             list.error
                 .iter()
                 .map(|e| types::ErrorDefinition {
-                    name: e.name.clone(),
-                    value: e.value.clone(),
+                    name: e.name.clone(), // Use unwrap_or_default for robustness
+                    value: e.value.clone(), // Use unwrap_or_default for robustness
                     add_info: e.add_info.iter().map(|ai| types::AddInfo {
                         name: ai.name.clone(),
                         bit_offset: ai.bit_offset.parse().unwrap_or(0),
