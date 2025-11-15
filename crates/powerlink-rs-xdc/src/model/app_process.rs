@@ -6,7 +6,8 @@
 use serde::{Deserialize, Serialize};
 use alloc::vec::Vec;
 use alloc::string::String;
-use super::common::{is_false, DataTypeIDRef, GSimple, Glabels};
+// Fix: Removed unused GSimple import
+use super::common::{is_false, DataTypeIDRef, Glabels};
 
 // --- STRUCTS for ApplicationProcess (Task 5) ---
 
@@ -149,8 +150,10 @@ pub enum ParameterDataType {
     WSTRING,
     
     // Other choices
-    dataTypeIDRef(DataTypeIDRef),
-    variableRef(VariableRef),
+    #[serde(rename = "dataTypeIDRef")] // Fix: Add rename attribute
+    DataTypeIDRef(DataTypeIDRef),
+    #[serde(rename = "variableRef")] // Fix: Add rename attribute
+    VariableRef(VariableRef),
 }
 
 /// Represents `<conditionalSupport>` (EPSG 311, 7.4.7.7.2.2).

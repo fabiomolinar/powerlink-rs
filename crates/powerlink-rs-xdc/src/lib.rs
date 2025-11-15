@@ -32,6 +32,6 @@ pub use parser::{load_xdc_from_str, load_xdd_defaults_from_str};
 // Public Types
 pub use types::{
     CnFeatures, Diagnostic, ErrorDefinition, GeneralFeatures, Identity, MnFeatures,
-    NetworkManagement, Object, ObjectAccessType, ObjectDictionary, ObjectPdoMapping,
-    ProfileHeader, SubObject, Version, XdcFile,
+    NetworkManagement, Object, ObjectDictionary, ObjectPdoMapping, ParameterAccess, // Fix: Renamed from ObjectAccessType
+    ParameterSupport, ProfileHeader, SubObject, Version, XdcFile,
 };

@@ -61,7 +61,8 @@ pub(crate) fn resolve_data(
     let comm_profile_body = &comm_profile.profile_body;
 
     // --- Pass 1: Build Template Map ---
-    let mut template_map: BTreeMap<String, String> = BTreeMap::new();
+    // Stores a map of template uniqueID -> &Value element
+    let mut template_map: BTreeMap<&String, &model::app_process::Value> = BTreeMap::new();
 
     // ApplicationProcess is in the Device Profile
     let app_process = device_profile_body.and_then(|b| b.application_process.as_ref());
@@ -76,7 +77,7 @@ pub(crate) fn resolve_data(
                 };
 
                 if let Some(val) = value {
-                    template_map.insert(template.unique_id.clone(), val.value.clone());
+                    template_map.insert(&template.unique_id, val);
                 }
             }
         }
@@ -84,30 +85,15 @@ pub(crate) fn resolve_data(
     // --- End of Pass 1 ---
 
     // --- Pass 2: Build Parameter Map (with template resolution) ---
-    let mut param_map: BTreeMap<String, String> = BTreeMap::new();
+    // Stores a map of parameter uniqueID -> &Parameter element
+    let mut param_map: BTreeMap<&String, &model::app_process::Parameter> = BTreeMap::new();
 
     if let Some(app_process) = app_process {
         if let Some(param_list) = &app_process.parameter_list {
             for param in &param_list.parameter {
-                // A parameter's value can come from:
-                // 1. Its own value element (highest priority).
-                // 2. A value inherited from its `templateIDRef` (fallback).
-                let value_opt = match mode {
-                    ValueMode::Actual => param.actual_value.as_ref().or(param.default_value.as_ref()),
-                    ValueMode::Default => param.default_value.as_ref().or(param.actual_value.as_ref()),
-                }
-                .map(|v| v.value.clone())
-                .or_else(|| {
-                    // If no direct value, try resolving templateIDRef
-                    param
-                        .template_id_ref
-                        .as_ref()
-                        .and_then(|template_id| template_map.get(template_id).cloned())
-                });
-
-                if let Some(value) = value_opt {
-                    param_map.insert(param.unique_id.clone(), value);
-                }
+                // Just store a reference to the parameter itself.
+                // Value resolution will happen in Pass 3.
+                param_map.insert(&param.unique_id, param);
             }
         }
     }
@@ -151,7 +137,7 @@ pub(crate) fn resolve_data(
         .transpose()?;
 
     let object_dictionary =
-        resolve_object_dictionary(app_layers, &param_map, &type_map, mode)?;
+        resolve_object_dictionary(app_layers, &param_map, &template_map, &type_map, mode)?;
     
     // 5. --- Assemble final XdcFile ---
     Ok(types::XdcFile {
@@ -296,10 +282,12 @@ fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diag
 }
 
 /// Iterates the `model::ObjectList` and resolves it into a rich, public `types::ObjectDictionary`.
-fn resolve_object_dictionary(
-    app_layers: &model::app_layers::ApplicationLayers,
-    param_map: &BTreeMap<String, String>,
-    type_map: &BTreeMap<String, DataTypeName>,
+/// (Updated for Task 8 & 9)
+fn resolve_object_dictionary<'a>(
+    app_layers: &'a model::app_layers::ApplicationLayers,
+    param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
+    template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
+    type_map: &BTreeMap<String, DataTypeName>, // Fix: Add type_map as argument
     mode: ValueMode,
 ) -> Result<types::ObjectDictionary, XdcError> {
     let mut od_objects = Vec::new();
@@ -307,12 +295,27 @@ fn resolve_object_dictionary(
     for model_obj in &app_layers.object_list.object {
         let index = parse_hex_u16(&model_obj.index)?;
 
+        // --- Start: Resolve Object Attributes (Task 9) ---
+        // Set defaults from the <Object> tag itself
+        let mut resolved_access = model_obj.access_type.map(map_access_type);
+        let mut resolved_support = None;
+        let mut resolved_persistent = false;
         let mut object_data: Option<Vec<u8>> = None;
         let mut od_sub_objects: Vec<types::SubObject> = Vec::new();
 
+        // Check if a parameter reference overrides these attributes
+        if let Some(id_ref) = model_obj.unique_id_ref.as_ref() {
+            if let Some(param) = param_map.get(id_ref) {
+                resolved_access = param.access.map(map_param_access);
+                resolved_support = param.support.map(map_param_support);
+                resolved_persistent = param.persistent;
+            }
+        }
+        // --- End: Resolve Object Attributes ---
+
         if model_obj.object_type == "7" {
             // This is a VAR. Its value is on the <Object> element itself.
-            let value_str_opt = get_value_str_for_object(model_obj, mode, param_map);
+            let value_str_opt = get_value_str_for_object(model_obj, mode, param_map, template_map);
 
             // We only store data if it's valid hex.
             object_data = value_str_opt.and_then(|s| parse_hex_string(s).ok());
@@ -328,11 +331,27 @@ fn resolve_object_dictionary(
             for model_sub_obj in &model_obj.sub_object {
                 let sub_index = parse_hex_u8(&model_sub_obj.sub_index)?;
 
+                // --- Start: Resolve SubObject Attributes (Task 9) ---
+                let mut sub_resolved_access = model_sub_obj.access_type.map(map_access_type);
+                let mut sub_resolved_support = None;
+                let mut sub_resolved_persistent = false;
+
+                // Check if a parameter reference overrides these attributes
+                if let Some(id_ref) = model_sub_obj.unique_id_ref.as_ref() {
+                     if let Some(param) = param_map.get(id_ref) {
+                        sub_resolved_access = param.access.map(map_param_access);
+                        sub_resolved_support = param.support.map(map_param_support);
+                        sub_resolved_persistent = param.persistent;
+                    }
+                }
+                // --- End: Resolve SubObject Attributes ---
+
                 // Logic to find the correct value string
                 let value_str_opt = get_value_str_for_subobject(
                     model_sub_obj,
                     mode,
                     param_map,
+                    template_map,
                     model_obj.unique_id_ref.as_ref(),
                     sub_index,
                 );
@@ -349,8 +368,6 @@ fn resolve_object_dictionary(
                     validate_type(index, sub_index, data, data_type_id, type_map)?;
                 }
                 
-                // Map enums
-                let access_type = model_sub_obj.access_type.map(map_access_type);
                 let pdo_mapping = model_sub_obj.pdo_mapping.map(map_pdo_mapping);
 
                 od_sub_objects.push(types::SubObject {
@@ -360,16 +377,16 @@ fn resolve_object_dictionary(
                     data_type: model_sub_obj.data_type.clone(),
                     low_limit: model_sub_obj.low_limit.clone(),
                     high_limit: model_sub_obj.high_limit.clone(),
-                    access_type,
+                    access_type: sub_resolved_access, // Use resolved value
                     pdo_mapping,
                     obj_flags: model_sub_obj.obj_flags.clone(),
+                    support: sub_resolved_support, // Use resolved value
+                    persistent: sub_resolved_persistent, // Use resolved value
                     data,
                 });
             }
         }
-
-        // Map enums for the parent Object
-        let access_type = model_obj.access_type.map(map_access_type);
+        
         let pdo_mapping = model_obj.pdo_mapping.map(map_pdo_mapping);
 
         od_objects.push(types::Object {
@@ -379,9 +396,11 @@ fn resolve_object_dictionary(
             data_type: model_obj.data_type.clone(),
             low_limit: model_obj.low_limit.clone(),
             high_limit: model_obj.high_limit.clone(),
-            access_type,
+            access_type: resolved_access, // Use resolved value
             pdo_mapping,
             obj_flags: model_obj.obj_flags.clone(),
+            support: resolved_support, // Use resolved value
+            persistent: resolved_persistent, // Use resolved value
             data: object_data,
             sub_objects: od_sub_objects,
         });
@@ -392,34 +411,66 @@ fn resolve_object_dictionary(
     })
 }
 
+/// Resolves the value string for an Object or Parameter.
+/// (Helper for get_value_str_... functions)
+fn resolve_value_from_param<'a>(
+    param: &'a model::app_process::Parameter,
+    mode: ValueMode,
+    template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
+) -> Option<&'a String> {
+    // 1. Check for a direct value on the parameter
+    let direct_value = match mode {
+        ValueMode::Actual => param.actual_value.as_ref().or(param.default_value.as_ref()),
+        ValueMode::Default => param.default_value.as_ref().or(param.actual_value.as_ref()),
+    };
+    
+    direct_value
+        .map(|v| &v.value)
+        .or_else(|| {
+            // 2. If no direct value, check for a template reference
+            param
+                .template_id_ref
+                .as_ref()
+                .and_then(|template_id| template_map.get(template_id))
+                .map(|v| &v.value)
+        })
+}
+
 /// Helper to get the raw value string for a VAR object.
+/// (Updated for Task 8 & 9)
 fn get_value_str_for_object<'a>(
     model_obj: &'a model::app_layers::Object,
     mode: ValueMode,
-    param_map: &'a BTreeMap<String, String>,
+    param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
+    template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
 ) -> Option<&'a String> {
+    // 1. Check for direct value on the <Object> tag
     let direct_value = match mode {
         ValueMode::Actual => model_obj.actual_value.as_ref().or(model_obj.default_value.as_ref()),
         ValueMode::Default => model_obj.default_value.as_ref().or(model_obj.actual_value.as_ref()),
     };
 
     direct_value.or_else(|| {
-        // Try to resolve Object's uniqueIDRef
+        // 2. If no direct value, resolve via uniqueIDRef
         model_obj
             .unique_id_ref
             .as_ref()
             .and_then(|id_ref| param_map.get(id_ref))
+            .and_then(|param| resolve_value_from_param(param, mode, template_map))
     })
 }
 
 /// Helper to get the raw value string for a SubObject.
+/// (Updated for Task 8 & 9)
 fn get_value_str_for_subobject<'a>(
     model_sub_obj: &'a model::app_layers::SubObject,
     mode: ValueMode,
-    param_map: &'a BTreeMap<String, String>,
+    param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
+    template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
     parent_unique_id_ref: Option<&'a String>,
     sub_index: u8,
 ) -> Option<&'a String> {
+    // 1. Check for direct value on the <SubObject> tag
     let direct_value = match mode {
         ValueMode::Actual => model_sub_obj.actual_value.as_ref().or(model_sub_obj.default_value.as_ref()),
         ValueMode::Default => model_sub_obj.default_value.as_ref().or(model_sub_obj.actual_value.as_ref()),
@@ -427,16 +478,19 @@ fn get_value_str_for_subobject<'a>(
     
     direct_value
         .or_else(|| {
-            // Try to resolve SubObject's uniqueIDRef
+            // 2. If no direct value, resolve via SubObject's uniqueIDRef
             model_sub_obj
                 .unique_id_ref
                 .as_ref()
                 .and_then(|id_ref| param_map.get(id_ref))
+                .and_then(|param| resolve_value_from_param(param, mode, template_map))
         })
         .or_else(|| {
-            // If still None, and we are sub-index 0, check the parent Object's uniqueIDRef
+            // 3. If still None, and we are sub-index 0, check the parent Object's uniqueIDRef
             if sub_index == 0 {
-                parent_unique_id_ref.and_then(|id_ref| param_map.get(id_ref))
+                parent_unique_id_ref
+                    .and_then(|id_ref| param_map.get(id_ref))
+                    .and_then(|param| resolve_value_from_param(param, mode, template_map))
             } else {
                 None
             }
@@ -548,17 +602,17 @@ fn get_data_type_size(
     }
 }
 
-/// Maps the internal model enum to the public types enum.
-fn map_access_type(model: model::app_layers::ObjectAccessType) -> types::ObjectAccessType {
+/// Maps the internal model enum (`ObjectAccessType`) to the public types enum (`ParameterAccess`).
+fn map_access_type(model: model::app_layers::ObjectAccessType) -> types::ParameterAccess {
     match model {
-        model::app_layers::ObjectAccessType::ReadOnly => types::ObjectAccessType::ReadOnly,
-        model::app_layers::ObjectAccessType::WriteOnly => types::ObjectAccessType::WriteOnly,
-        model::app_layers::ObjectAccessType::ReadWrite => types::ObjectAccessType::ReadWrite,
-        model::app_layers::ObjectAccessType::Constant => types::ObjectAccessType::Constant,
+        model::app_layers::ObjectAccessType::ReadOnly => types::ParameterAccess::ReadOnly,
+        model::app_layers::ObjectAccessType::WriteOnly => types::ParameterAccess::WriteOnly,
+        model::app_layers::ObjectAccessType::ReadWrite => types::ParameterAccess::ReadWrite,
+        model::app_layers::ObjectAccessType::Constant => types::ParameterAccess::Constant,
     }
 }
 
-/// Maps the internal model enum to the public types enum.
+/// Maps the internal model enum (`ObjectPdoMapping`) to the public types enum.
 fn map_pdo_mapping(model: model::app_layers::ObjectPdoMapping) -> types::ObjectPdoMapping {
     match model {
         model::app_layers::ObjectPdoMapping::No => types::ObjectPdoMapping::No,
@@ -566,5 +620,27 @@ fn map_pdo_mapping(model: model::app_layers::ObjectPdoMapping) -> types::ObjectP
         model::app_layers::ObjectPdoMapping::Optional => types::ObjectPdoMapping::Optional,
         model::app_layers::ObjectPdoMapping::Tpdo => types::ObjectPdoMapping::Tpdo,
         model::app_layers::ObjectPdoMapping::Rpdo => types::ObjectPdoMapping::Rpdo,
+    }
+}
+
+/// Maps the `ApplicationProcess` `ParameterAccess` enum to the public `types` enum.
+fn map_param_access(model: model::app_process::ParameterAccess) -> types::ParameterAccess {
+    match model {
+        model::app_process::ParameterAccess::Const => types::ParameterAccess::Constant,
+        model::app_process::ParameterAccess::Read => types::ParameterAccess::ReadOnly,
+        model::app_process::ParameterAccess::Write => types::ParameterAccess::WriteOnly,
+        model::app_process::ParameterAccess::ReadWrite => types::ParameterAccess::ReadWrite,
+        model::app_process::ParameterAccess::ReadWriteInput => types::ParameterAccess::ReadWriteInput,
+        model::app_process::ParameterAccess::ReadWriteOutput => types::ParameterAccess::ReadWriteOutput,
+        model::app_process::ParameterAccess::NoAccess => types::ParameterAccess::NoAccess,
+    }
+}
+
+/// Maps the `ApplicationProcess` `ParameterSupport` enum to the public `types` enum.
+fn map_param_support(model: model::app_process::ParameterSupport) -> types::ParameterSupport {
+    match model {
+        model::app_process::ParameterSupport::Mandatory => types::ParameterSupport::Mandatory,
+        model::app_process::ParameterSupport::Optional => types::ParameterSupport::Optional,
+        model::app_process::ParameterSupport::Conditional => types::ParameterSupport::Conditional,
     }
 }

@@ -154,13 +154,38 @@ pub struct ErrorDefinition {
 
 // --- Object Dictionary ---
 
-/// Access types for an Object Dictionary entry.
+/// Access types for an Object Dictionary entry, resolved from either
+/// `<Object @accessType>` or `<parameter @access>`.
+/// (Based on XSD `t_parameter` access attribute, EPSG DS 311, Table 40)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ObjectAccessType {
-    ReadOnly,
-    WriteOnly,
-    ReadWrite,
+pub enum ParameterAccess {
+    /// `const`
     Constant,
+    /// `read`
+    ReadOnly,
+    /// `write`
+    WriteOnly,
+    /// `readWrite`
+    ReadWrite,
+    /// `readWriteInput`
+    ReadWriteInput,
+    /// `readWriteOutput`
+    ReadWriteOutput,
+    /// `noAccess`
+    NoAccess,
+}
+
+/// Support level for an Object Dictionary entry, resolved from
+/// `<parameter @support>`.
+/// (Based on XSD `t_parameter` support attribute, EPSG DS 311, Table 40)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParameterSupport {
+    /// `mandatory`
+    Mandatory,
+    /// `optional`
+    Optional,
+    /// `conditional`
+    Conditional,
 }
 
 /// PDO mapping capabilities for an Object Dictionary entry.
@@ -196,12 +221,16 @@ pub struct Object {
     pub low_limit: Option<String>,
     /// `@highLimit`
     pub high_limit: Option<String>,
-    /// `@accessType`
-    pub access_type: Option<ObjectAccessType>,
+    /// Resolved access type from `<Object @accessType>` or `<parameter @access>`.
+    pub access_type: Option<ParameterAccess>,
     /// `@PDOmapping`
     pub pdo_mapping: Option<ObjectPdoMapping>,
     /// `@objFlags`
     pub obj_flags: Option<String>,
+    /// Resolved support level from `<parameter @support>`.
+    pub support: Option<ParameterSupport>,
+    /// Resolved `persistent` flag from `<parameter @persistent>`.
+    pub persistent: bool,
     
     // --- Value ---
     /// The resolved data for this object, from `actualValue` or `defaultValue`.
@@ -230,12 +259,16 @@ pub struct SubObject {
     pub low_limit: Option<String>,
     /// `@highLimit`
     pub high_limit: Option<String>,
-    /// `@accessType`
-    pub access_type: Option<ObjectAccessType>,
+    /// Resolved access type from `<SubObject @accessType>` or `<parameter @access>`.
+    pub access_type: Option<ParameterAccess>,
     /// `@PDOmapping`
     pub pdo_mapping: Option<ObjectPdoMapping>,
     /// `@objFlags`
     pub obj_flags: Option<String>,
+    /// Resolved support level from `<parameter @support>`.
+    pub support: Option<ParameterSupport>,
+    /// Resolved `persistent` flag from `<parameter @persistent>`.
+    pub persistent: bool,
     
     // --- Value ---
     /// The resolved data for this sub-object, from `actualValue` or `defaultValue`.

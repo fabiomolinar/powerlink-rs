@@ -218,12 +218,18 @@ fn format_hex_string(data: &[u8]) -> Result<String, XdcError> {
 }
 
 /// Maps the public types enum back to the internal model enum.
-fn map_access_type_to_model(public: types::ObjectAccessType) -> ObjectAccessType {
+// Fix: Use new public enum `types::ParameterAccess`
+fn map_access_type_to_model(public: types::ParameterAccess) -> ObjectAccessType {
     match public {
-        types::ObjectAccessType::ReadOnly => ObjectAccessType::ReadOnly,
-        types::ObjectAccessType::WriteOnly => ObjectAccessType::WriteOnly,
-        types::ObjectAccessType::ReadWrite => ObjectAccessType::ReadWrite,
-        types::ObjectAccessType::Constant => ObjectAccessType::Constant,
+        // Fix: Match on `types::ParameterAccess` variants
+        types::ParameterAccess::ReadOnly => ObjectAccessType::ReadOnly,
+        types::ParameterAccess::WriteOnly => ObjectAccessType::WriteOnly,
+        types::ParameterAccess::ReadWrite => ObjectAccessType::ReadWrite,
+        types::ParameterAccess::Constant => ObjectAccessType::Constant,
+        // Map new variants to best-fit `ObjectAccessType`
+        types::ParameterAccess::ReadWriteInput => ObjectAccessType::ReadWrite,
+        types::ParameterAccess::ReadWriteOutput => ObjectAccessType::ReadWrite,
+        types::ParameterAccess::NoAccess => ObjectAccessType::ReadOnly, // Or ReadOnly? `const`? No good match.
     }
 }
 
