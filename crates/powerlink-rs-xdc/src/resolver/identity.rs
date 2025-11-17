@@ -171,7 +171,9 @@ mod tests {
           <label lang="en">X20 CPU</label>
         </productText>
         <orderNumber readOnly="true">X20CP1584</orderNumber>
-        <version versionType="HW" readOnly="true" value="1.0" />
+        
+        <version versionType="HW" readOnly="true">1.0</version>
+        
         <buildDate>2024-01-01</buildDate>
         <specificationRevision readOnly="true">1.0.0</specificationRevision>
         <instanceName readOnly="false">MyCPU</instanceName>
@@ -275,7 +277,7 @@ mod tests {
     #[test]
     fn test_extract_label_from_attributed_glabels() {
          let attributed = AttributedGlabels {
-            items: vec![ // FIX: Populate items directly
+            items: vec![
                 LabelChoice::Description(model::common::Description {
                     lang: "en".to_string(),
                     value: "A description".to_string(),

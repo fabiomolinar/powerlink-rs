@@ -22,7 +22,7 @@ pub struct Version {
     )]
     pub read_only: bool, // Added from schema
 
-    #[serde(rename = "@value")]
+    #[serde(rename = "$value")]
     pub value: String,
 }
 
