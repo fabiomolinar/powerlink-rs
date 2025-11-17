@@ -6,7 +6,7 @@ use crate::error::XdcError;
 use crate::model;
 use crate::resolver::utils; // Import the utils module
 use crate::types;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 // --- Label Helpers ---

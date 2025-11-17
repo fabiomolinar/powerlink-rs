@@ -3,12 +3,10 @@
 //! Handles resolving the `<DeviceManager>` block from the model to public types.
 
 use crate::error::XdcError;
-use crate::model;
 use crate::model::device_manager as model_dm;
-use crate::model::modular as model_mod;
 use crate::resolver::{modular, utils}; // Import the utils module
 use crate::types;
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 // --- Sub-Resolvers ---

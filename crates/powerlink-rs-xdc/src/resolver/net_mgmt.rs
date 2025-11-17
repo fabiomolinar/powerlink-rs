@@ -2,7 +2,7 @@
 
 use crate::error::XdcError;
 use crate::model;
-use crate::model::common::Glabels; // Import label helpers
+ // Import label helpers
 use crate::resolver::utils;
 use crate::types;
 use alloc::string::String;

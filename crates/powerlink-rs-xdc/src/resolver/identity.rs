@@ -2,7 +2,7 @@
 
 use crate::error::XdcError;
 use crate::model;
-use crate::model::common::{AttributedGlabels, Glabels, LabelChoice};
+use crate::model::common::{AttributedGlabels, Glabels};
 use crate::parser::parse_hex_u32;
 use crate::resolver::utils;
 use crate::types;

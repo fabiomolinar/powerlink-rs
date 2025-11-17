@@ -8,7 +8,6 @@ use crate::model::common::{Description, Glabels, Label, LabelChoice};
 use crate::{model, types};
 use alloc::{
     string::{String, ToString},
-    vec,
     vec::Vec,
 };
 
