@@ -329,3 +329,146 @@ fn map_pdo_mapping_to_model(public: types::ObjectPdoMapping) -> ObjectPdoMapping
         types::ObjectPdoMapping::Rpdo => ObjectPdoMapping::Rpdo,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Iso15745ProfileContainer;
+    use crate::types::{self, Object, ObjectDictionary, SubObject};
+    use alloc::vec;
+    use alloc::string::ToString; // Fix: Import ToString trait
+
+    /// Test for Task 10.2: Verifies serialization of a basic XdcFile.
+    #[test]
+    fn test_save_xdc_to_string() {
+        // 1. Create a public `XdcFile` struct
+        let xdc_file = types::XdcFile {
+            header: types::ProfileHeader {
+                identification: "Test XDC".to_string(),
+                revision: "1.0.0".to_string(),
+                name: "My Test Device".to_string(),
+                source: "powerlink-rs".to_string(),
+                date: Some("2024-01-01".to_string()),
+            },
+            identity: types::Identity {
+                vendor_name: "MyVendor".to_string(),
+                vendor_id: 0x12345678,
+                product_name: "MyProduct".to_string(),
+                product_id: 0xABCD,
+                versions: vec![types::Version {
+                    version_type: "HW".to_string(),
+                    value: "1.2".to_string(),
+                }],
+                ..Default::default()
+            },
+            object_dictionary: ObjectDictionary {
+                objects: vec![Object {
+                    index: 0x1000,
+                    name: "Device Type".to_string(),
+                    object_type: "7".to_string(),
+                    data_type: Some("0007".to_string()),
+                    access_type: Some(types::ParameterAccess::Constant),
+                    data: Some(vec![0x91, 0x01, 0x0F, 0x00]), // 0x000F0191_u32.to_le_bytes()
+                    ..Default::default()
+                },
+                Object {
+                    index: 0x1018,
+                    name: "Identity".to_string(),
+                    object_type: "9".to_string(),
+                    sub_objects: vec![
+                        SubObject {
+                            sub_index: 0,
+                            name: "Count".to_string(),
+                            object_type: "7".to_string(),
+                            data_type: Some("0005".to_string()),
+                            access_type: Some(types::ParameterAccess::Constant),
+                            data: Some(vec![4]),
+                            ..Default::default()
+                        },
+                        SubObject {
+                            sub_index: 1,
+                            name: "VendorID".to_string(),
+                            object_type: "7".to_string(),
+                            data_type: Some("0007".to_string()),
+                            access_type: Some(types::ParameterAccess::Constant),
+                            data: Some(vec![0x78, 0x56, 0x34, 0x12]), // 0x12345678_u32.to_le_bytes()
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }],
+            },
+            ..Default::default()
+        };
+
+        // 2. Call `save_xdc_to_string`
+        let xml_string = save_xdc_to_string(&xdc_file).unwrap();
+
+        // 3. Parse the string back using the internal models
+        let container: Iso15745ProfileContainer = quick_xml::de::from_str(&xml_string)
+            .expect("Serialized XML should be valid");
+
+        // 4. Assert key fields
+        assert_eq!(container.profile.len(), 2);
+        
+        // Check Device Profile
+        let dev_profile = container.profile.get(0).unwrap();
+        assert_eq!(dev_profile.profile_header.profile_name, "My Test Device");
+        
+        let identity = dev_profile.profile_body.device_identity.as_ref().unwrap();
+        assert_eq!(identity.vendor_name.value, "MyVendor");
+        assert_eq!(identity.vendor_id.as_ref().unwrap().value, "0x12345678");
+        assert_eq!(identity.product_name.value, "MyProduct");
+        assert_eq!(identity.product_id.as_ref().unwrap().value, "ABCD");
+        assert_eq!(identity.version[0].value, "1.2");
+
+        // Check Communication Profile
+        let comm_profile = container.profile.get(1).unwrap();
+        assert_eq!(comm_profile.profile_header.profile_name, "My Test Device");
+        
+        let app_layers = comm_profile.profile_body.application_layers.as_ref().unwrap();
+        let obj_list = &app_layers.object_list.object;
+        assert_eq!(obj_list.len(), 2);
+        
+        // Check Object 0x1000
+        assert_eq!(obj_list[0].index, "1000");
+        assert_eq!(obj_list[0].name, "Device Type");
+        assert_eq!(obj_list[0].actual_value, Some("0x91010F00".to_string()));
+        assert_eq!(obj_list[0].access_type, Some(model::app_layers::ObjectAccessType::Constant));
+
+        // Check Object 0x1018
+        assert_eq!(obj_list[1].index, "1018");
+        assert_eq!(obj_list[1].sub_object.len(), 2);
+        assert_eq!(obj_list[1].sub_object[1].name, "VendorID");
+        assert_eq!(obj_list[1].sub_object[1].sub_index, "01");
+        assert_eq!(obj_list[1].sub_object[1].actual_value, Some("0x78563412".to_string()));
+    }
+
+    #[test]
+    fn test_map_access_type_to_model() {
+        use crate::model::app_layers::ObjectAccessType as ModelAccess;
+        use crate::types::ParameterAccess as PublicAccess;
+
+        assert_eq!(map_access_type_to_model(PublicAccess::ReadOnly), ModelAccess::ReadOnly);
+        assert_eq!(map_access_type_to_model(PublicAccess::WriteOnly), ModelAccess::WriteOnly);
+        assert_eq!(map_access_type_to_model(PublicAccess::ReadWrite), ModelAccess::ReadWrite);
+        assert_eq!(map_access_type_to_model(PublicAccess::Constant), ModelAccess::Constant);
+        
+        // Test the non-obvious mappings
+        assert_eq!(map_access_type_to_model(PublicAccess::ReadWriteInput), ModelAccess::ReadWrite);
+        assert_eq!(map_access_type_to_model(PublicAccess::ReadWriteOutput), ModelAccess::ReadWrite);
+        assert_eq!(map_access_type_to_model(PublicAccess::NoAccess), ModelAccess::ReadOnly);
+    }
+
+    #[test]
+    fn test_map_pdo_mapping_to_model() {
+        use crate::model::app_layers::ObjectPdoMapping as ModelPdo;
+        use crate::types::ObjectPdoMapping as PublicPdo;
+
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::No), ModelPdo::No);
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Default), ModelPdo::Default);
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Optional), ModelPdo::Optional);
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Tpdo), ModelPdo::Tpdo);
+        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Rpdo), ModelPdo::Rpdo);
+    }
+}
