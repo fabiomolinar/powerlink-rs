@@ -6,7 +6,7 @@ use crate::error::XdcError;
 use crate::model;
 use crate::resolver::modular; // Import the new modular resolver
 use crate::types;
-use alloc::string::ToString;
+use alloc::string::{String, ToString}; // Fix: Add String import
 use alloc::vec::Vec;
 
 /// Helper to extract the first available `<label>` value from a `g_labels` group.
@@ -121,12 +121,13 @@ fn resolve_indicator_list(
 ) -> Result<types::IndicatorList, XdcError> {
     // The model has <indicatorList><LEDList>...
     // The public type just combines this.
-    model
+    // Fix: Wrap return in Ok()
+    Ok(model
         .led_list
         .as_ref()
         .map(resolve_led_list)
         .transpose()?
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
 /// Parses a `model::DeviceManager` into a `types::DeviceManager`.
@@ -140,6 +141,7 @@ pub(super) fn resolve_device_manager(
         .transpose()?;
 
     // Resolve the modular device management part, if it exists
+    // Fix: Correctly reference the field
     let module_management = model
         .module_management
         .as_ref()

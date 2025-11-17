@@ -53,6 +53,13 @@ pub enum SortMode {
     Subindex,
 }
 
+// Fix: Add Default implementation
+impl Default for SortMode {
+    fn default() -> Self {
+        Self::Index
+    }
+}
+
 /// Represents the `@sortNumber` / `@addressingAttribute` attribute enum.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum AddressingAttribute {
@@ -60,6 +67,13 @@ pub enum AddressingAttribute {
     Continuous,
     #[serde(rename = "address")]
     Address,
+}
+
+// Fix: Add Default implementation
+impl Default for AddressingAttribute {
+    fn default() -> Self {
+        Self::Continuous
+    }
 }
 
 /// Represents the `@moduleAddressing` attribute enum for a modular child.
@@ -73,6 +87,13 @@ pub enum ModuleAddressingChild {
     Next,
 }
 
+// Fix: Add Default implementation
+impl Default for ModuleAddressingChild {
+    fn default() -> Self {
+        Self::Position
+    }
+}
+
 /// Represents the `@moduleAddressing` attribute enum for a modular head.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleAddressingHead {
@@ -80,6 +101,13 @@ pub enum ModuleAddressingHead {
     Manual,
     #[serde(rename = "position")]
     Position,
+}
+
+// Fix: Add Default implementation
+impl Default for ModuleAddressingHead {
+    fn default() -> Self {
+        Self::Position
+    }
 }
 
 /// Represents a `<moduleInterface>` element (from `CommonElements_Modular.xsd`).

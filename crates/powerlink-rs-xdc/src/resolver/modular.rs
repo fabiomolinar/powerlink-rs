@@ -6,7 +6,7 @@ use crate::error::XdcError;
 use crate::model;
 use crate::parser::{parse_hex_u16, parse_hex_u8};
 use crate::types;
-use alloc::string::ToString;
+use alloc::string::{String, ToString}; // Fix: Add String import
 use alloc::vec::Vec;
 use crate::resolver::utils; // Use the OD utils for mapping
 

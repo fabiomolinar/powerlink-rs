@@ -7,12 +7,17 @@ use serde::{Deserialize, Serialize};
 use alloc::vec::Vec;
 use alloc::string::String;
 use super::common::Glabels;
+use super::modular::ModuleManagementDevice; // Import modular struct
 
 /// Represents the `<DeviceManager>` element.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DeviceManager {
     #[serde(rename = "indicatorList", default, skip_serializing_if = "Option::is_none")]
     pub indicator_list: Option<IndicatorList>,
+    /// This field is only present in Modular Head device profiles.
+    /// (from `ProfileBody_Device_Powerlink_Modular_Head.xsd`)
+    #[serde(rename = "moduleManagement", default, skip_serializing_if = "Option::is_none")]
+    pub module_management: Option<ModuleManagementDevice>,
 }
 
 /// Represents `<indicatorList>`.
@@ -38,6 +43,13 @@ pub enum LEDcolors {
     Monocolor,
     #[serde(rename = "bicolor")]
     Bicolor,
+}
+
+// Fix: Add Default implementation
+impl Default for LEDcolors {
+    fn default() -> Self {
+        Self::Monocolor
+    }
 }
 
 /// Represents the `@LEDtype` attribute enum.
@@ -75,6 +87,13 @@ pub enum LEDstateEnum {
     Flashing,
 }
 
+// Fix: Add Default implementation
+impl Default for LEDstateEnum {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
 /// Represents the `@LEDcolor` attribute enum.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum LEDcolor {
@@ -84,6 +103,13 @@ pub enum LEDcolor {
     Amber,
     #[serde(rename = "red")]
     Red,
+}
+
+// Fix: Add Default implementation
+impl Default for LEDcolor {
+    fn default() -> Self {
+        Self::Green
+    }
 }
 
 /// Represents an `<LEDstate>` element.

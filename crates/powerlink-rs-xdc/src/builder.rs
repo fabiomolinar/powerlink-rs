@@ -104,6 +104,7 @@ fn build_device_profile(
             xsi_type: Some("ProfileBody_Device_Powerlink".into()),
             application_layers: None,
             device_identity: Some(device_identity),
+            device_manager: None, // Fix: Add missing field
             application_process: None,
             network_management: None,
         },
@@ -171,6 +172,7 @@ fn build_comm_profile(
             pdo_mapping: obj.pdo_mapping.map(map_pdo_mapping_to_model), // Map back
             obj_flags: obj.obj_flags.clone(), // Pass through
             unique_id_ref: None, // Not supported in builder yet
+            range_selector: None, // Fix: Add missing field
         };
         model_objects.push(model_object);
     }
@@ -180,6 +182,7 @@ fn build_comm_profile(
             object: model_objects,
         },
         data_type_list: None, // XDC files typically don't generate this
+        module_management: None, // Fix: Add missing field
     };
 
     Ok(model::Iso15745Profile {
@@ -188,6 +191,7 @@ fn build_comm_profile(
             xsi_type: Some("ProfileBody_CommunicationNetwork_Powerlink".into()),
             application_layers: Some(app_layers),
             device_identity: None,
+            device_manager: None, // Fix: Add missing field
             application_process: None,
             network_management: None, // We are not serializing this yet
         },
