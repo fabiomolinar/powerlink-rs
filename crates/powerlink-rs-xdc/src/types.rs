@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 ///
 /// This is the main public struct, providing ergonomic access to all
 /// data contained within the XML file.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct XdcFile {
     /// Metadata from the `<ProfileHeader>` block.
     pub header: ProfileHeader,
@@ -40,7 +40,7 @@ pub struct XdcFile {
 // --- Profile Header ---
 
 /// Represents the `<ProfileHeader>` block, containing file metadata.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ProfileHeader {
     /// `<ProfileIdentification>`
     pub identification: String,
@@ -58,7 +58,7 @@ pub struct ProfileHeader {
 
 /// Represents the `<DeviceIdentity>` block.
 /// (Updated for Task 3)
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Identity {
     /// `<vendorName>` (Mandatory)
     pub vendor_name: String,
@@ -93,7 +93,7 @@ pub struct Identity {
 }
 
 /// Represents a `<version>` element.
-#[derive(Debug, Default, Clone)] // Added Clone
+#[derive(Debug, Default, Clone, PartialEq)] // Added PartialEq
 pub struct Version {
     /// `@versionType`
     pub version_type: String,
@@ -104,7 +104,7 @@ pub struct Version {
 // --- Device Manager (New) ---
 
 /// Represents the `<DeviceManager>` block.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct DeviceManager {
     /// Contains information about device indicators, primarily LEDs.
     pub indicator_list: Option<IndicatorList>,
@@ -113,7 +113,7 @@ pub struct DeviceManager {
 }
 
 /// Represents an `<indicatorList>` containing an `<LEDList>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct IndicatorList {
     /// A list of all LEDs defined for the device.
     pub leds: Vec<LED>,
@@ -122,7 +122,7 @@ pub struct IndicatorList {
 }
 
 /// Represents a single `<LED>` indicator.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct LED {
     /// Primary label for the LED (e.g., "STATUS").
     pub label: Option<String>,
@@ -137,7 +137,7 @@ pub struct LED {
 }
 
 /// Represents a single `<LEDstate>` for a specific `<LED>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct LEDstate {
     /// The unique ID used to reference this state (e.g., in `<combinedState>`).
     pub unique_id: String,
@@ -152,7 +152,7 @@ pub struct LEDstate {
 }
 
 /// Represents a `<combinedState>` that references multiple `<LEDstate>`s.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct CombinedState {
     /// Primary label for this combined state.
     pub label: Option<String>,
@@ -165,7 +165,7 @@ pub struct CombinedState {
 // --- Modular Device Management (New) ---
 
 /// Represents the `<moduleManagement>` block from the *Device* profile.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ModuleManagementDevice {
     /// A list of interfaces (e.g., bus controllers) on the head module.
     pub interfaces: Vec<InterfaceDevice>,
@@ -174,7 +174,7 @@ pub struct ModuleManagementDevice {
 }
 
 /// Represents an `<interface>` on a modular head (Device profile).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct InterfaceDevice {
     /// The unique ID for this interface, referenced by the Communication profile.
     pub unique_id: String,
@@ -191,7 +191,7 @@ pub struct InterfaceDevice {
 }
 
 /// Represents a `<connectedModule>` entry.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ConnectedModule {
     /// The `@childIDRef` linking to a `childID` from a module's XDC.
     pub child_id_ref: String,
@@ -202,7 +202,7 @@ pub struct ConnectedModule {
 }
 
 /// Represents a `<moduleInterface>` (a child module's properties).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ModuleInterface {
     /// The unique ID of this child module.
     pub child_id: String,
@@ -213,14 +213,14 @@ pub struct ModuleInterface {
 }
 
 /// Represents the `<moduleManagement>` block from the *Communication* profile.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ModuleManagementComm {
     /// A list of interfaces and their OD range definitions.
     pub interfaces: Vec<InterfaceComm>,
 }
 
 /// Represents an `<interface>` in the Communication profile.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct InterfaceComm {
     /// The `uniqueID` of the corresponding interface in the Device profile.
     pub unique_id_ref: String,
@@ -229,7 +229,7 @@ pub struct InterfaceComm {
 }
 
 /// Represents a `<range>` of OD indices for a modular interface.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Range {
     pub name: String,
     /// The starting index (e.g., 0x3000).
@@ -251,7 +251,7 @@ pub struct Range {
 // --- Network Management ---
 
 /// Represents the `<NetworkManagement>` block from the Comm Profile.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct NetworkManagement {
     pub general_features: GeneralFeatures,
     pub mn_features: Option<MnFeatures>,
@@ -261,7 +261,7 @@ pub struct NetworkManagement {
 }
 
 /// Represents `<GeneralFeatures>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct GeneralFeatures {
     /// `@DLLFeatureMN`
     pub dll_feature_mn: bool,
@@ -288,7 +288,7 @@ pub struct GeneralFeatures {
 }
 
 /// Represents `<MNFeatures>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct MnFeatures {
     /// `@DLLMNFeatureMultiplex`
     pub dll_mn_feature_multiplex: Option<bool>,
@@ -310,7 +310,7 @@ pub enum NmtCnDna {
 }
 
 /// Represents `<CNFeatures>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct CnFeatures {
     /// `@DLLCNFeatureMultiplex`
     pub dll_cn_feature_multiplex: Option<bool>,
@@ -325,7 +325,7 @@ pub struct CnFeatures {
 }
 
 /// Represents `<Diagnostic>` capabilities.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Diagnostic {
     /// All defined `<Error>` elements.
     pub errors: Vec<ErrorDefinition>,
@@ -334,7 +334,7 @@ pub struct Diagnostic {
 }
 
 /// Represents one `<Error>` in the `<ErrorList>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ErrorDefinition {
     pub name: String,
     pub value: String, 
@@ -342,7 +342,7 @@ pub struct ErrorDefinition {
 }
 
 /// Represents one `<addInfo>` element from an `<Error>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct AddInfo {
     pub name: String,
     pub bit_offset: u8,
@@ -351,7 +351,7 @@ pub struct AddInfo {
 }
 
 /// Represents one `<ErrorBit>` from the `<StaticErrorBitField>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct StaticErrorBit {
     pub name: String,
     pub offset: u8,
@@ -363,7 +363,7 @@ pub struct StaticErrorBit {
 
 /// Represents the `<ApplicationProcess>` block, containing user-defined
 /// data types, parameters, and groupings.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ApplicationProcess {
     /// List of user-defined data types.
     pub data_types: Vec<AppDataType>,
@@ -376,7 +376,7 @@ pub struct ApplicationProcess {
 }
 
 /// An enum representing a user-defined data type from `<dataTypeList>`.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum AppDataType {
     Struct(AppStruct),
     Array(AppArray),
@@ -385,7 +385,7 @@ pub enum AppDataType {
 }
 
 /// Represents a `<struct>` data type.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct AppStruct {
     pub name: String,
     pub unique_id: String,
@@ -395,7 +395,7 @@ pub struct AppStruct {
 }
 
 /// Represents a `<varDeclaration>` within a `<struct>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct StructMember {
     pub name: String,
     pub unique_id: String,
@@ -409,7 +409,7 @@ pub struct StructMember {
 }
 
 /// Represents an `<array>` data type.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct AppArray {
     pub name: String,
     pub unique_id: String,
@@ -422,7 +422,7 @@ pub struct AppArray {
 }
 
 /// Represents an `<enum>` data type.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct AppEnum {
     pub name: String,
     pub unique_id: String,
@@ -435,7 +435,7 @@ pub struct AppEnum {
 }
 
 /// Represents a single `<enumValue>` within an `<enum>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct EnumValue {
     pub name: String,
     pub value: String,
@@ -444,7 +444,7 @@ pub struct EnumValue {
 }
 
 /// Represents a `<derived>` data type.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct AppDerived {
     pub name: String,
     pub unique_id: String,
@@ -456,7 +456,7 @@ pub struct AppDerived {
 }
 
 /// Represents a `<count>` element within a `<derived>` type.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Count {
     pub unique_id: String,
     pub access: Option<ParameterAccess>,
@@ -464,7 +464,7 @@ pub struct Count {
 }
 
 /// Represents a `<parameterGroup>` from the `<parameterGroupList>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ParameterGroup {
     pub unique_id: String,
     pub label: Option<String>,
@@ -474,7 +474,7 @@ pub struct ParameterGroup {
 }
 
 /// An enum representing an item inside a `<parameterGroup>`.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ParameterGroupItem {
     /// A nested parameter group.
     Group(ParameterGroup),
@@ -483,7 +483,7 @@ pub enum ParameterGroupItem {
 }
 
 /// Represents a `<parameterRef>` inside a `<parameterGroup>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ParameterRef {
     /// The `uniqueID` of the parameter being referenced.
     pub unique_id_ref: String,
@@ -494,7 +494,7 @@ pub struct ParameterRef {
 }
 
 /// Represents a `<functionType>` (EPSG 311, 7.4.7.4).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct FunctionType {
     pub name: String,
     pub unique_id: String,
@@ -506,7 +506,7 @@ pub struct FunctionType {
 }
 
 /// Represents a `<versionInfo>` element (EPSG 311, 7.4.7.4.2).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct VersionInfo {
     pub organization: String,
     pub version: String,
@@ -517,7 +517,7 @@ pub struct VersionInfo {
 }
 
 /// Represents an `<interfaceList>` for a function type (EPSG 311, 7.4.7.4.3).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct InterfaceList {
     pub inputs: Vec<VarDeclaration>,
     pub outputs: Vec<VarDeclaration>,
@@ -525,7 +525,7 @@ pub struct InterfaceList {
 }
 
 /// Represents a `<varDeclaration>` within an `<interfaceList>`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct VarDeclaration {
     pub name: String,
     pub unique_id: String,
@@ -537,7 +537,7 @@ pub struct VarDeclaration {
 }
 
 /// Represents a `<functionInstance>` (EPSG 311, 7.4.7.5.2).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct FunctionInstance {
     pub name: String,
     pub unique_id: String,
@@ -595,13 +595,13 @@ pub enum ObjectPdoMapping {
 }
 
 /// Represents the complete `<ObjectList>` (Object Dictionary).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ObjectDictionary {
     pub objects: Vec<Object>,
 }
 
 /// Represents a single `<Object>` (an OD Index).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Object {
     /// `@index` (as a u16, parsed from hex)
     pub index: u16,
@@ -639,7 +639,7 @@ pub struct Object {
 }
 
 /// Represents a `<SubObject>` (an OD Sub-Index).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct SubObject {
     /// `@subIndex` (as a u8, parsed from hex)
     pub sub_index: u8,
@@ -647,7 +647,7 @@ pub struct SubObject {
     // --- Metadata ---
     /// `@name`
     pub name: String,
-    /// `@objectType` (e.D., "7" for VAR)
+    /// `@objectType` (e.Data, "7" for VAR)
     pub object_type: String,
     /// `@dataType` (as a hex string, e.g., "0006")
     pub data_type: Option<String>,
