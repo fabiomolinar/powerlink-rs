@@ -112,83 +112,83 @@ fn build_device_profile(
         })
         .collect();
 
-    let device_identity =
-        DeviceIdentity {
-            vendor_name: ReadOnlyString {
-                value: identity.vendor_name.clone(),
-                ..Default::default()
-            },
-            vendor_id: Some(ReadOnlyString {
-                value: format!("0x{:08X}", identity.vendor_id),
-                ..Default::default()
-            }),
-            product_name: ReadOnlyString {
-                value: identity.product_name.clone(),
-                ..Default::default()
-            },
-            product_id: Some(ReadOnlyString {
-                value: format!("{:X}", identity.product_id),
-                ..Default::default()
-            }),
-            version: versions,
-            vendor_text: identity
-                .vendor_text
-                .as_ref()
-                .map(|t| model::common::AttributedGlabels {
-                    items: vec![model::common::LabelChoice::Label(model::common::Label {
-                        // FIX: Populate `items`
-                        lang: "en".to_string(),
-                        value: t.clone(),
-                    })],
-                    ..Default::default()
-                }),
-            device_family: identity.device_family.as_ref().map(|t| {
-                model::common::AttributedGlabels {
-                    items: vec![model::common::LabelChoice::Label(model::common::Label {
-                        // FIX: Populate `items`
-                        lang: "en".to_string(),
-                        value: t.clone(),
-                    })],
-                    ..Default::default()
-                }
-            }),
-            product_family: identity.product_family.as_ref().map(|t| ReadOnlyString {
-                value: t.clone(),
+    let device_identity = DeviceIdentity {
+        vendor_name: ReadOnlyString {
+            value: identity.vendor_name.clone(),
+            ..Default::default()
+        },
+        vendor_id: Some(ReadOnlyString {
+            value: format!("0x{:08X}", identity.vendor_id),
+            ..Default::default()
+        }),
+        product_name: ReadOnlyString {
+            value: identity.product_name.clone(),
+            ..Default::default()
+        },
+        product_id: Some(ReadOnlyString {
+            value: format!("{:X}", identity.product_id),
+            ..Default::default()
+        }),
+        version: versions,
+        vendor_text: identity
+            .vendor_text
+            .as_ref()
+            .map(|t| model::common::AttributedGlabels {
+                items: vec![model::common::LabelChoice::Label(model::common::Label {
+                    // FIX: Populate `items`
+                    lang: "en".to_string(),
+                    value: t.clone(),
+                })],
                 ..Default::default()
             }),
-            product_text: identity.product_text.as_ref().map(|t| {
-                model::common::AttributedGlabels {
-                    items: vec![model::common::LabelChoice::Label(model::common::Label {
-                        // FIX: Populate `items`
-                        lang: "en".to_string(),
-                        value: t.clone(),
-                    })],
-                    ..Default::default()
-                }
+        device_family: identity.device_family.as_ref().map(|t| {
+            model::common::AttributedGlabels {
+                items: vec![model::common::LabelChoice::Label(model::common::Label {
+                    // FIX: Populate `items`
+                    lang: "en".to_string(),
+                    value: t.clone(),
+                })],
+                ..Default::default()
+            }
+        }),
+        product_family: identity.product_family.as_ref().map(|t| ReadOnlyString {
+            value: t.clone(),
+            ..Default::default()
+        }),
+        product_text: identity.product_text.as_ref().map(|t| {
+            model::common::AttributedGlabels {
+                items: vec![model::common::LabelChoice::Label(model::common::Label {
+                    // FIX: Populate `items`
+                    lang: "en".to_string(),
+                    value: t.clone(),
+                })],
+                ..Default::default()
+            }
+        }),
+        order_number: identity
+            .order_number
+            .iter()
+            .map(|o| ReadOnlyString {
+                value: o.clone(),
+                ..Default::default()
+            })
+            .collect(),
+        build_date: identity.build_date.clone(),
+        specification_revision: identity
+            .specification_revision
+            .as_ref()
+            .map(|sr| ReadOnlyString {
+                value: sr.clone(),
+                ..Default::default()
             }),
-            order_number: identity
-                .order_number
-                .iter()
-                .map(|o| ReadOnlyString {
-                    value: o.clone(),
-                    ..Default::default()
-                })
-                .collect(),
-            build_date: identity.build_date.clone(),
-            specification_revision: identity.specification_revision.as_ref().map(|sr| {
-                ReadOnlyString {
-                    value: sr.clone(),
-                    ..Default::default()
-                }
+        instance_name: identity
+            .instance_name
+            .as_ref()
+            .map(|i| model::common::InstanceName {
+                value: i.clone(),
+                ..Default::default()
             }),
-            instance_name: identity
-                .instance_name
-                .as_ref()
-                .map(|i| model::common::InstanceName {
-                    value: i.clone(),
-                    ..Default::default()
-                }),
-        };
+    };
 
     // Call builders for device_manager and application_process
     let model_device_function = device_function::build_model_device_function(device_function);

@@ -3,14 +3,14 @@
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_layers::DataTypeName;
-use crate::parser::{parse_hex_u16, parse_hex_u8}; // Removed parse_hex_string
-use crate::resolver::{utils, ValueMode};
+use crate::parser::{parse_hex_u8, parse_hex_u16}; // Removed parse_hex_string
+use crate::resolver::{ValueMode, utils};
 use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::num::ParseIntError; // Import for new helper
-use hex::FromHexError; // Import for new helper
+// Import for new helper
+// Import for new helper
 
 /// Iterates the `model::ObjectList` and resolves it into a rich, public `types::ObjectDictionary`.
 pub(super) fn resolve_object_dictionary<'a>(
@@ -107,14 +107,14 @@ pub(super) fn resolve_object_dictionary<'a>(
                 let data_type_id = model_sub_obj.data_type.as_deref();
 
                 // We only store data if it's valid.
-                let data =
-                    value_str_opt.and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
+                let data = value_str_opt
+                    .and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
 
                 // Perform type validation if we have data
                 if let (Some(data), Some(data_type_id_str)) = (data.as_ref(), data_type_id) {
                     utils::validate_type(index, sub_index, data, data_type_id_str, type_map)?;
                 }
-                
+
                 let pdo_mapping = model_sub_obj.pdo_mapping.map(utils::map_pdo_mapping);
 
                 od_sub_objects.push(types::SubObject {
@@ -127,14 +127,14 @@ pub(super) fn resolve_object_dictionary<'a>(
                     access_type: sub_resolved_access, // Use resolved value
                     pdo_mapping,
                     obj_flags: model_sub_obj.obj_flags.clone(),
-                    support: sub_resolved_support,   // Use resolved value
+                    support: sub_resolved_support, // Use resolved value
                     persistent: sub_resolved_persistent, // Use resolved value
                     allowed_values: sub_resolved_allowed_values, // MODIFIED: Assign resolved values
                     data,
                 });
             }
         }
-        
+
         let pdo_mapping = model_obj.pdo_mapping.map(utils::map_pdo_mapping);
 
         od_objects.push(types::Object {
@@ -144,11 +144,11 @@ pub(super) fn resolve_object_dictionary<'a>(
             data_type: model_obj.data_type.clone(),
             low_limit: model_obj.low_limit.clone(), // MODIFIED: Pass through low_limit
             high_limit: model_obj.high_limit.clone(), // MODIFIED: Pass through high_limit
-            access_type: resolved_access, // Use resolved value
+            access_type: resolved_access,           // Use resolved value
             pdo_mapping,
             obj_flags: model_obj.obj_flags.clone(),
-            support: resolved_support,   // Use resolved value
-            persistent: resolved_persistent, // Use resolved value
+            support: resolved_support,               // Use resolved value
+            persistent: resolved_persistent,         // Use resolved value
             allowed_values: resolved_allowed_values, // MODIFIED: Assign resolved values
             data: object_data,
             sub_objects: od_sub_objects,
@@ -198,7 +198,7 @@ fn parse_value_to_bytes(
         "000A" | "000F" => return crate::parser::parse_hex_string(s).map_err(|e| e.into()), // OctetString, Domain
         _ => {} // Not a string type, continue
     }
-    
+
     // It's a numeric type. Get its expected size.
     let size_opt = utils::get_data_type_size(id, type_map);
 
@@ -210,16 +210,26 @@ fn parse_value_to_bytes(
             Some(4) => parse_dec_le!(u32),
             Some(8) => parse_dec_le!(u64),
             // Add other sizes as needed
-            _ => Err(XdcError::ValidationError("Unknown numeric type size for decimal value"))
+            _ => Err(XdcError::ValidationError(
+                "Unknown numeric type size for decimal value",
+            )),
         }
     } else {
         // Hex string: parse as number, encode as LE
         let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
         match size_opt {
-            Some(1) => u8::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
-            Some(2) => u16::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
-            Some(4) => u32::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
-            Some(8) => u64::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
+            Some(1) => u8::from_str_radix(s_no_prefix, 16)
+                .map(|v| v.to_le_bytes().to_vec())
+                .map_err(|e| e.into()),
+            Some(2) => u16::from_str_radix(s_no_prefix, 16)
+                .map(|v| v.to_le_bytes().to_vec())
+                .map_err(|e| e.into()),
+            Some(4) => u32::from_str_radix(s_no_prefix, 16)
+                .map(|v| v.to_le_bytes().to_vec())
+                .map_err(|e| e.into()),
+            Some(8) => u64::from_str_radix(s_no_prefix, 16)
+                .map(|v| v.to_le_bytes().to_vec())
+                .map_err(|e| e.into()),
             // Handle non-standard sizes by parsing as a large int and slicing
             Some(3) => {
                 let val = u32::from_str_radix(s_no_prefix, 16)?;
@@ -237,11 +247,12 @@ fn parse_value_to_bytes(
                 let val = u64::from_str_radix(s_no_prefix, 16)?;
                 Ok(val.to_le_bytes()[..7].to_vec())
             }
-            _ => Err(XdcError::ValidationError("Unknown numeric type size for hex value"))
+            _ => Err(XdcError::ValidationError(
+                "Unknown numeric type size for hex value",
+            )),
         }
     }
 }
-
 
 // --- NEW Helper to resolve allowedValues ---
 /// Resolves a `model::app_process::AllowedValues` into a `types::AllowedValues`.
@@ -253,7 +264,10 @@ fn resolve_allowed_values(
         .iter()
         .map(|v| types::Value {
             value: v.value.clone(),
-            label: v.labels.as_ref().and_then(|glabels| utils::extract_label(&glabels.items)),
+            label: v
+                .labels
+                .as_ref()
+                .and_then(|glabels| utils::extract_label(&glabels.items)),
         })
         .collect();
 
@@ -282,17 +296,15 @@ fn resolve_value_from_param<'a>(
         ValueMode::Actual => param.actual_value.as_ref().or(param.default_value.as_ref()),
         ValueMode::Default => param.default_value.as_ref().or(param.actual_value.as_ref()),
     };
-    
-    direct_value
-        .map(|v| &v.value)
-        .or_else(|| {
-            // 2. If no direct value, check for a template reference
-            param
-                .template_id_ref
-                .as_ref()
-                .and_then(|template_id| template_map.get(template_id))
-                .map(|v| &v.value)
-        })
+
+    direct_value.map(|v| &v.value).or_else(|| {
+        // 2. If no direct value, check for a template reference
+        param
+            .template_id_ref
+            .as_ref()
+            .and_then(|template_id| template_map.get(template_id))
+            .map(|v| &v.value)
+    })
 }
 
 /// Helper to get the raw value string for a VAR object.
@@ -304,8 +316,14 @@ fn get_value_str_for_object<'a>(
 ) -> Option<&'a String> {
     // 1. Check for direct value on the <Object> tag
     let direct_value = match mode {
-        ValueMode::Actual => model_obj.actual_value.as_ref().or(model_obj.default_value.as_ref()),
-        ValueMode::Default => model_obj.default_value.as_ref().or(model_obj.actual_value.as_ref()),
+        ValueMode::Actual => model_obj
+            .actual_value
+            .as_ref()
+            .or(model_obj.default_value.as_ref()),
+        ValueMode::Default => model_obj
+            .default_value
+            .as_ref()
+            .or(model_obj.actual_value.as_ref()),
     };
 
     direct_value.or_else(|| {
@@ -329,10 +347,16 @@ fn get_value_str_for_subobject<'a>(
 ) -> Option<&'a String> {
     // 1. Check for direct value on the <SubObject> tag
     let direct_value = match mode {
-        ValueMode::Actual => model_sub_obj.actual_value.as_ref().or(model_sub_obj.default_value.as_ref()),
-        ValueMode::Default => model_sub_obj.default_value.as_ref().or(model_sub_obj.actual_value.as_ref()),
+        ValueMode::Actual => model_sub_obj
+            .actual_value
+            .as_ref()
+            .or(model_sub_obj.default_value.as_ref()),
+        ValueMode::Default => model_sub_obj
+            .default_value
+            .as_ref()
+            .or(model_sub_obj.actual_value.as_ref()),
     };
-    
+
     direct_value
         .or_else(|| {
             // 2. If no direct value, resolve via SubObject's uniqueIDRef
@@ -353,7 +377,6 @@ fn get_value_str_for_subobject<'a>(
             }
         })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -475,10 +498,28 @@ mod tests {
     #[test]
     fn test_get_value_str_for_object() {
         // Setup maps
-        let (p1_id, p1) = create_test_param("p1", Some("p1_default"), Some("p1_actual"), None, None, None, false, None);
-        let (p2_id, p2) = create_test_param("p2", Some("p2_default"), None, None, None, None, false, None);
+        let (p1_id, p1) = create_test_param(
+            "p1",
+            Some("p1_default"),
+            Some("p1_actual"),
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let (p2_id, p2) = create_test_param(
+            "p2",
+            Some("p2_default"),
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
         let (p3_id, p3) = create_test_param("p3", None, None, Some("t1"), None, None, false, None);
-        
+
         let mut param_map = BTreeMap::new();
         param_map.insert(&p1_id, &p1);
         param_map.insert(&p2_id, &p2);
@@ -489,32 +530,72 @@ mod tests {
         template_map.insert(&t1_id, &t1);
 
         // 1. Prioritize direct actualValue (XDC mode)
-        let obj1 = Object { actual_value: Some("obj_actual".to_string()), ..Default::default() };
-        assert_eq!(get_value_str_for_object(&obj1, ValueMode::Actual, &param_map, &template_map), Some(&"obj_actual".to_string()));
+        let obj1 = Object {
+            actual_value: Some("obj_actual".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_value_str_for_object(&obj1, ValueMode::Actual, &param_map, &template_map),
+            Some(&"obj_actual".to_string())
+        );
 
         // 2. Fallback to direct defaultValue (XDC mode)
-        let obj2 = Object { default_value: Some("obj_default".to_string()), ..Default::default() };
-        assert_eq!(get_value_str_for_object(&obj2, ValueMode::Actual, &param_map, &template_map), Some(&"obj_default".to_string()));
+        let obj2 = Object {
+            default_value: Some("obj_default".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_value_str_for_object(&obj2, ValueMode::Actual, &param_map, &template_map),
+            Some(&"obj_default".to_string())
+        );
 
         // 3. Prioritize direct defaultValue (XDD mode)
-        let obj3 = Object { actual_value: Some("obj_actual".to_string()), default_value: Some("obj_default".to_string()), ..Default::default() };
-        assert_eq!(get_value_str_for_object(&obj3, ValueMode::Default, &param_map, &template_map), Some(&"obj_default".to_string()));
-        
+        let obj3 = Object {
+            actual_value: Some("obj_actual".to_string()),
+            default_value: Some("obj_default".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_value_str_for_object(&obj3, ValueMode::Default, &param_map, &template_map),
+            Some(&"obj_default".to_string())
+        );
+
         // 4. Resolve from uniqueIDRef (XDC mode, param has actual)
-        let obj4 = Object { unique_id_ref: Some("p1".to_string()), ..Default::default() };
-        assert_eq!(get_value_str_for_object(&obj4, ValueMode::Actual, &param_map, &template_map), Some(&"p1_actual".to_string()));
-        
+        let obj4 = Object {
+            unique_id_ref: Some("p1".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_value_str_for_object(&obj4, ValueMode::Actual, &param_map, &template_map),
+            Some(&"p1_actual".to_string())
+        );
+
         // 5. Resolve from uniqueIDRef (XDD mode, param has default)
-        let obj5 = Object { unique_id_ref: Some("p2".to_string()), ..Default::default() };
-        assert_eq!(get_value_str_for_object(&obj5, ValueMode::Default, &param_map, &template_map), Some(&"p2_default".to_string()));
+        let obj5 = Object {
+            unique_id_ref: Some("p2".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_value_str_for_object(&obj5, ValueMode::Default, &param_map, &template_map),
+            Some(&"p2_default".to_string())
+        );
 
         // 6. Resolve from uniqueIDRef via template (XDD mode)
-        let obj6 = Object { unique_id_ref: Some("p3".to_string()), ..Default::default() };
-        assert_eq!(get_value_str_for_object(&obj6, ValueMode::Default, &param_map, &template_map), Some(&"t1_val".to_string()));
+        let obj6 = Object {
+            unique_id_ref: Some("p3".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            get_value_str_for_object(&obj6, ValueMode::Default, &param_map, &template_map),
+            Some(&"t1_val".to_string())
+        );
 
         // 7. No value found
         let obj7 = Object::default();
-        assert_eq!(get_value_str_for_object(&obj7, ValueMode::Default, &param_map, &template_map), None);
+        assert_eq!(
+            get_value_str_for_object(&obj7, ValueMode::Default, &param_map, &template_map),
+            None
+        );
     }
 
     // --- INTEGRATION TEST for resolve_object_dictionary ---
@@ -523,24 +604,57 @@ mod tests {
     fn test_resolve_object_dictionary_full() {
         // --- Setup Mocks ---
         let type_map = create_test_type_map();
-        
+
         // Setup template map
         let (t1_id, t1) = create_test_template("t1_range", "100"); // For param p_range
         let mut template_map = BTreeMap::new();
         template_map.insert(&t1_id, &t1);
-        
+
         // Setup param map
         let allowed_vals = ModelAllowedValues {
             range: vec![ModelRange {
-                min_value: ModelValue { value: "10".to_string(), ..Default::default() },
-                max_value: ModelValue { value: "50".to_string(), ..Default::default() },
+                min_value: ModelValue {
+                    value: "10".to_string(),
+                    ..Default::default()
+                },
+                max_value: ModelValue {
+                    value: "50".to_string(),
+                    ..Default::default()
+                },
                 ..Default::default()
             }],
             ..Default::default()
         };
-        let (p_var_id, p_var) = create_test_param("p_var", Some("0xAA"), None, None, Some(model::app_process::ParameterAccess::ReadWrite), Some(model::app_process::ParameterSupport::Mandatory), true, None);
-        let (p_sub_id, p_sub) = create_test_param("p_sub", Some("0xBB"), None, None, Some(model::app_process::ParameterAccess::Read), Some(model::app_process::ParameterSupport::Optional), false, Some(allowed_vals));
-        let (p_range_id, p_range) = create_test_param("p_range", None, None, Some("t1_range"), None, None, false, None);
+        let (p_var_id, p_var) = create_test_param(
+            "p_var",
+            Some("0xAA"),
+            None,
+            None,
+            Some(model::app_process::ParameterAccess::ReadWrite),
+            Some(model::app_process::ParameterSupport::Mandatory),
+            true,
+            None,
+        );
+        let (p_sub_id, p_sub) = create_test_param(
+            "p_sub",
+            Some("0xBB"),
+            None,
+            None,
+            Some(model::app_process::ParameterAccess::Read),
+            Some(model::app_process::ParameterSupport::Optional),
+            false,
+            Some(allowed_vals),
+        );
+        let (p_range_id, p_range) = create_test_param(
+            "p_range",
+            None,
+            None,
+            Some("t1_range"),
+            None,
+            None,
+            false,
+            None,
+        );
 
         let mut param_map = BTreeMap::new();
         param_map.insert(&p_var_id, &p_var);
@@ -601,7 +715,7 @@ mod tests {
                                 data_type: Some("0005".to_string()), // U8
                                 unique_id_ref: Some("p_range".to_string()),
                                 ..Default::default()
-                            }
+                            },
                         ],
                         ..Default::default()
                     },
@@ -614,7 +728,7 @@ mod tests {
                         // FIX: This value will fail to parse as a u32
                         default_value: Some("0x0102030405".to_string()), // 5 bytes
                         ..Default::default()
-                    }
+                    },
                 ],
             },
             ..Default::default()
@@ -622,26 +736,42 @@ mod tests {
 
         // --- Run Resolver ---
         // We run in XDD mode (ValueMode::Default)
-        let od_result = resolve_object_dictionary(&app_layers, &param_map, &template_map, &type_map, ValueMode::Default);
+        let od_result = resolve_object_dictionary(
+            &app_layers,
+            &param_map,
+            &template_map,
+            &type_map,
+            ValueMode::Default,
+        );
 
         // --- Assertions ---
         // The *last* object (0x6000) should cause a parse error now
         // TODO: verify why the assertions below aren't failing.
-        // assert!(od_result.is_err(), "Expected validation error due to bad data type: {:?}", od_result);        
+        // assert!(od_result.is_err(), "Expected validation error due to bad data type: {:?}", od_result);
         // assert!(matches!(od_result.err().unwrap(), XdcError::InvalidAttributeFormat {..}));
-        
+
         // --- Rerun with a corrected object list ---
         let mut app_layers_good = app_layers;
         // FIX: Access the Vec inside the struct
         app_layers_good.object_list.object.pop(); // Remove object 0x6000
-        
-        let od = resolve_object_dictionary(&app_layers_good, &param_map, &template_map, &type_map, ValueMode::Default).unwrap();
+
+        let od = resolve_object_dictionary(
+            &app_layers_good,
+            &param_map,
+            &template_map,
+            &type_map,
+            ValueMode::Default,
+        )
+        .unwrap();
 
         // 1. Check Obj 0x1000 (Direct value)
         let obj_1000 = od.objects.iter().find(|o| o.index == 0x1000).unwrap();
         assert_eq!(obj_1000.name, "DeviceType");
         // "0x1234" (U32) -> parse as 0x1234_u32 -> LE bytes -> [0x34, 0x12, 0x00, 0x00]
-        assert_eq!(obj_1000.data.as_deref(), Some(&[0x34u8, 0x12, 0x00, 0x00] as &[u8]));
+        assert_eq!(
+            obj_1000.data.as_deref(),
+            Some(&[0x34u8, 0x12, 0x00, 0x00] as &[u8])
+        );
         assert_eq!(obj_1000.access_type, None); // No param ref
         assert_eq!(obj_1000.support, None);
         assert_eq!(obj_1000.persistent, false);
@@ -650,7 +780,10 @@ mod tests {
         let obj_2000 = od.objects.iter().find(|o| o.index == 0x2000).unwrap();
         assert_eq!(obj_2000.name, "ParamVar");
         assert_eq!(obj_2000.data.as_deref(), Some(&[0xAAu8] as &[u8])); // from p_var default "0xAA"
-        assert_eq!(obj_2000.access_type, Some(types::ParameterAccess::ReadWrite));
+        assert_eq!(
+            obj_2000.access_type,
+            Some(types::ParameterAccess::ReadWrite)
+        );
         assert_eq!(obj_2000.support, Some(types::ParameterSupport::Mandatory));
         assert_eq!(obj_2000.persistent, true);
 
@@ -659,13 +792,13 @@ mod tests {
         assert_eq!(obj_2100.name, "ParamRecord");
         assert_eq!(obj_2100.data, None); // Data is on sub-objects
         assert_eq!(obj_2100.sub_objects.len(), 3);
-        
+
         // Sub-obj 0 (Direct value)
         let sub_0 = &obj_2100.sub_objects[0];
         assert_eq!(sub_0.sub_index, 0);
         assert_eq!(sub_0.data.as_deref(), Some(&[0x02u8] as &[u8])); // "2" (decimal)
         assert_eq!(sub_0.access_type, None); // No param ref
-        
+
         // Sub-obj 1 (Param ref value and attributes)
         let sub_1 = &obj_2100.sub_objects[1];
         assert_eq!(sub_1.sub_index, 1);
