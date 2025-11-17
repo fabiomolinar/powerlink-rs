@@ -8,6 +8,7 @@ use crate::types;
 use alloc::string::String;
 
 /// Helper to extract the first available `<label>` value from a `g_labels` group.
+#[allow(dead_code)]
 fn extract_label_from_glabels(labels: &Glabels) -> Option<String> {
     labels.items.iter().find_map(|item| {
         if let LabelChoice::Label(label) = item {

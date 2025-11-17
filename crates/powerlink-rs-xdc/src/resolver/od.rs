@@ -9,8 +9,6 @@ use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::num::ParseIntError; // Import for new helper
-use hex::FromHexError; // Import for new helper
 
 /// Iterates the `model::ObjectList` and resolves it into a rich, public `types::ObjectDictionary`.
 pub(super) fn resolve_object_dictionary<'a>(
@@ -165,13 +163,13 @@ pub(super) fn resolve_object_dictionary<'a>(
 fn parse_value_to_bytes(
     s: &str,
     data_type_id: Option<&str>,
-    type_map: &BTreeMap<String, DataTypeName>,
+    _type_map: &BTreeMap<String, DataTypeName>, // type_map is only needed for decimal parsing logic
 ) -> Result<Vec<u8>, XdcError> {
     let id = data_type_id.ok_or(XdcError::ValidationError(
         "Cannot parse value string to bytes without dataType",
     ))?;
 
-    // Helper to parse a decimal string to a type and get LE bytes
+    // Helper to parse decimal string to a type and get LE bytes
     macro_rules! parse_dec_le {
         ($typ:ty) => {
             s.parse::<$typ>()
@@ -205,44 +203,11 @@ fn parse_value_to_bytes(
             }
         }
     } else {
-        // It *is* a hex string.
-        // For string/domain types, parse as raw hex.
-        match id {
-            "0009" | "000A" | "000B" | "000F" => {
-                return crate::parser::parse_hex_string(s).map_err(|e| e.into())
-            }
-            _ => {} // Not a string type, continue
-        }
-
-        // It's a numeric hex string. Parse as number, encode as LE.
-        let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
-        let size_opt = utils::get_data_type_size(id, type_map);
-
-        // FIX: Map ParseIntError to XdcError in every arm
-        match size_opt {
-            Some(1) => u8::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
-            Some(2) => u16::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
-            Some(4) => u32::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
-            Some(8) => u64::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
-            // Handle non-standard sizes by parsing as a large int and slicing
-            Some(3) => {
-                let val = u32::from_str_radix(s_no_prefix, 16)?;
-                Ok(val.to_le_bytes()[..3].to_vec())
-            }
-            Some(5) => {
-                let val = u64::from_str_radix(s_no_prefix, 16)?;
-                Ok(val.to_le_bytes()[..5].to_vec())
-            }
-            Some(6) => {
-                let val = u64::from_str_radix(s_no_prefix, 16)?;
-                Ok(val.to_le_bytes()[..6].to_vec())
-            }
-            Some(7) => {
-                let val = u64::from_str_radix(s_no_prefix, 16)?;
-                Ok(val.to_le_bytes()[..7].to_vec())
-            }
-            _ => Err(XdcError::ValidationError("Unknown numeric type size for hex value"))
-        }
+        // It *is* a hex string (xsd:hexBinary). Parse it as raw hex.
+        // "0x1234" -> [0x12, 0x34]
+        // "0xAA" -> [0xAA]
+        // "0x0102030405" -> [0x01, 0x02, 0x03, 0x04, 0x05]
+        crate::parser::parse_hex_string(s).map_err(|e| e.into())
     }
 }
 
@@ -559,7 +524,7 @@ mod tests {
                         index: "1000".to_string(),
                         name: "DeviceType".to_string(),
                         object_type: "7".to_string(),
-                        data_type: Some("0007".to_string()), // U32
+                        data_type: Some("0007".to_string()), // U32 (4 bytes)
                         default_value: Some("0x1234".to_string()), // 2-byte hex string
                         ..Default::default()
                     },
@@ -613,8 +578,8 @@ mod tests {
                         index: "6000".to_string(),
                         name: "BadVar".to_string(),
                         object_type: "7".to_string(),
-                        data_type: Some("0007".to_string()), // U32
-                        default_value: Some("0x0102030405".to_string()), // 5 bytes, but type is 4
+                        data_type: Some("0007".to_string()), // U32 (4 bytes)
+                        default_value: Some("0x0102030405".to_string()), // 5 bytes
                         ..Default::default()
                     }
                 ],
