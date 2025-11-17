@@ -284,11 +284,6 @@ fn map_support_to_category(support: Option<types::ParameterSupport>) -> Category
 
 /// Parses a limit string (hex or decimal) into an `ObjectValue` based on type.
 fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
-    // Helper to parse, removing "0x" if present
-    fn parse_hex<T: FromStrRadix>(s: &str) -> Option<T> {
-        // MODIFIED: Use from_str_radix, not parse()
-        T::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok()
-    }
 
     // Helper to parse, supporting "0x" hex or decimal
     fn parse_num<T: FromStrRadix + core::str::FromStr>(s: &str) -> Option<T> {

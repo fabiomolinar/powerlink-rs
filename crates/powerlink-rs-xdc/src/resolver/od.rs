@@ -3,7 +3,7 @@
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_layers::DataTypeName;
-use crate::parser::{parse_hex_u16, parse_hex_u8, parse_hex_string};
+use crate::parser::{parse_hex_u16, parse_hex_u8}; // Removed parse_hex_string
 use crate::resolver::{utils, ValueMode};
 use crate::types;
 use alloc::collections::BTreeMap;
@@ -53,15 +53,15 @@ pub(super) fn resolve_object_dictionary<'a>(
         if model_obj.object_type == "7" {
             // This is a VAR. Its value is on the <Object> element itself.
             let value_str_opt = get_value_str_for_object(model_obj, mode, param_map, template_map);
+            let data_type_id = model_obj.data_type.as_deref();
 
-            // We only store data if it's valid hex.
-            object_data = value_str_opt.and_then(|s| parse_hex_string(s).ok());
+            // We only store data if it's valid.
+            object_data =
+                value_str_opt.and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
 
             // Perform type validation if we have data
-            if let (Some(data), Some(data_type_id)) =
-                (object_data.as_ref(), model_obj.data_type.as_deref())
-            {
-                utils::validate_type(index, 0, data, data_type_id, type_map)?;
+            if let (Some(data), Some(data_type_id_str)) = (object_data.as_ref(), data_type_id) {
+                utils::validate_type(index, 0, data, data_type_id_str, type_map)?;
             }
         } else {
             // This is a RECORD or ARRAY. Process its <SubObject> children.
@@ -102,17 +102,15 @@ pub(super) fn resolve_object_dictionary<'a>(
                     model_obj.unique_id_ref.as_ref(),
                     sub_index,
                 );
+                let data_type_id = model_sub_obj.data_type.as_deref();
 
-                // We only store data if it's valid hex.
-                // Non-hex values (like "NumberOfEntries") result in `None`.
-                let data = value_str_opt.and_then(|s| parse_hex_string(s).ok());
+                // We only store data if it's valid.
+                let data =
+                    value_str_opt.and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
 
                 // Perform type validation if we have data
-                if let (Some(data), Some(data_type_id)) = (
-                    data.as_ref(),
-                    model_sub_obj.data_type.as_deref(),
-                ) {
-                    utils::validate_type(index, sub_index, data, data_type_id, type_map)?;
+                if let (Some(data), Some(data_type_id_str)) = (data.as_ref(), data_type_id) {
+                    utils::validate_type(index, sub_index, data, data_type_id_str, type_map)?;
                 }
                 
                 let pdo_mapping = model_sub_obj.pdo_mapping.map(utils::map_pdo_mapping);
@@ -158,6 +156,88 @@ pub(super) fn resolve_object_dictionary<'a>(
     Ok(types::ObjectDictionary {
         objects: od_objects,
     })
+}
+
+/// Parses a value string (e.g., "0x1234", "100") into a `Vec<u8>`
+/// using little-endian byte order, based on the `dataType`.
+fn parse_value_to_bytes(
+    s: &str,
+    data_type_id: Option<&str>,
+    type_map: &BTreeMap<String, DataTypeName>,
+) -> Result<Vec<u8>, XdcError> {
+    let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
+    let id = data_type_id.ok_or(XdcError::ValidationError(
+        "Cannot parse value string to bytes without dataType",
+    ))?;
+
+    // Helper to parse hex string to a type and get LE bytes
+    macro_rules! parse_hex_le {
+        ($typ:ty) => {
+            <$typ>::from_str_radix(s_no_prefix, 16)
+                .map(|v| v.to_le_bytes().to_vec())
+                .map_err(|e| e.into())
+        };
+    }
+
+    // Helper to parse a decimal string to a type and get LE bytes
+    macro_rules! parse_dec_le {
+        ($typ:ty) => {
+            s.parse::<$typ>()
+                .map(|v| v.to_le_bytes().to_vec())
+                .map_err(|_| XdcError::InvalidAttributeFormat {
+                    attribute: "defaultValue or actualValue",
+                })
+        };
+    }
+
+    // Determine if the string is hex (has 0x prefix or type map implies hex)
+    // Most non-string values in XDD are hex.
+    let is_hex = s.starts_with("0x");
+
+    // Get the expected size to select the correct parser
+    let size_opt = utils::get_data_type_size(id, type_map);
+
+    // For numeric types, default to hex parsing if not clearly decimal
+    if is_hex {
+        match size_opt {
+            Some(1) => parse_hex_le!(u8),
+            Some(2) => parse_hex_le!(u16),
+            Some(3) => {
+                // u24 doesn't exist, parse as u32 and take 3 bytes
+                let val = u32::from_str_radix(s_no_prefix, 16)?;
+                Ok(val.to_le_bytes()[..3].to_vec())
+            }
+            Some(4) => parse_hex_le!(u32),
+            Some(5) => {
+                let val = u64::from_str_radix(s_no_prefix, 16)?;
+                Ok(val.to_le_bytes()[..5].to_vec())
+            }
+            Some(6) => {
+                let val = u64::from_str_radix(s_no_prefix, 16)?;
+                Ok(val.to_le_bytes()[..6].to_vec())
+            }
+            Some(7) => {
+                let val = u64::from_str_radix(s_no_prefix, 16)?;
+                Ok(val.to_le_bytes()[..7].to_vec())
+            }
+            Some(8) => parse_hex_le!(u64),
+            _ => {
+                // Variable size or unknown: treat as raw hex string
+                hex::decode(s_no_prefix).map_err(|e| e.into())
+            }
+        }
+    } else {
+        // Not hex, try to parse as decimal for numeric types
+        match id {
+            "0001" | "0002" | "0005" => parse_dec_le!(u8),
+            "0003" | "0006" => parse_dec_le!(u16),
+            "0004" | "0007" => parse_dec_le!(u32),
+            "0015" | "001B" => parse_dec_le!(u64),
+            // Add other decimal types as needed (e.g., Real32/64)
+            // Default: treat as a raw hex string (for values like "15" in test)
+            _ => hex::decode(s_no_prefix).map_err(|e| e.into()),
+        }
+    }
 }
 
 // --- NEW Helper to resolve allowedValues ---
@@ -278,7 +358,7 @@ mod tests {
     use crate::model;
     use crate::model::app_layers::{Object, SubObject};
     use crate::model::app_process::{
-        AllowedValues as ModelAllowedValues, Parameter, Range as ModelRange, Value as ModelValue,
+        AllowedValues as ModelAllowedValues, Range as ModelRange, Value as ModelValue,
     };
     use crate::model::common::{Glabels, Label, LabelChoice};
     use crate::types;
@@ -497,7 +577,7 @@ mod tests {
                                 name: "Count".to_string(),
                                 object_type: "7".to_string(),
                                 data_type: Some("0005".to_string()),
-                                default_value: Some("2".to_string()), // "2" -> 0x02
+                                default_value: Some("2".to_string()), // "2"
                                 ..Default::default()
                             },
                             // Sub-obj 1: param ref

@@ -2,9 +2,9 @@
 
 //! Contains common helper structs and enums from CommonElements.xsd.
 
-use alloc::string::String;
-use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
+use alloc::vec::Vec;
+use alloc::string::String;
 
 // --- Helper Functions for serde(default) ---
 
@@ -99,11 +99,7 @@ pub struct Glabels {
 /// Also used for `productFamily`, `productName`, `productID`, `specificationRevision`
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct ReadOnlyString {
-    #[serde(
-        rename = "@readOnly",
-        default = "bool_true",
-        skip_serializing_if = "is_true"
-    )]
+    #[serde(rename = "@readOnly", default = "bool_true", skip_serializing_if = "is_true")]
     pub read_only: bool,
     #[serde(rename = "$value")]
     pub value: String,
@@ -121,13 +117,9 @@ pub struct InstanceName {
 /// Represents `<vendorText>`, `<deviceFamily>`, and `<productText>`
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AttributedGlabels {
-    #[serde(flatten)]
-    pub labels: Glabels,
-    #[serde(
-        rename = "@readOnly",
-        default = "bool_true",
-        skip_serializing_if = "is_true"
-    )]
+    #[serde(rename = "$value", default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<LabelChoice>,
+    #[serde(rename = "@readOnly", default = "bool_true", skip_serializing_if = "is_true")]
     pub read_only: bool,
 }
 

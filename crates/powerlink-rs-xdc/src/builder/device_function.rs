@@ -8,7 +8,6 @@ use crate::model::common::{Description, Glabels, Label, LabelChoice};
 use crate::{model, types};
 use alloc::{
     string::{String, ToString},
-    vec,
     vec::Vec,
 };
 
@@ -196,8 +195,7 @@ pub(super) fn build_model_device_function(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::common::{Description, Label, LabelChoice};
-    use crate::model::device_function as model_df;
+    use crate::model::common::LabelChoice;
     use crate::types;
     use alloc::string::ToString;
     use alloc::vec;

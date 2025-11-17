@@ -69,7 +69,7 @@ pub(crate) fn parse_hex_u8(s: &str) -> Result<u8, ParseIntError> {
 /// Parses a "0x..." or "..." hex string into a byte vector.
 pub(crate) fn parse_hex_string(s: &str) -> Result<Vec<u8>, FromHexError> {
     let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
-
+    
     // Handle odd-length strings by padding with a leading zero
     if s_no_prefix.len() % 2 != 0 {
         let mut padded_s = String::with_capacity(s_no_prefix.len() + 1);
@@ -126,6 +126,9 @@ mod tests {
     </ProfileHeader>
     <ProfileBody xsi:type="ProfileBody_CommunicationNetwork_Powerlink" fileName="test.xdd" fileCreator="Test" fileCreationDate="2024-01-01" fileVersion="1">
       <ApplicationLayers>
+        <DataTypeList>
+          <defType dataType="0006"><Unsigned16/></defType>
+        </DataTypeList>
         <ObjectList>
           <Object index="1000" name="Device Type" objectType="7" dataType="0006" actualValue="0x1234" />
         </ObjectList>
@@ -148,10 +151,7 @@ mod tests {
         assert_eq!(xdc_file.object_dictionary.objects.len(), 1);
         assert_eq!(xdc_file.object_dictionary.objects[0].index, 0x1000);
         // Fix: The value "0x1234" (U16) is parsed as LE, so it becomes [0x34, 0x12].
-        assert_eq!(
-            xdc_file.object_dictionary.objects[0].data.as_deref(),
-            Some(&[0x34u8, 0x12u8] as &[u8])
-        );
+        assert_eq!(xdc_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]));
     }
 
     #[test]
@@ -162,10 +162,7 @@ mod tests {
         let xdd_file = result.unwrap();
         assert_eq!(xdd_file.identity.vendor_name, "TestVendor");
         // Fix: The value "0x1234" (U16) is parsed as LE, so it becomes [0x34, 0x12].
-        assert_eq!(
-            xdd_file.object_dictionary.objects[0].data.as_deref(),
-            Some(&[0x34u8, 0x12u8] as &[u8])
-        );
+        assert_eq!(xdd_file.object_dictionary.objects[0].data.as_deref(), Some(&[0x34u8, 0x12u8] as &[u8]));
     }
 
     #[test]
@@ -214,12 +211,7 @@ mod tests {
 </ISO15745ProfileContainer>"#;
 
         let result = load_xdc_from_str(invalid_attr_xml);
-        assert!(matches!(
-            result,
-            Err(XdcError::InvalidAttributeFormat {
-                attribute: "index or subIndex"
-            })
-        ));
+        assert!(matches!(result, Err(XdcError::InvalidAttributeFormat { attribute: "index or subIndex" })));
     }
 
     // --- Unit Tests for Helpers ---
@@ -273,15 +265,9 @@ mod tests {
     #[test]
     fn test_parse_hex_string_invalid_chars() {
         let result = parse_hex_string("0x123G");
-        assert!(matches!(
-            result,
-            Err(FromHexError::InvalidHexCharacter { .. })
-        ));
+        assert!(matches!(result, Err(FromHexError::InvalidHexCharacter { .. })));
 
         let result = parse_hex_string("NOPE");
-        assert!(matches!(
-            result,
-            Err(FromHexError::InvalidHexCharacter { .. })
-        ));
+        assert!(matches!(result, Err(FromHexError::InvalidHexCharacter { .. })));
     }
 }

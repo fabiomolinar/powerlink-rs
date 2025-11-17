@@ -7,7 +7,7 @@ use crate::model;
 use crate::resolver::modular; // Import the new modular resolver
 use crate::resolver::utils; // Import the utils module
 use crate::types;
-use alloc::string::{String, ToString}; // Fix: Add String import
+use alloc::string::{ToString}; // Fix: Add String import
 use alloc::vec::Vec;
 
 // --- Label Helpers ---
