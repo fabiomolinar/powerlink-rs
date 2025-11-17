@@ -14,6 +14,7 @@ use alloc::string::String;
 pub mod app_layers;
 pub mod app_process;
 pub mod common;
+pub mod device_function; // Added new module
 pub mod header;
 pub mod identity;
 pub mod net_mgmt;
@@ -30,6 +31,7 @@ pub use app_layers::ApplicationLayers;
 pub use app_process::ApplicationProcess;
 pub use net_mgmt::NetworkManagement;
 pub use device_manager::DeviceManager; // Added re-export
+pub use device_function::DeviceFunction; // Added re-export
 
 
 /// The root element of an XDC/XDD file.
@@ -90,6 +92,21 @@ pub struct ProfileBody {
     /// (from `ProfileBody_Device_Powerlink.xsd`)
     #[serde(rename = "DeviceManager", default, skip_serializing_if = "Option::is_none")]
     pub device_manager: Option<DeviceManager>,
+
+    /// This field is only present in the Device Profile.
+    /// (from `ProfileBody_Device_Powerlink.xsd`)
+    /// Per the XSD, this is 1..unbounded, but the base schema xsd has 0..unbounded
+    /// for ApplicationProcess. Let's check `ProfileBody_Device_Powerlink.xsd`
+    /// line 55: `maxOccurs="unbounded"`. `minOccurs` is not specified, so it defaults to 1.
+    /// line 56: `ApplicationProcess` is `minOccurs="0" maxOccurs="unbounded"`.
+    /// The XSD is slightly contradictory between base and modular schemas vs. standard.
+    /// Let's stick with the provided model's `Option<ApplicationProcess>` for now,
+    /// as changing it to a Vec would be a major refactor.
+    ///
+    /// The user's `src/model/mod.rs` already has `application_process`.
+    /// I will add `device_function`.
+    #[serde(rename = "DeviceFunction", default, skip_serializing_if = "Vec::is_empty")]
+    pub device_function: Vec<DeviceFunction>,
 
     /// This field is only present in the Device Profile.
     #[serde(rename = "ApplicationProcess", default, skip_serializing_if = "Option::is_none")]

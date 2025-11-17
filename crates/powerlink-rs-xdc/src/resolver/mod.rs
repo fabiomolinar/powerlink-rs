@@ -16,6 +16,7 @@ use alloc::string::String;
 // --- Sub-modules ---
 
 mod app_process; // Add the new module
+mod device_function; // Added new module
 mod header;
 mod identity;
 mod net_mgmt;
@@ -131,6 +132,12 @@ pub(crate) fn resolve_data(
         .transpose()?
         .unwrap_or_default();
 
+    // Resolve the DeviceFunction (New)
+    let device_function = device_profile_body
+        .map(|b| device_function::resolve_device_function(&b.device_function))
+        .transpose()?
+        .unwrap_or_default();
+
     // Resolve the DeviceManager (New)
     let device_manager = device_profile_body
         .and_then(|b| b.device_manager.as_ref())
@@ -162,6 +169,7 @@ pub(crate) fn resolve_data(
     Ok(types::XdcFile {
         header,
         identity,
+        device_function, // Add the resolved data
         device_manager, // Add the resolved data
         network_management,
         application_process, // Add the resolved data

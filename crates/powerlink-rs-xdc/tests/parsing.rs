@@ -108,7 +108,7 @@ fn test_round_trip_static_xdd() {
 fn test_load_dynamic_xdd() {
     let xml_content = load_test_file("MyDevice.xdd");
     let result = load_xdd_defaults_from_str(&xml_content);
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "Failed to parse dynamic XDD: {:?}", result.err());
 
     let xdc_file = result.unwrap();
     // Find a known object and check its value

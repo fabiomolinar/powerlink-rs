@@ -2,6 +2,7 @@
 
 // Declare the new modules for serialization logic
 pub mod app_process;
+pub mod device_function; // Added new module
 pub mod device_manager;
 pub mod modular;
 pub mod net_mgmt;
@@ -40,6 +41,7 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
     let device_profile = build_device_profile(
         &file.header,
         &file.identity,
+        &file.device_function, // Pass the new device_function field
         file.device_manager.as_ref(),
         file.application_process.as_ref(),
     );
@@ -90,6 +92,7 @@ fn build_model_header(header: &types::ProfileHeader) -> ProfileHeader {
 fn build_device_profile(
     header: &types::ProfileHeader,
     identity: &types::Identity,
+    device_function: &[types::DeviceFunction], // Added this argument
     device_manager: Option<&types::DeviceManager>,
     application_process: Option<&types::ApplicationProcess>,
 ) -> model::Iso15745Profile {
@@ -158,6 +161,7 @@ fn build_device_profile(
     };
 
     // Call builders for device_manager and application_process
+    let model_device_function = device_function::build_model_device_function(device_function);
     let model_device_manager = device_manager.map(device_manager::build_model_device_manager);
     let model_application_process =
         application_process.map(app_process::build_model_application_process);
@@ -168,6 +172,7 @@ fn build_device_profile(
             xsi_type: Some("ProfileBody_Device_Powerlink".into()),
             application_layers: None,
             device_identity: Some(device_identity),
+            device_function: model_device_function, // Assign the resolved model
             device_manager: model_device_manager,
             application_process: model_application_process,
             network_management: None,
@@ -266,6 +271,7 @@ fn build_comm_profile(
             application_layers: Some(app_layers),
             device_identity: None,
             device_manager: None,
+            device_function: Vec::new(), // FIX: Add missing field
             application_process: None,
             network_management: model_network_management,
         },

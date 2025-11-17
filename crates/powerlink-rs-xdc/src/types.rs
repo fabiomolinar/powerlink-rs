@@ -19,6 +19,10 @@ pub struct XdcFile {
     /// Information from the `<DeviceIdentity>` block.
     pub identity: Identity,
     
+    /// Information from the `<DeviceFunction>` block.
+    /// This is a Vec because the schema allows 1..unbounded.
+    pub device_function: Vec<DeviceFunction>,
+
     /// Information from the `<DeviceManager>` block.
     pub device_manager: Option<DeviceManager>,
 
@@ -101,7 +105,127 @@ pub struct Version {
     pub value: String,
 }
 
-// --- Device Manager (New) ---
+// --- Device Function (New) ---
+
+/// Represents the `<DeviceFunction>` block (EPSG DS 311, 7.4.6).
+#[derive(Debug, Default, PartialEq)]
+pub struct DeviceFunction {
+    /// Contains device capabilities and standard compliance.
+    pub capabilities: Option<Capabilities>,
+    /// Contains links to device pictures or icons.
+    pub pictures: Vec<Picture>,
+    /// Contains links to external text resource files.
+    pub dictionaries: Vec<Dictionary>,
+    /// Contains definitions of physical connectors.
+    pub connectors: Vec<Connector>,
+    /// Contains links to firmware files.
+    pub firmware_list: Vec<Firmware>,
+    /// Contains a list of classification keywords.
+    pub classifications: Vec<Classification>,
+}
+
+/// Represents the `<capabilities>` element (EPSG DS 311, 7.4.6.2).
+#[derive(Debug, Default, PartialEq)]
+pub struct Capabilities {
+    /// A list of characteristics, often grouped by category.
+    pub characteristics: Vec<CharacteristicList>,
+    /// A list of standards this device complies with.
+    pub standard_compliance: Vec<StandardCompliance>,
+}
+
+/// Represents a `<characteristicsList>` (EPSG DS 311, 7.4.6.2.2).
+#[derive(Debug, Default, PartialEq)]
+pub struct CharacteristicList {
+    /// An optional category name for this group of characteristics.
+    pub category: Option<String>,
+    /// The list of characteristics in this group.
+    pub characteristics: Vec<Characteristic>,
+}
+
+/// Represents a single `<characteristic>` (EPSG DS 311, 7.4.6.2.2.2).
+#[derive(Debug, Default, PartialEq)]
+pub struct Characteristic {
+    /// The name of the characteristic (e.g., "Transfer rate").
+    pub name: String,
+    /// A list of values for this characteristic (e.g., "100 MBit/s").
+    pub content: Vec<String>,
+}
+
+/// Represents a `<compliantWith>` element (EPSG DS 311, 7.4.6.2.2.5).
+#[derive(Debug, Default, PartialEq)]
+pub struct StandardCompliance {
+    /// The name of the standard (e.g., "EN 61131-2").
+    pub name: String,
+    /// The range, either "international" or "internal".
+    pub range: String,
+    /// An optional description (from `<label>`).
+    pub description: Option<String>,
+}
+
+/// Represents a `<picture>` element (EPSG DS 311, 7.4.6.3).
+#[derive(Debug, Default, PartialEq)]
+pub struct Picture {
+    /// The link to the picture file.
+    pub uri: String,
+    /// The type of picture ("frontPicture", "icon", "additional", "none").
+    pub picture_type: String,
+    /// An optional number for the picture.
+    pub number: Option<u32>,
+    /// An optional label for the picture.
+    pub label: Option<String>,
+    /// An optional description for the picture.
+    pub description: Option<String>,
+}
+
+/// Represents a `<dictionary>` element (EPSG DS 311, 7.4.6.4).
+#[derive(Debug, Default, PartialEq)]
+pub struct Dictionary {
+    /// The link to the text resource file.
+    pub uri: String,
+    /// The language of the dictionary (e.g., "en", "de").
+    pub lang: String,
+    /// The ID used to reference this dictionary.
+    pub dict_id: String,
+}
+
+/// Represents a `<connector>` element (EPSG DS 311, 7.4.6.5).
+#[derive(Debug, Default, PartialEq)]
+pub struct Connector {
+    /// The ID of the connector.
+    pub id: String,
+    /// The type of connector (e.g., "POWERLINK", "RJ45").
+    pub connector_type: String,
+    /// Optional reference to a modular interface.
+    pub interface_id_ref: Option<String>,
+    /// Optional label for the connector.
+    pub label: Option<String>,
+    /// Optional description for the connector.
+    pub description: Option<String>,
+}
+
+/// Represents a `<firmware>` element (EPSG DS 311, 7.4.6.6).
+#[derive(Debug, Default, PartialEq)]
+pub struct Firmware {
+    /// The link to the firmware file.
+    pub uri: String,
+    /// The revision number this firmware corresponds to.
+    pub device_revision_number: u32,
+    /// Optional build date of the firmware.
+    pub build_date: Option<String>,
+    /// Optional label for the firmware.
+    pub label: Option<String>,
+    /// Optional description for the firmware.
+    pub description: Option<String>,
+}
+
+/// Represents a `<classification>` element (EPSG DS 311, 7.4.6.7).
+#[derive(Debug, Default, PartialEq)]
+pub struct Classification {
+    /// The classification value (e.g., "Controller", "IO", "Drive").
+    pub value: String,
+}
+
+// --- Device Manager ---
 
 /// Represents the `<DeviceManager>` block.
 #[derive(Debug, Default, PartialEq)]
@@ -162,7 +286,7 @@ pub struct CombinedState {
     pub led_state_refs: Vec<String>,
 }
 
-// --- Modular Device Management (New) ---
+// --- Modular Device Management ---
 
 /// Represents the `<moduleManagement>` block from the *Device* profile.
 #[derive(Debug, Default, PartialEq)]
