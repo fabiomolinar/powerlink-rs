@@ -3,35 +3,67 @@
 //! Contains model structs related to `<DeviceFunction>`.
 //! (Schema: `ProfileBody_Device_Powerlink.xsd`)
 
-use serde::{Deserialize, Serialize};
-use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 // Import LabelChoice, as we will use it directly
 use super::common::{Glabels, LabelChoice};
 
 /// Represents the `<DeviceFunction>` element.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DeviceFunction {
-    #[serde(rename = "capabilities", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "capabilities",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub capabilities: Option<Capabilities>,
-    #[serde(rename = "picturesList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "picturesList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub pictures_list: Option<PicturesList>,
-    #[serde(rename = "dictionaryList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "dictionaryList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub dictionary_list: Option<DictionaryList>,
-    #[serde(rename = "connectorList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "connectorList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub connector_list: Option<ConnectorList>,
-    #[serde(rename = "firmwareList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "firmwareList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub firmware_list: Option<FirmwareList>,
-    #[serde(rename = "classificationList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "classificationList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub classification_list: Option<ClassificationList>,
 }
 
 /// Represents `<capabilities>`.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Capabilities {
-    #[serde(rename = "characteristicsList", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "characteristicsList",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub characteristics_list: Vec<CharacteristicsList>,
-    #[serde(rename = "standardComplianceList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "standardComplianceList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub standard_compliance_list: Option<StandardComplianceList>,
 }
 
@@ -40,7 +72,11 @@ pub struct Capabilities {
 pub struct CharacteristicsList {
     #[serde(rename = "category", default, skip_serializing_if = "Option::is_none")]
     pub category: Option<Category>,
-    #[serde(rename = "characteristic", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "characteristic",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub characteristic: Vec<Characteristic>,
 }
 
@@ -56,7 +92,11 @@ pub struct Category {
 pub struct Characteristic {
     #[serde(rename = "characteristicName")]
     pub characteristic_name: CharacteristicName,
-    #[serde(rename = "characteristicContent", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "characteristicContent",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub characteristic_content: Vec<CharacteristicContent>,
 }
 
@@ -77,7 +117,7 @@ pub struct CharacteristicContent {
     // Replaced with the `items` field directly.
     #[serde(rename = "$value", default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<LabelChoice>,
-    
+
     #[serde(rename = "@value", default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
 }
@@ -85,7 +125,11 @@ pub struct CharacteristicContent {
 /// Represents `<standardComplianceList>`.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct StandardComplianceList {
-    #[serde(rename = "compliantWith", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "compliantWith",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub compliant_with: Vec<CompliantWith>,
 }
 
@@ -114,7 +158,11 @@ pub struct Picture {
     pub labels: Glabels,
     #[serde(rename = "@URI")]
     pub uri: String,
-    #[serde(rename = "@pictureType", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@pictureType",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub picture_type: Option<String>,
     #[serde(rename = "@number", default, skip_serializing_if = "Option::is_none")]
     pub number: Option<String>,
@@ -159,16 +207,28 @@ pub struct Connector {
     pub labels: Glabels,
     #[serde(rename = "@id")]
     pub id: String,
-    #[serde(rename = "@connectorType", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@connectorType",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub connector_type: Option<String>,
-    #[serde(rename = "@interfaceIDRef", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@interfaceIDRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub interface_id_ref: Option<String>,
     #[serde(rename = "@posX", default, skip_serializing_if = "Option::is_none")]
     pub pos_x: Option<String>,
     #[serde(rename = "@posY", default, skip_serializing_if = "Option::is_none")]
     pub pos_y: Option<String>,
     // FIX: Restored the correct `positioning` field and removed the incorrect `position` field.
-    #[serde(rename = "@positioning", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@positioning",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub positioning: Option<String>,
 }
 
@@ -188,14 +248,22 @@ pub struct Firmware {
     pub uri: String,
     #[serde(rename = "@deviceRevisionNumber")]
     pub device_revision_number: String,
-    #[serde(rename = "@buildDate", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@buildDate",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub build_date: Option<String>,
 }
 
 /// Represents `<classificationList>`.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ClassificationList {
-    #[serde(rename = "classification", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "classification",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub classification: Vec<Classification>,
 }
 

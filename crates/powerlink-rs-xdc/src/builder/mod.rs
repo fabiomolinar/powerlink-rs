@@ -12,9 +12,9 @@ use crate::model;
 use crate::types; // Use the main types module
 use crate::types::XdcFile;
 use alloc::format;
+use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
-use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write;
 use serde::Serialize;
@@ -63,10 +63,14 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
     // 4. Serialize
     // Create a String buffer. String implements core::fmt::Write.
     let mut buffer = String::new();
-    
+
     // We must write the XML declaration manually
-    write!(&mut buffer, "{}", "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n")?;
-    
+    write!(
+        &mut buffer,
+        "{}",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n"
+    )?;
+
     let mut serializer = quick_xml::se::Serializer::new(&mut buffer);
     serializer.indent(' ', 2); // Optional: Prettify the output
 
@@ -108,58 +112,90 @@ fn build_device_profile(
         })
         .collect();
 
-    let device_identity = DeviceIdentity {
-        vendor_name: ReadOnlyString { value: identity.vendor_name.clone(), ..Default::default() },
-        vendor_id: Some(ReadOnlyString { value: format!("0x{:08X}", identity.vendor_id), ..Default::default() }),
-        product_name: ReadOnlyString { value: identity.product_name.clone(), ..Default::default() },
-        product_id: Some(ReadOnlyString { value: format!("{:X}", identity.product_id), ..Default::default() }),
-        version: versions,
-        vendor_text: identity.vendor_text.as_ref().map(|t| model::common::AttributedGlabels {
-            items: vec![model::common::LabelChoice::Label(model::common::Label { // FIX: Populate `items`
-                lang: "en".to_string(),
+    let device_identity =
+        DeviceIdentity {
+            vendor_name: ReadOnlyString {
+                value: identity.vendor_name.clone(),
+                ..Default::default()
+            },
+            vendor_id: Some(ReadOnlyString {
+                value: format!("0x{:08X}", identity.vendor_id),
+                ..Default::default()
+            }),
+            product_name: ReadOnlyString {
+                value: identity.product_name.clone(),
+                ..Default::default()
+            },
+            product_id: Some(ReadOnlyString {
+                value: format!("{:X}", identity.product_id),
+                ..Default::default()
+            }),
+            version: versions,
+            vendor_text: identity
+                .vendor_text
+                .as_ref()
+                .map(|t| model::common::AttributedGlabels {
+                    items: vec![model::common::LabelChoice::Label(model::common::Label {
+                        // FIX: Populate `items`
+                        lang: "en".to_string(),
+                        value: t.clone(),
+                    })],
+                    ..Default::default()
+                }),
+            device_family: identity.device_family.as_ref().map(|t| {
+                model::common::AttributedGlabels {
+                    items: vec![model::common::LabelChoice::Label(model::common::Label {
+                        // FIX: Populate `items`
+                        lang: "en".to_string(),
+                        value: t.clone(),
+                    })],
+                    ..Default::default()
+                }
+            }),
+            product_family: identity.product_family.as_ref().map(|t| ReadOnlyString {
                 value: t.clone(),
-            })],
-            ..Default::default()
-        }),
-        device_family: identity.device_family.as_ref().map(|t| model::common::AttributedGlabels {
-            items: vec![model::common::LabelChoice::Label(model::common::Label { // FIX: Populate `items`
-                lang: "en".to_string(),
-                value: t.clone(),
-            })],
-            ..Default::default()
-        }),
-        product_family: identity.product_family.as_ref().map(|t| ReadOnlyString {
-            value: t.clone(),
-            ..Default::default()
-        }),
-        product_text: identity.product_text.as_ref().map(|t| model::common::AttributedGlabels {
-            items: vec![model::common::LabelChoice::Label(model::common::Label { // FIX: Populate `items`
-                lang: "en".to_string(),
-                value: t.clone(),
-            })],
-            ..Default::default()
-        }),
-        order_number: identity.order_number.iter().map(|o| ReadOnlyString {
-            value: o.clone(),
-            ..Default::default()
-        }).collect(),
-        build_date: identity.build_date.clone(),
-        specification_revision: identity.specification_revision.as_ref().map(|sr| ReadOnlyString {
-            value: sr.clone(),
-            ..Default::default()
-        }),
-        instance_name: identity.instance_name.as_ref().map(|i| model::common::InstanceName {
-            value: i.clone(),
-            ..Default::default()
-        }),
-    };
+                ..Default::default()
+            }),
+            product_text: identity.product_text.as_ref().map(|t| {
+                model::common::AttributedGlabels {
+                    items: vec![model::common::LabelChoice::Label(model::common::Label {
+                        // FIX: Populate `items`
+                        lang: "en".to_string(),
+                        value: t.clone(),
+                    })],
+                    ..Default::default()
+                }
+            }),
+            order_number: identity
+                .order_number
+                .iter()
+                .map(|o| ReadOnlyString {
+                    value: o.clone(),
+                    ..Default::default()
+                })
+                .collect(),
+            build_date: identity.build_date.clone(),
+            specification_revision: identity.specification_revision.as_ref().map(|sr| {
+                ReadOnlyString {
+                    value: sr.clone(),
+                    ..Default::default()
+                }
+            }),
+            instance_name: identity
+                .instance_name
+                .as_ref()
+                .map(|i| model::common::InstanceName {
+                    value: i.clone(),
+                    ..Default::default()
+                }),
+        };
 
     // Call builders for device_manager and application_process
     let model_device_function = device_function::build_model_device_function(device_function);
     let model_device_manager = device_manager.map(device_manager::build_model_device_manager);
     let model_application_process =
         application_process.map(app_process::build_model_application_process);
-    
+
     model::Iso15745Profile {
         profile_header: model_header,
         profile_body: model::ProfileBody {
@@ -209,17 +245,21 @@ fn build_comm_profile(
                     low_limit: sub_obj.low_limit.clone(), // Pass through
                     high_limit: sub_obj.high_limit.clone(), // Pass through
                     access_type: sub_obj.access_type.map(map_access_type_to_model), // Map back
-                    default_value: None, // We only serialize actualValue for XDC
+                    default_value: None,                  // We only serialize actualValue for XDC
                     denotation: None,
                     pdo_mapping: sub_obj.pdo_mapping.map(map_pdo_mapping_to_model), // Map back
-                    obj_flags: sub_obj.obj_flags.clone(), // Pass through
+                    obj_flags: sub_obj.obj_flags.clone(),                           // Pass through
                     unique_id_ref: None, // Not supported in builder yet
                 })
             })
             .collect::<Result<Vec<_>, XdcError>>()?;
-        
+
         // Handle the value for VAR objects (value is on the object itself)
-        let object_actual_value = obj.data.as_ref().map(|d| format_hex_string(d)).transpose()?;
+        let object_actual_value = obj
+            .data
+            .as_ref()
+            .map(|d| format_hex_string(d))
+            .transpose()?;
 
         let model_object = Object {
             index: format_hex_u16(obj.index),
@@ -228,14 +268,14 @@ fn build_comm_profile(
             actual_value: object_actual_value,
             sub_object: model_sub_objects,
             // Fill in required fields from model
-            data_type: obj.data_type.clone(), // Pass through
-            low_limit: obj.low_limit.clone(), // Pass through
+            data_type: obj.data_type.clone(),   // Pass through
+            low_limit: obj.low_limit.clone(),   // Pass through
             high_limit: obj.high_limit.clone(), // Pass through
             access_type: obj.access_type.map(map_access_type_to_model), // Map back
-            default_value: None, // We only serialize actualValue for XDC
+            default_value: None,                // We only serialize actualValue for XDC
             denotation: None,
             pdo_mapping: obj.pdo_mapping.map(map_pdo_mapping_to_model), // Map back
-            obj_flags: obj.obj_flags.clone(), // Pass through
+            obj_flags: obj.obj_flags.clone(),                           // Pass through
             unique_id_ref: None, // Not supported in builder yet
             range_selector: None,
         };
@@ -245,7 +285,7 @@ fn build_comm_profile(
     // Call builder for module_management_comm
     let model_module_mgmt_comm =
         module_management_comm.map(modular::build_model_module_management_comm);
-    
+
     let app_layers = model::app_layers::ApplicationLayers {
         object_list: ObjectList {
             object: model_objects,
@@ -253,10 +293,9 @@ fn build_comm_profile(
         data_type_list: None, // XDC files typically don't generate this
         module_management: model_module_mgmt_comm,
     };
-    
+
     // Call builder for network_management
-    let model_network_management =
-        network_management.map(net_mgmt::build_model_network_management);
+    let model_network_management = network_management.map(net_mgmt::build_model_network_management);
 
     Ok(model::Iso15745Profile {
         profile_header: model_header,
@@ -329,8 +368,8 @@ mod tests {
     use super::*;
     use crate::model::Iso15745ProfileContainer;
     use crate::types::{self, Object, ObjectDictionary, SubObject};
-    use alloc::vec;
-    use alloc::string::ToString; // Fix: Import ToString trait
+    use alloc::string::ToString;
+    use alloc::vec; // Fix: Import ToString trait
 
     /// Test for Task 10.2: Verifies serialization of a basic XdcFile.
     #[test]
@@ -356,41 +395,43 @@ mod tests {
                 ..Default::default()
             },
             object_dictionary: ObjectDictionary {
-                objects: vec![Object {
-                    index: 0x1000,
-                    name: "Device Type".to_string(),
-                    object_type: "7".to_string(),
-                    data_type: Some("0007".to_string()),
-                    access_type: Some(types::ParameterAccess::Constant),
-                    data: Some(vec![0x91, 0x01, 0x0F, 0x00]), // 0x000F0191_u32.to_le_bytes()
-                    ..Default::default()
-                },
-                Object {
-                    index: 0x1018,
-                    name: "Identity".to_string(),
-                    object_type: "9".to_string(),
-                    sub_objects: vec![
-                        SubObject {
-                            sub_index: 0,
-                            name: "Count".to_string(),
-                            object_type: "7".to_string(),
-                            data_type: Some("0005".to_string()),
-                            access_type: Some(types::ParameterAccess::Constant),
-                            data: Some(vec![4]),
-                            ..Default::default()
-                        },
-                        SubObject {
-                            sub_index: 1,
-                            name: "VendorID".to_string(),
-                            object_type: "7".to_string(),
-                            data_type: Some("0007".to_string()),
-                            access_type: Some(types::ParameterAccess::Constant),
-                            data: Some(vec![0x78, 0x56, 0x34, 0x12]), // 0x12345678_u32.to_le_bytes()
-                            ..Default::default()
-                        },
-                    ],
-                    ..Default::default()
-                }],
+                objects: vec![
+                    Object {
+                        index: 0x1000,
+                        name: "Device Type".to_string(),
+                        object_type: "7".to_string(),
+                        data_type: Some("0007".to_string()),
+                        access_type: Some(types::ParameterAccess::Constant),
+                        data: Some(vec![0x91, 0x01, 0x0F, 0x00]), // 0x000F0191_u32.to_le_bytes()
+                        ..Default::default()
+                    },
+                    Object {
+                        index: 0x1018,
+                        name: "Identity".to_string(),
+                        object_type: "9".to_string(),
+                        sub_objects: vec![
+                            SubObject {
+                                sub_index: 0,
+                                name: "Count".to_string(),
+                                object_type: "7".to_string(),
+                                data_type: Some("0005".to_string()),
+                                access_type: Some(types::ParameterAccess::Constant),
+                                data: Some(vec![4]),
+                                ..Default::default()
+                            },
+                            SubObject {
+                                sub_index: 1,
+                                name: "VendorID".to_string(),
+                                object_type: "7".to_string(),
+                                data_type: Some("0007".to_string()),
+                                access_type: Some(types::ParameterAccess::Constant),
+                                data: Some(vec![0x78, 0x56, 0x34, 0x12]), // 0x12345678_u32.to_le_bytes()
+                                ..Default::default()
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                ],
             },
             ..Default::default()
         };
@@ -399,16 +440,16 @@ mod tests {
         let xml_string = save_xdc_to_string(&xdc_file).unwrap();
 
         // 3. Parse the string back using the internal models
-        let container: Iso15745ProfileContainer = quick_xml::de::from_str(&xml_string)
-            .expect("Serialized XML should be valid");
+        let container: Iso15745ProfileContainer =
+            quick_xml::de::from_str(&xml_string).expect("Serialized XML should be valid");
 
         // 4. Assert key fields
         assert_eq!(container.profile.len(), 2);
-        
+
         // Check Device Profile
         let dev_profile = container.profile.get(0).unwrap();
         assert_eq!(dev_profile.profile_header.profile_name, "My Test Device");
-        
+
         let identity = dev_profile.profile_body.device_identity.as_ref().unwrap();
         assert_eq!(identity.vendor_name.value, "MyVendor");
         assert_eq!(identity.vendor_id.as_ref().unwrap().value, "0x12345678");
@@ -419,23 +460,33 @@ mod tests {
         // Check Communication Profile
         let comm_profile = container.profile.get(1).unwrap();
         assert_eq!(comm_profile.profile_header.profile_name, "My Test Device");
-        
-        let app_layers = comm_profile.profile_body.application_layers.as_ref().unwrap();
+
+        let app_layers = comm_profile
+            .profile_body
+            .application_layers
+            .as_ref()
+            .unwrap();
         let obj_list = &app_layers.object_list.object;
         assert_eq!(obj_list.len(), 2);
-        
+
         // Check Object 0x1000
         assert_eq!(obj_list[0].index, "1000");
         assert_eq!(obj_list[0].name, "Device Type");
         assert_eq!(obj_list[0].actual_value, Some("0x91010F00".to_string()));
-        assert_eq!(obj_list[0].access_type, Some(model::app_layers::ObjectAccessType::Constant));
+        assert_eq!(
+            obj_list[0].access_type,
+            Some(model::app_layers::ObjectAccessType::Constant)
+        );
 
         // Check Object 0x1018
         assert_eq!(obj_list[1].index, "1018");
         assert_eq!(obj_list[1].sub_object.len(), 2);
         assert_eq!(obj_list[1].sub_object[1].name, "VendorID");
         assert_eq!(obj_list[1].sub_object[1].sub_index, "01");
-        assert_eq!(obj_list[1].sub_object[1].actual_value, Some("0x78563412".to_string()));
+        assert_eq!(
+            obj_list[1].sub_object[1].actual_value,
+            Some("0x78563412".to_string())
+        );
     }
 
     #[test]
@@ -443,15 +494,36 @@ mod tests {
         use crate::model::app_layers::ObjectAccessType as ModelAccess;
         use crate::types::ParameterAccess as PublicAccess;
 
-        assert_eq!(map_access_type_to_model(PublicAccess::ReadOnly), ModelAccess::ReadOnly);
-        assert_eq!(map_access_type_to_model(PublicAccess::WriteOnly), ModelAccess::WriteOnly);
-        assert_eq!(map_access_type_to_model(PublicAccess::ReadWrite), ModelAccess::ReadWrite);
-        assert_eq!(map_access_type_to_model(PublicAccess::Constant), ModelAccess::Constant);
-        
+        assert_eq!(
+            map_access_type_to_model(PublicAccess::ReadOnly),
+            ModelAccess::ReadOnly
+        );
+        assert_eq!(
+            map_access_type_to_model(PublicAccess::WriteOnly),
+            ModelAccess::WriteOnly
+        );
+        assert_eq!(
+            map_access_type_to_model(PublicAccess::ReadWrite),
+            ModelAccess::ReadWrite
+        );
+        assert_eq!(
+            map_access_type_to_model(PublicAccess::Constant),
+            ModelAccess::Constant
+        );
+
         // Test the non-obvious mappings
-        assert_eq!(map_access_type_to_model(PublicAccess::ReadWriteInput), ModelAccess::ReadWrite);
-        assert_eq!(map_access_type_to_model(PublicAccess::ReadWriteOutput), ModelAccess::ReadWrite);
-        assert_eq!(map_access_type_to_model(PublicAccess::NoAccess), ModelAccess::ReadOnly);
+        assert_eq!(
+            map_access_type_to_model(PublicAccess::ReadWriteInput),
+            ModelAccess::ReadWrite
+        );
+        assert_eq!(
+            map_access_type_to_model(PublicAccess::ReadWriteOutput),
+            ModelAccess::ReadWrite
+        );
+        assert_eq!(
+            map_access_type_to_model(PublicAccess::NoAccess),
+            ModelAccess::ReadOnly
+        );
     }
 
     #[test]
@@ -460,8 +532,14 @@ mod tests {
         use crate::types::ObjectPdoMapping as PublicPdo;
 
         assert_eq!(map_pdo_mapping_to_model(PublicPdo::No), ModelPdo::No);
-        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Default), ModelPdo::Default);
-        assert_eq!(map_pdo_mapping_to_model(PublicPdo::Optional), ModelPdo::Optional);
+        assert_eq!(
+            map_pdo_mapping_to_model(PublicPdo::Default),
+            ModelPdo::Default
+        );
+        assert_eq!(
+            map_pdo_mapping_to_model(PublicPdo::Optional),
+            ModelPdo::Optional
+        );
         assert_eq!(map_pdo_mapping_to_model(PublicPdo::Tpdo), ModelPdo::Tpdo);
         assert_eq!(map_pdo_mapping_to_model(PublicPdo::Rpdo), ModelPdo::Rpdo);
     }

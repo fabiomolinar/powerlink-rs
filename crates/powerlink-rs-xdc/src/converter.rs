@@ -284,7 +284,6 @@ fn map_support_to_category(support: Option<types::ParameterSupport>) -> Category
 
 /// Parses a limit string (hex or decimal) into an `ObjectValue` based on type.
 fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
-
     // Helper to parse, supporting "0x" hex or decimal
     fn parse_num<T: FromStrRadix + core::str::FromStr>(s: &str) -> Option<T> {
         if let Some(hex_str) = s.strip_prefix("0x") {

@@ -4,12 +4,12 @@
 
 use crate::error::XdcError;
 use crate::model;
+use crate::model::device_manager as model_dm;
+use crate::model::modular as model_mod;
 use crate::resolver::{modular, utils}; // Import the utils module
 use crate::types;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use crate::model::device_manager as model_dm;
-use crate::model::modular as model_mod;
 
 // --- Sub-Resolvers ---
 
@@ -55,7 +55,9 @@ fn resolve_led(model: &model_dm::LED) -> Result<types::LED, XdcError> {
 }
 
 /// Resolves a `<combinedState>`.
-fn resolve_combined_state(model: &model_dm::CombinedState) -> Result<types::CombinedState, XdcError> {
+fn resolve_combined_state(
+    model: &model_dm::CombinedState,
+) -> Result<types::CombinedState, XdcError> {
     Ok(types::CombinedState {
         led_state_refs: model
             .led_state_ref
@@ -71,19 +73,16 @@ fn resolve_combined_state(model: &model_dm::CombinedState) -> Result<types::Comb
 fn resolve_indicator_list(
     model: &model_dm::IndicatorList,
 ) -> Result<types::IndicatorList, XdcError> {
-    let leds = model
-        .led_list
-        .as_ref()
-        .map_or(Ok(Vec::new()), |list| {
-            list.led.iter().map(resolve_led).collect()
-        })?;
+    let leds = model.led_list.as_ref().map_or(Ok(Vec::new()), |list| {
+        list.led.iter().map(resolve_led).collect()
+    })?;
 
-    let combined_states = model
-        .led_list
-        .as_ref()
-        .map_or(Ok(Vec::new()), |list| {
-            list.combined_state.iter().map(resolve_combined_state).collect()
-        })?;
+    let combined_states = model.led_list.as_ref().map_or(Ok(Vec::new()), |list| {
+        list.combined_state
+            .iter()
+            .map(resolve_combined_state)
+            .collect()
+    })?;
 
     Ok(types::IndicatorList {
         leds,

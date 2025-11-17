@@ -4,9 +4,13 @@
 
 #![allow(clippy::pedantic)] // XML schema names are not idiomatic Rust
 
+use crate::model::common::{Description, Glabels, Label, LabelChoice};
 use crate::{model, types};
-use alloc::{string::{String, ToString}, vec, vec::Vec};
-use crate::model::common::{Glabels, Label, LabelChoice, Description};
+use alloc::{
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 
 /// Helper to create a `Glabels` struct from optional label and description strings.
 fn build_glabels(label: Option<&String>, description: Option<&String>) -> Glabels {
@@ -51,9 +55,12 @@ fn build_model_characteristics_list(
     public: &types::CharacteristicList,
 ) -> model::device_function::CharacteristicsList {
     model::device_function::CharacteristicsList {
-        category: public.category.as_ref().map(|c| model::device_function::Category {
-            labels: build_glabels(Some(c), None),
-        }),
+        category: public
+            .category
+            .as_ref()
+            .map(|c| model::device_function::Category {
+                labels: build_glabels(Some(c), None),
+            }),
         characteristic: public
             .characteristics
             .iter()
@@ -74,9 +81,7 @@ fn build_model_compliant_with(
 }
 
 /// Converts a public `types::Capabilities` into a `model::device_function::Capabilities`.
-fn build_model_capabilities(
-    public: &types::Capabilities,
-) -> model::device_function::Capabilities {
+fn build_model_capabilities(public: &types::Capabilities) -> model::device_function::Capabilities {
     model::device_function::Capabilities {
         characteristics_list: public
             .characteristics
@@ -158,10 +163,18 @@ pub(super) fn build_model_device_function(
                 picture: public.pictures.iter().map(build_model_picture).collect(),
             }),
             dictionary_list: Some(model::device_function::DictionaryList {
-                dictionary: public.dictionaries.iter().map(build_model_dictionary).collect(),
+                dictionary: public
+                    .dictionaries
+                    .iter()
+                    .map(build_model_dictionary)
+                    .collect(),
             }),
             connector_list: Some(model::device_function::ConnectorList {
-                connector: public.connectors.iter().map(build_model_connector).collect(),
+                connector: public
+                    .connectors
+                    .iter()
+                    .map(build_model_connector)
+                    .collect(),
             }),
             firmware_list: Some(model::device_function::FirmwareList {
                 firmware: public
@@ -201,7 +214,9 @@ mod tests {
 
         assert_eq!(glabels1.items.len(), 2);
         assert!(matches!(&glabels1.items[0], LabelChoice::Label(l) if l.value == "My Label"));
-        assert!(matches!(&glabels1.items[1], LabelChoice::Description(d) if d.value == "My Description"));
+        assert!(
+            matches!(&glabels1.items[1], LabelChoice::Description(d) if d.value == "My Description")
+        );
 
         // 2. Test with only label
         let glabels2 = build_glabels(label.as_ref(), None);
@@ -211,7 +226,9 @@ mod tests {
         // 3. Test with only description
         let glabels3 = build_glabels(None, desc.as_ref());
         assert_eq!(glabels3.items.len(), 1);
-        assert!(matches!(&glabels3.items[0], LabelChoice::Description(d) if d.value == "My Description"));
+        assert!(
+            matches!(&glabels3.items[0], LabelChoice::Description(d) if d.value == "My Description")
+        );
 
         // 4. Test with None
         let glabels4 = build_glabels(None, None);
@@ -421,7 +438,12 @@ mod tests {
             "1"
         );
         assert_eq!(
-            model_df.classification_list.as_ref().unwrap().classification[0].value,
+            model_df
+                .classification_list
+                .as_ref()
+                .unwrap()
+                .classification[0]
+                .value,
             "IO"
         );
     }
