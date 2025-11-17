@@ -17,6 +17,8 @@ pub mod common;
 pub mod header;
 pub mod identity;
 pub mod net_mgmt;
+pub mod device_manager; // Added for DeviceManager
+pub mod modular;        // Added for modular device support
 
 // --- Public Re-exports from Sub-modules ---
 // We only re-export the top-level container and profile structs.
@@ -27,6 +29,7 @@ pub use identity::DeviceIdentity;
 pub use app_layers::ApplicationLayers;
 pub use app_process::ApplicationProcess;
 pub use net_mgmt::NetworkManagement;
+pub use device_manager::DeviceManager; // Added re-export
 
 
 /// The root element of an XDC/XDD file.
@@ -82,6 +85,11 @@ pub struct ProfileBody {
     /// This field is only present in the Device Profile.
     #[serde(rename = "DeviceIdentity", default, skip_serializing_if = "Option::is_none")]
     pub device_identity: Option<DeviceIdentity>,
+
+    /// This field is only present in the Device Profile.
+    /// (from `ProfileBody_Device_Powerlink.xsd`)
+    #[serde(rename = "DeviceManager", default, skip_serializing_if = "Option::is_none")]
+    pub device_manager: Option<DeviceManager>,
 
     /// This field is only present in the Device Profile.
     #[serde(rename = "ApplicationProcess", default, skip_serializing_if = "Option::is_none")]

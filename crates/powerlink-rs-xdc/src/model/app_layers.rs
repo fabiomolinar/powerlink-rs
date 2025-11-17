@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use alloc::vec::Vec;
 use alloc::string::String;
+use super::modular::ModuleManagementComm; // Added import
 
 /// Contains the ObjectList and DataTypeList.
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -17,6 +18,11 @@ pub struct ApplicationLayers {
 
     #[serde(rename = "ObjectList")]
     pub object_list: ObjectList,
+
+    /// This field is only present in Modular Head communication profiles.
+    /// (from `ProfileBody_CommunicationNetwork_Powerlink_Modular_Head.xsd`)
+    #[serde(rename = "moduleManagement", default, skip_serializing_if = "Option::is_none")]
+    pub module_management: Option<ModuleManagementComm>,
 }
 
 /// A list of all Object Dictionary entries.
@@ -115,6 +121,11 @@ pub struct Object {
     pub unique_id_ref: Option<String>,
     
     // --- End of fields from ag_Powerlink_Object ---
+
+    /// This attribute is used by modular devices to reference an index range.
+    /// (from `t_Object_Extension_Head` and `t_Object_Extension`)
+    #[serde(rename = "@rangeSelector", default, skip_serializing_if = "Option::is_none")]
+    pub range_selector: Option<String>,
 
     /// A list of SubObjects (e.g., <SubObject subIndex="01"...>).
     #[serde(rename = "SubObject", default)]

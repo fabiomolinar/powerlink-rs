@@ -19,6 +19,9 @@ pub struct XdcFile {
     /// Information from the `<DeviceIdentity>` block.
     pub identity: Identity,
     
+    /// Information from the `<DeviceManager>` block.
+    pub device_manager: Option<DeviceManager>,
+
     /// Information from the `<NetworkManagement>` block.
     /// This is `None` if the file is a standard Device Profile (XDD).
     pub network_management: Option<NetworkManagement>,
@@ -94,6 +97,153 @@ pub struct Version {
     pub version_type: String,
     /// `@value`
     pub value: String,
+}
+
+// --- Device Manager (New) ---
+
+/// Represents the `<DeviceManager>` block.
+#[derive(Debug, Default)]
+pub struct DeviceManager {
+    /// Contains information about device indicators, primarily LEDs.
+    pub indicator_list: Option<IndicatorList>,
+    /// Contains information about modular device interfaces (if applicable).
+    pub module_management: Option<ModuleManagementDevice>,
+}
+
+/// Represents an `<indicatorList>` containing an `<LEDList>`.
+#[derive(Debug, Default)]
+pub struct IndicatorList {
+    /// A list of all LEDs defined for the device.
+    pub leds: Vec<LED>,
+    /// A list of states defined by a combination of multiple LEDs.
+    pub combined_states: Vec<CombinedState>,
+}
+
+/// Represents a single `<LED>` indicator.
+#[derive(Debug, Default)]
+pub struct LED {
+    /// Primary label for the LED (e.g., "STATUS").
+    pub label: Option<String>,
+    /// Description of the LED's purpose.
+    pub description: Option<String>,
+    /// Whether the LED is "monocolor" or "bicolor".
+    pub colors: String, // Mapped from `LEDcolors` enum
+    /// The type of functionality the LED indicates ("IO", "device", "communication").
+    pub led_type: Option<String>, // Mapped from `LEDtype` enum
+    /// A list of all defined states for this LED.
+    pub states: Vec<LEDstate>,
+}
+
+/// Represents a single `<LEDstate>` for a specific `<LED>`.
+#[derive(Debug, Default)]
+pub struct LEDstate {
+    /// The unique ID used to reference this state (e.g., in `<combinedState>`).
+    pub unique_id: String,
+    /// The state being represented ("on", "off", "flashing").
+    pub state: String, // Mapped from `LEDstateEnum`
+    /// The color of the LED in this state ("green", "amber", "red").
+    pub color: String, // Mapped from `LEDcolor`
+    /// Primary label for this state.
+    pub label: Option<String>,
+    /// Description of what this state means.
+    pub description: Option<String>,
+}
+
+/// Represents a `<combinedState>` that references multiple `<LEDstate>`s.
+#[derive(Debug, Default)]
+pub struct CombinedState {
+    /// Primary label for this combined state.
+    pub label: Option<String>,
+    /// Description of what this combined state means.
+    pub description: Option<String>,
+    /// A list of `uniqueID`s referencing the `<LEDstate>`s that make up this state.
+    pub led_state_refs: Vec<String>,
+}
+
+// --- Modular Device Management (New) ---
+
+/// Represents the `<moduleManagement>` block from the *Device* profile.
+#[derive(Debug, Default)]
+pub struct ModuleManagementDevice {
+    /// A list of interfaces (e.g., bus controllers) on the head module.
+    pub interfaces: Vec<InterfaceDevice>,
+    /// Information about this device, if it is *also* a module (child).
+    pub module_interface: Option<ModuleInterface>,
+}
+
+/// Represents an `<interface>` on a modular head (Device profile).
+#[derive(Debug, Default)]
+pub struct InterfaceDevice {
+    /// The unique ID for this interface, referenced by the Communication profile.
+    pub unique_id: String,
+    /// The type of interface (e.g., "X2X").
+    pub interface_type: String,
+    /// The maximum number of child modules this interface supports.
+    pub max_modules: u32,
+    /// Defines how child modules are addressed (`manual` or `position`).
+    pub module_addressing: String, // Mapped from `ModuleAddressingHead`
+    /// A list of XDC/XDD files for modules that can be connected.
+    pub file_list: Vec<String>, // List of URIs
+    /// A list of modules that are pre-configured in this XDC.
+    pub connected_modules: Vec<ConnectedModule>,
+}
+
+/// Represents a `<connectedModule>` entry.
+#[derive(Debug, Default)]
+pub struct ConnectedModule {
+    /// The `@childIDRef` linking to a `childID` from a module's XDC.
+    pub child_id_ref: String,
+    /// The physical position (slot) of the module, 1-based.
+    pub position: u32,
+    /// The bus address, if different from the position.
+    pub address: Option<u32>,
+}
+
+/// Represents a `<moduleInterface>` (a child module's properties).
+#[derive(Debug, Default)]
+pub struct ModuleInterface {
+    /// The unique ID of this child module.
+    pub child_id: String,
+    /// The type of interface this module connects to (e.g., "X2X").
+    pub interface_type: String,
+    /// The addressing mode this module supports (`manual`, `position`, `next`).
+    pub module_addressing: String, // Mapped from `ModuleAddressingChild`
+}
+
+/// Represents the `<moduleManagement>` block from the *Communication* profile.
+#[derive(Debug, Default)]
+pub struct ModuleManagementComm {
+    /// A list of interfaces and their OD range definitions.
+    pub interfaces: Vec<InterfaceComm>,
+}
+
+/// Represents an `<interface>` in the Communication profile.
+#[derive(Debug, Default)]
+pub struct InterfaceComm {
+    /// The `uniqueID` of the corresponding interface in the Device profile.
+    pub unique_id_ref: String,
+    /// The list of OD index ranges assigned to this interface.
+    pub ranges: Vec<Range>,
+}
+
+/// Represents a `<range>` of OD indices for a modular interface.
+#[derive(Debug, Default)]
+pub struct Range {
+    pub name: String,
+    /// The starting index (e.g., 0x3000).
+    pub base_index: u16,
+    /// The maximum index (e.g., 0x3FFF).
+    pub max_index: Option<u16>,
+    /// The maximum sub-index (e.g., 0xFF).
+    pub max_sub_index: u8,
+    /// How to assign new objects (`index` or `subindex`).
+    pub sort_mode: String, // Mapped from `SortMode`
+    /// How to calculate the next index/sub-index (`continuous` or `address`).
+    pub sort_number: String, // Mapped from `AddressingAttribute`
+    /// The step size between new indices.
+    pub sort_step: Option<u32>,
+    /// The default PDO mapping for objects created in this range.
+    pub pdo_mapping: Option<ObjectPdoMapping>,
 }
 
 // --- Network Management ---

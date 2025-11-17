@@ -21,6 +21,8 @@ mod identity;
 mod net_mgmt;
 mod od;
 mod utils;
+pub mod device_manager; // Added new module
+pub mod modular;        // Added new module
 
 /// Defines which value to prioritize when resolving the Object Dictionary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +131,12 @@ pub(crate) fn resolve_data(
         .transpose()?
         .unwrap_or_default();
 
+    // Resolve the DeviceManager (New)
+    let device_manager = device_profile_body
+        .and_then(|b| b.device_manager.as_ref())
+        .map(device_manager::resolve_device_manager)
+        .transpose()?;
+
     let network_management = comm_profile_body
         .network_management
         .as_ref()
@@ -147,6 +155,7 @@ pub(crate) fn resolve_data(
     Ok(types::XdcFile {
         header,
         identity,
+        device_manager, // Add the resolved data
         network_management,
         application_process, // Add the resolved data
         object_dictionary,
