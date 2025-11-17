@@ -5,41 +5,73 @@
 
 #![allow(clippy::pedantic)] // XML schema names are not idiomatic Rust
 
-use serde::{Deserialize, Serialize};
-use alloc::vec::Vec;
-use alloc::string::String;
 use super::common::Glabels;
+use alloc::string::String;
+use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 
 /// Represents the `<DeviceFunction>` element (EPSG DS 311, 7.4.6).
 /// This element is mandatory (minOccurs=1) and can be unbounded.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DeviceFunction {
-    #[serde(rename = "capabilities", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "capabilities",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub capabilities: Option<Capabilities>,
-    
-    #[serde(rename = "picturesList", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "picturesList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub pictures_list: Option<PicturesList>,
-    
-    #[serde(rename = "dictionaryList", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "dictionaryList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub dictionary_list: Option<DictionaryList>,
-    
-    #[serde(rename = "connectorList", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "connectorList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub connector_list: Option<ConnectorList>,
-    
-    #[serde(rename = "firmwareList", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "firmwareList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub firmware_list: Option<FirmwareList>,
-    
-    #[serde(rename = "classificationList", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "classificationList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub classification_list: Option<ClassificationList>,
 }
 
 /// Represents `<capabilities>` (EPSG DS 311, 7.4.6.2).
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Capabilities {
-    #[serde(rename = "characteristicsList", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "characteristicsList",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub characteristics_list: Vec<CharacteristicsList>,
-    
-    #[serde(rename = "standardComplianceList", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "standardComplianceList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub standard_compliance_list: Option<StandardComplianceList>,
 }
 
@@ -48,8 +80,12 @@ pub struct Capabilities {
 pub struct CharacteristicsList {
     #[serde(rename = "category", default, skip_serializing_if = "Option::is_none")]
     pub category: Option<Category>,
-    
-    #[serde(rename = "characteristic", default, skip_serializing_if = "Vec::is_empty")]
+
+    #[serde(
+        rename = "characteristic",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub characteristic: Vec<Characteristic>,
 }
 
@@ -65,8 +101,12 @@ pub struct Category {
 pub struct Characteristic {
     #[serde(rename = "characteristicName")]
     pub characteristic_name: CharacteristicName,
-    
-    #[serde(rename = "characteristicContent", default, skip_serializing_if = "Vec::is_empty")]
+
+    #[serde(
+        rename = "characteristicContent",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub characteristic_content: Vec<CharacteristicContent>,
 }
 
@@ -87,7 +127,11 @@ pub struct CharacteristicContent {
 /// Represents `<standardComplianceList>` (EPSG DS 311, 7.4.6.2.2.5).
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct StandardComplianceList {
-    #[serde(rename = "compliantWith", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "compliantWith",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub compliant_with: Vec<CompliantWith>,
 }
 
@@ -96,10 +140,10 @@ pub struct StandardComplianceList {
 pub struct CompliantWith {
     #[serde(flatten)]
     pub labels: Glabels,
-    
+
     #[serde(rename = "@name")]
     pub name: String,
-    
+
     #[serde(rename = "@range", default, skip_serializing_if = "Option::is_none")]
     pub range: Option<String>, // "international" (default) or "internal"
 }
@@ -116,13 +160,13 @@ pub struct PicturesList {
 pub struct Picture {
     #[serde(flatten)]
     pub labels: Glabels,
-    
+
     #[serde(rename = "@URI")]
     pub uri: String, // xsd:anyURI
-    
+
     #[serde(rename = "@type", default, skip_serializing_if = "Option::is_none")]
     pub picture_type: Option<String>, // "frontPicture", "icon", "additional", "none" (default)
-    
+
     #[serde(rename = "@number", default, skip_serializing_if = "Option::is_none")]
     pub number: Option<String>, // xsd:unsignedInt
 }
@@ -139,10 +183,10 @@ pub struct DictionaryList {
 pub struct Dictionary {
     #[serde(rename = "file")]
     pub file: DictionaryFile,
-    
+
     #[serde(rename = "@lang")]
     pub lang: String, // xsd:language
-    
+
     #[serde(rename = "@dictID")]
     pub dict_id: String, // xsd:token
 }
@@ -166,23 +210,35 @@ pub struct ConnectorList {
 pub struct Connector {
     #[serde(flatten)]
     pub labels: Glabels,
-    
+
     #[serde(rename = "@id")]
     pub id: String, // xsd:string
-    
+
     #[serde(rename = "@posX", default, skip_serializing_if = "Option::is_none")]
     pub pos_x: Option<String>, // xsd:nonNegativeInteger
-    
+
     #[serde(rename = "@posY", default, skip_serializing_if = "Option::is_none")]
     pub pos_y: Option<String>, // xsd:nonNegativeInteger
-    
-    #[serde(rename = "@connectorType", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "@connectorType",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub connector_type: Option<String>, // default "POWERLINK"
-    
-    #[serde(rename = "@interfaceIDRef", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "@interfaceIDRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub interface_id_ref: Option<String>,
-    
-    #[serde(rename = "@positioning", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "@positioning",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub positioning: Option<String>, // "remote" (default), "localAbove", etc.
 }
 
@@ -198,21 +254,29 @@ pub struct FirmwareList {
 pub struct Firmware {
     #[serde(flatten)]
     pub labels: Glabels,
-    
+
     #[serde(rename = "@URI")]
     pub uri: String, // xsd:anyURI
-    
+
     #[serde(rename = "@deviceRevisionNumber")]
     pub device_revision_number: String, // xsd:nonNegativeInteger
-    
-    #[serde(rename = "@buildDate", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "@buildDate",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub build_date: Option<String>, // xsd:dateTime
 }
 
 /// Represents `<classificationList>` (EPSG DS 311, 7.4.6.7).
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ClassificationList {
-    #[serde(rename = "classification", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "classification",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub classification: Vec<Classification>,
 }
 

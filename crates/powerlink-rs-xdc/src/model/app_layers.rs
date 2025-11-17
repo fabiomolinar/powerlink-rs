@@ -3,17 +3,21 @@
 //! Contains model structs related to `<ApplicationLayers>`.
 //! (Schema: `ProfileBody_CommunicationNetwork_Powerlink.xsd`)
 
-use serde::{Deserialize, Serialize};
-use alloc::vec::Vec;
+use super::modular::ModuleManagementComm;
 use alloc::string::String;
-use super::modular::ModuleManagementComm; // Added import
+use alloc::vec::Vec;
+use serde::{Deserialize, Serialize}; // Added import
 
 /// Contains the ObjectList and DataTypeList.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ApplicationLayers {
     /// This optional list defines the mapping from hex ID to type name.
     /// (EPSG 311, 7.5.4.3)
-    #[serde(rename = "DataTypeList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "DataTypeList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub data_type_list: Option<DataTypeList>,
 
     #[serde(rename = "ObjectList")]
@@ -21,7 +25,11 @@ pub struct ApplicationLayers {
 
     /// This field is only present in Modular Head communication profiles.
     /// (from `ProfileBody_CommunicationNetwork_Powerlink_Modular_Head.xsd`)
-    #[serde(rename = "moduleManagement", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "moduleManagement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub module_management: Option<ModuleManagementComm>,
 }
 
@@ -69,9 +77,8 @@ pub struct Object {
     /// The OD index as a hex string (e.g., "1F22").
     #[serde(rename = "@index")]
     pub index: String,
-    
+
     // --- Fields from ag_Powerlink_Object ---
-    
     /// The name of the object.
     #[serde(rename = "@name")]
     pub name: String,
@@ -89,27 +96,51 @@ pub struct Object {
     pub low_limit: Option<String>,
 
     /// The upper limit of the object's value.
-    #[serde(rename = "@highLimit", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@highLimit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub high_limit: Option<String>,
 
     /// The access type (e.g., "ro", "rw").
-    #[serde(rename = "@accessType", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@accessType",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub access_type: Option<ObjectAccessType>,
 
     /// The default value of the object.
-    #[serde(rename = "@defaultValue", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@defaultValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub default_value: Option<String>,
 
     /// The actual value of the object (used in XDC).
-    #[serde(rename = "@actualValue", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@actualValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub actual_value: Option<String>,
 
     /// A denotation for the object.
-    #[serde(rename = "@denotation", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@denotation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub denotation: Option<String>,
 
     /// The PDO mapping capability of the object.
-    #[serde(rename = "@PDOmapping", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@PDOmapping",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub pdo_mapping: Option<ObjectPdoMapping>,
 
     /// Object flags.
@@ -117,14 +148,21 @@ pub struct Object {
     pub obj_flags: Option<String>,
 
     /// This attribute references a Parameter's uniqueID in the ApplicationProcess.
-    #[serde(rename = "@uniqueIDRef", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@uniqueIDRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub unique_id_ref: Option<String>,
-    
-    // --- End of fields from ag_Powerlink_Object ---
 
+    // --- End of fields from ag_Powerlink_Object ---
     /// This attribute is used by modular devices to reference an index range.
     /// (from `t_Object_Extension_Head` and `t_Object_Extension`)
-    #[serde(rename = "@rangeSelector", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@rangeSelector",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub range_selector: Option<String>,
 
     /// A list of SubObjects (e.g., <SubObject subIndex="01"...>).
@@ -139,9 +177,8 @@ pub struct SubObject {
     /// The OD sub-index as a hex string (e.g., "01").
     #[serde(rename = "@subIndex")]
     pub sub_index: String,
-    
-    // --- Fields from ag_Powerlink_Object ---
 
+    // --- Fields from ag_Powerlink_Object ---
     /// The name of the sub-object.
     #[serde(rename = "@name")]
     pub name: String,
@@ -159,27 +196,51 @@ pub struct SubObject {
     pub low_limit: Option<String>,
 
     /// The upper limit of the sub-object's value.
-    #[serde(rename = "@highLimit", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@highLimit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub high_limit: Option<String>,
 
     /// The access type (e.g., "ro", "rw").
-    #[serde(rename = "@accessType", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@accessType",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub access_type: Option<ObjectAccessType>,
 
     /// The `defaultValue` is the key data for an XDD file.
-    #[serde(rename = "@defaultValue", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@defaultValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub default_value: Option<String>,
 
     /// The `actualValue` is the key data for an XDC file.
-    #[serde(rename = "@actualValue", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@actualValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub actual_value: Option<String>,
 
     /// A denotation for the sub-object.
-    #[serde(rename = "@denotation", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@denotation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub denotation: Option<String>,
 
     /// The PDO mapping capability of the sub-object.
-    #[serde(rename = "@PDOmapping", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@PDOmapping",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub pdo_mapping: Option<ObjectPdoMapping>,
 
     /// Object flags.
@@ -187,9 +248,12 @@ pub struct SubObject {
     pub obj_flags: Option<String>,
 
     /// This attribute references a Parameter's uniqueID in the ApplicationProcess.
-    #[serde(rename = "@uniqueIDRef", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@uniqueIDRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub unique_id_ref: Option<String>,
-
     // --- End of fields from ag_Powerlink_Object ---
 }
 

@@ -3,9 +3,9 @@
 //! Contains model structs related to the `<ProfileHeader>`.
 //! (Schema: `ISO15745ProfileContainer.xsd`)
 
-use serde::{Deserialize, Serialize};
-use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 
 // --- Enums and Structs for ProfileHeader ---
 
@@ -33,7 +33,6 @@ impl Default for ProfileClassId {
     }
 }
 
-
 /// Represents the `<ISO15745Reference>` element (from XSD `t_ISO15745Reference`).
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Iso15745Reference {
@@ -58,7 +57,7 @@ pub struct IasInterfaceType {
 pub struct ProfileHeader {
     #[serde(rename = "ProfileIdentification")]
     pub profile_identification: String,
-    
+
     #[serde(rename = "ProfileRevision")]
     pub profile_revision: String,
 
@@ -72,17 +71,33 @@ pub struct ProfileHeader {
     pub profile_class_id: ProfileClassId,
 
     /// Stored as a string as `xs:date` (e.g., "2024-01-01")
-    #[serde(rename = "ProfileDate", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ProfileDate",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub profile_date: Option<String>,
 
-    #[serde(rename = "AdditionalInformation", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "AdditionalInformation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub additional_information: Option<String>,
-    
+
     // Per schema, ISO15745Reference is mandatory, but quick-xml needs default
     // if it's inside an optional container. Let's make it optional for robustness.
-    #[serde(rename = "ISO15745Reference", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ISO15745Reference",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub iso15745_reference: Option<Iso15745Reference>,
-    
-    #[serde(rename = "IASInterfaceType", default, skip_serializing_if = "Vec::is_empty")]
+
+    #[serde(
+        rename = "IASInterfaceType",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub ias_interface_type: Vec<IasInterfaceType>, // Schema says maxOccurs="unbounded"
 }

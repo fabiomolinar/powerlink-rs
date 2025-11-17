@@ -24,7 +24,9 @@ fn extract_label_from_attributed_glabels(attributed_labels: &AttributedGlabels) 
 }
 
 /// Parses a `model::DeviceIdentity` into a clean `types::Identity`.
-pub(super) fn resolve_identity(model: &model::identity::DeviceIdentity) -> Result<types::Identity, XdcError> {
+pub(super) fn resolve_identity(
+    model: &model::identity::DeviceIdentity,
+) -> Result<types::Identity, XdcError> {
     let vendor_id = model
         .vendor_id
         .as_ref()
@@ -60,7 +62,7 @@ pub(super) fn resolve_identity(model: &model::identity::DeviceIdentity) -> Resul
             value: v.value.clone(),
         })
         .collect();
-        
+
     let order_number = model
         .order_number
         .iter()
@@ -73,15 +75,27 @@ pub(super) fn resolve_identity(model: &model::identity::DeviceIdentity) -> Resul
         vendor_name: model.vendor_name.value.clone(),
         product_name: model.product_name.value.clone(),
         versions,
-        
+
         // --- New fields ---
-        vendor_text: model.vendor_text.as_ref().and_then(extract_label_from_attributed_glabels),
-        device_family: model.device_family.as_ref().and_then(extract_label_from_attributed_glabels),
+        vendor_text: model
+            .vendor_text
+            .as_ref()
+            .and_then(extract_label_from_attributed_glabels),
+        device_family: model
+            .device_family
+            .as_ref()
+            .and_then(extract_label_from_attributed_glabels),
         product_family: model.product_family.as_ref().map(|pf| pf.value.clone()),
-        product_text: model.product_text.as_ref().and_then(extract_label_from_attributed_glabels),
+        product_text: model
+            .product_text
+            .as_ref()
+            .and_then(extract_label_from_attributed_glabels),
         order_number,
         build_date: model.build_date.clone(),
-        specification_revision: model.specification_revision.as_ref().map(|sr| sr.value.clone()),
+        specification_revision: model
+            .specification_revision
+            .as_ref()
+            .map(|sr| sr.value.clone()),
         instance_name: model.instance_name.as_ref().map(|i| i.value.clone()),
     })
 }
@@ -92,10 +106,10 @@ mod tests {
     use crate::model::common::{AttributedGlabels, Glabels, Label, LabelChoice, ReadOnlyString};
     use crate::model::identity::DeviceIdentity;
     use crate::parser::load_xdc_from_str;
+    use alloc::format;
     use alloc::string::ToString;
     use alloc::vec;
-    use alloc::format;
-    
+
     /// Creates a minimal, reusable XML string with a DeviceIdentity block.
     fn create_test_xml(device_identity: &str, app_layers: &str, app_process: &str) -> String {
         format!(
@@ -170,7 +184,11 @@ mod tests {
         <instanceName readOnly="false">MyCPU</instanceName>
       </DeviceIdentity>"#;
 
-        let xml = create_test_xml(identity_xml, "<ApplicationLayers><ObjectList/></ApplicationLayers>", "");
+        let xml = create_test_xml(
+            identity_xml,
+            "<ApplicationLayers><ObjectList/></ApplicationLayers>",
+            "",
+        );
         let xdc_file = load_xdc_from_str(&xml).unwrap();
 
         let id = &xdc_file.identity;
@@ -178,7 +196,10 @@ mod tests {
         assert_eq!(id.vendor_id, 0x1A);
         assert_eq!(id.product_name, "X20CP1584");
         assert_eq!(id.product_id, 0x22B8);
-        assert_eq!(id.vendor_text, Some("B&R Industrial Automation".to_string()));
+        assert_eq!(
+            id.vendor_text,
+            Some("B&R Industrial Automation".to_string())
+        );
         assert_eq!(id.device_family, Some("X20 System".to_string()));
         assert_eq!(id.product_family, Some("X20".to_string()));
         assert_eq!(id.product_text, Some("X20 CPU".to_string()));
@@ -194,7 +215,10 @@ mod tests {
     fn test_resolve_identity_product_id_parsing() {
         // 1. Test standard hex value
         let model_hex = DeviceIdentity {
-            product_id: Some(ReadOnlyString { value: "0x1234".to_string(), ..Default::default() }),
+            product_id: Some(ReadOnlyString {
+                value: "0x1234".to_string(),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let identity_hex = resolve_identity(&model_hex).unwrap();
@@ -202,7 +226,10 @@ mod tests {
 
         // 2. Test decimal value (common in some XDCs)
         let model_dec = DeviceIdentity {
-            product_id: Some(ReadOnlyString { value: "1234".to_string(), ..Default::default() }),
+            product_id: Some(ReadOnlyString {
+                value: "1234".to_string(),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let identity_dec = resolve_identity(&model_dec).unwrap();
@@ -210,7 +237,10 @@ mod tests {
 
         // 3. Test invalid value
         let model_invalid = DeviceIdentity {
-            product_id: Some(ReadOnlyString { value: "not-a-number".to_string(), ..Default::default() }),
+            product_id: Some(ReadOnlyString {
+                value: "not-a-number".to_string(),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let identity_invalid = resolve_identity(&model_invalid).unwrap();
@@ -241,7 +271,10 @@ mod tests {
                 value: "First Label".to_string(),
             })],
         };
-        assert_eq!(extract_label_from_glabels(&glabels_one), Some("First Label".to_string()));
+        assert_eq!(
+            extract_label_from_glabels(&glabels_one),
+            Some("First Label".to_string())
+        );
 
         // 4. Test multiple labels (should pick first)
         let glabels_multi = Glabels {
@@ -261,13 +294,16 @@ mod tests {
                 }),
             ],
         };
-        assert_eq!(extract_label_from_glabels(&glabels_multi), Some("First Label".to_string()));
+        assert_eq!(
+            extract_label_from_glabels(&glabels_multi),
+            Some("First Label".to_string())
+        );
     }
-    
+
     /// Unit test for the `extract_label_from_attributed_glabels` helper.
     #[test]
     fn test_extract_label_from_attributed_glabels() {
-         let attributed = AttributedGlabels {
+        let attributed = AttributedGlabels {
             labels: Glabels {
                 items: vec![
                     LabelChoice::Description(model::common::Description {
@@ -282,10 +318,16 @@ mod tests {
                 ],
             },
             ..Default::default()
-         };
-         assert_eq!(extract_label_from_attributed_glabels(&attributed), Some("The Label".to_string()));
+        };
+        assert_eq!(
+            extract_label_from_attributed_glabels(&attributed),
+            Some("The Label".to_string())
+        );
 
-         let attributed_empty = AttributedGlabels::default();
-         assert_eq!(extract_label_from_attributed_glabels(&attributed_empty), None);
+        let attributed_empty = AttributedGlabels::default();
+        assert_eq!(
+            extract_label_from_attributed_glabels(&attributed_empty),
+            None
+        );
     }
 }

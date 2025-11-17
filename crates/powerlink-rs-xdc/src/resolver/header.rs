@@ -5,7 +5,9 @@ use crate::model;
 use crate::types;
 
 /// Parses a `model::ProfileHeader` into a `types::ProfileHeader`.
-pub(super) fn resolve_header(model: &model::header::ProfileHeader) -> Result<types::ProfileHeader, XdcError> {
+pub(super) fn resolve_header(
+    model: &model::header::ProfileHeader,
+) -> Result<types::ProfileHeader, XdcError> {
     Ok(types::ProfileHeader {
         identification: model.profile_identification.clone(),
         revision: model.profile_revision.clone(),

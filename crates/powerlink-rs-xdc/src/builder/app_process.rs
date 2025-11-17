@@ -18,7 +18,7 @@ pub(super) fn build_model_application_process(
     // A full XDD *generator* would need to build this from scratch.
     // For XDC *serialization*, we only need to provide an empty <parameterList>
     // to satisfy the schema if the block is present.
-    
+
     // We will build an empty ApplicationProcess block for now.
     // This can be expanded later if we need to write XDDs.
     model::app_process::ApplicationProcess {
@@ -58,7 +58,7 @@ mod tests {
         assert!(model_app_proc.function_instance_list.is_none());
         assert!(model_app_proc.template_list.is_none());
         assert!(model_app_proc.parameter_group_list.is_none());
-        
+
         // It *must* contain a parameterList, even if empty.
         assert_eq!(model_app_proc.parameter_list.parameter.len(), 0);
     }

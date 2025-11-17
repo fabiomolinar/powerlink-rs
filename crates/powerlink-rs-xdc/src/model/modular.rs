@@ -6,11 +6,11 @@
 //! `ProfileBody_CommunicationNetwork_Powerlink_Modular_Head.xsd`,
 //! `ProfileBody_CommunicationNetwork_Powerlink_Modular_Child.xsd`)
 
-use serde::{Deserialize, Serialize};
-use alloc::vec::Vec;
-use alloc::string::String;
-use super::common::Glabels;
 use super::app_layers::ObjectPdoMapping;
+use super::common::Glabels;
+use alloc::string::String;
+use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 
 // --- Common Modular Types (from CommonElements_Modular.xsd) ---
 
@@ -119,21 +119,37 @@ pub struct ModuleInterface {
     pub file_list: FileList,
     #[serde(rename = "moduleTypeList")]
     pub module_type_list: ModuleTypeList,
-    
+
     #[serde(rename = "@childID")]
     pub child_id: String,
     #[serde(rename = "@type")]
     pub interface_type: String, // xsd:NCName
     #[serde(rename = "@moduleAddressing")]
     pub module_addressing: ModuleAddressingChild,
-    
-    #[serde(rename = "@minAddress", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "@minAddress",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub min_address: Option<String>, // xsd:nonNegativeInteger
-    #[serde(rename = "@maxAddress", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@maxAddress",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_address: Option<String>, // xsd:nonNegativeInteger
-    #[serde(rename = "@minPosition", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@minPosition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub min_position: Option<String>, // xsd:nonNegativeInteger
-    #[serde(rename = "@maxPosition", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@maxPosition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_position: Option<String>, // xsd:nonNegativeInteger
     #[serde(rename = "@maxCount", default, skip_serializing_if = "Option::is_none")]
     pub max_count: Option<String>, // xsd:nonNegativeInteger
@@ -155,7 +171,11 @@ pub struct ConnectedModule {
 /// Represents a `<connectedModuleList>` element.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ConnectedModuleList {
-    #[serde(rename = "connectedModule", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "connectedModule",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub connected_module: Vec<ConnectedModule>,
 }
 
@@ -166,9 +186,13 @@ pub struct InterfaceDevice {
     pub labels: Glabels,
     #[serde(rename = "fileList")]
     pub file_list: FileList,
-    #[serde(rename = "connectedModuleList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "connectedModuleList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub connected_module_list: Option<ConnectedModuleList>,
-    
+
     #[serde(rename = "@uniqueID")]
     pub unique_id: String, // xsd:ID
     #[serde(rename = "@type")]
@@ -179,11 +203,23 @@ pub struct InterfaceDevice {
     pub unused_slots: bool,
     #[serde(rename = "@moduleAddressing")]
     pub module_addressing: ModuleAddressingHead,
-    #[serde(rename = "@multipleModules", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@multipleModules",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub multiple_modules: Option<bool>,
-    #[serde(rename = "@identList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@identList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub ident_list: Option<String>, // xdd:t_Index
-    #[serde(rename = "@firmwareList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@firmwareList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub firmware_list: Option<String>, // xdd:t_Index
 }
 
@@ -199,7 +235,11 @@ pub struct InterfaceListDevice {
 pub struct ModuleManagementDevice {
     #[serde(rename = "interfaceList")]
     pub interface_list: InterfaceListDevice,
-    #[serde(rename = "moduleInterface", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "moduleInterface",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub module_interface: Option<ModuleInterface>,
 }
 
@@ -222,7 +262,11 @@ pub struct Range {
     pub sort_number: AddressingAttribute,
     #[serde(rename = "@sortStep", default, skip_serializing_if = "Option::is_none")]
     pub sort_step: Option<String>, // xsd:positiveInteger
-    #[serde(rename = "@PDOmapping", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@PDOmapping",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub pdo_mapping: Option<ObjectPdoMapping>,
 }
 

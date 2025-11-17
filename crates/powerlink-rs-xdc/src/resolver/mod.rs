@@ -7,8 +7,8 @@
 
 use crate::error::XdcError;
 use crate::model;
-use crate::model::app_layers::DataTypeName;
 use crate::model::Iso15745ProfileContainer;
+use crate::model::app_layers::DataTypeName;
 use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -17,13 +17,13 @@ use alloc::string::String;
 
 mod app_process; // Add the new module
 mod device_function; // Added new module
+pub mod device_manager; // Added new module
 mod header;
 mod identity;
+pub mod modular;
 mod net_mgmt;
 mod od;
-mod utils;
-pub mod device_manager; // Added new module
-pub mod modular;        // Added new module
+mod utils; // Added new module
 
 /// Defines which value to prioritize when resolving the Object Dictionary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,7 +42,7 @@ pub(crate) fn resolve_data(
     mode: ValueMode,
 ) -> Result<types::XdcFile, XdcError> {
     // Find the distinct profile bodies.
-    
+
     // The Device Profile contains Identity and ApplicationProcess.
     let device_profile = container
         .profile
@@ -57,7 +57,7 @@ pub(crate) fn resolve_data(
         .ok_or(XdcError::MissingElement {
             element: "Profile containing ApplicationLayers",
         })?;
-    
+
     // Get the bodies from the profiles
     let device_profile_body = device_profile.map(|p| &p.profile_body);
     let comm_profile_body = &comm_profile.profile_body;
@@ -74,8 +74,14 @@ pub(crate) fn resolve_data(
             for template in &template_list.parameter_template {
                 // The value is chosen based on the parser's mode
                 let value = match mode {
-                    ValueMode::Actual => template.actual_value.as_ref().or(template.default_value.as_ref()),
-                    ValueMode::Default => template.default_value.as_ref().or(template.actual_value.as_ref()),
+                    ValueMode::Actual => template
+                        .actual_value
+                        .as_ref()
+                        .or(template.default_value.as_ref()),
+                    ValueMode::Default => template
+                        .default_value
+                        .as_ref()
+                        .or(template.actual_value.as_ref()),
                 };
 
                 if let Some(val) = value {
@@ -102,12 +108,13 @@ pub(crate) fn resolve_data(
     // --- End of Pass 2 ---
 
     // --- Pass 2.5: Build Data Type Map ---
-    let app_layers = comm_profile_body
-        .application_layers
-        .as_ref()
-        .ok_or(XdcError::MissingElement {
-            element: "ApplicationLayers",
-        })?;
+    let app_layers =
+        comm_profile_body
+            .application_layers
+            .as_ref()
+            .ok_or(XdcError::MissingElement {
+                element: "ApplicationLayers",
+            })?;
 
     let mut type_map: BTreeMap<String, DataTypeName> = BTreeMap::new();
     if let Some(data_type_list) = &app_layers.data_type_list {
@@ -123,9 +130,9 @@ pub(crate) fn resolve_data(
     let header_model = device_profile
         .map(|p| &p.profile_header)
         .unwrap_or(&comm_profile.profile_header);
-    
+
     let header = header::resolve_header(header_model)?;
-    
+
     let identity = device_profile_body
         .and_then(|b| b.device_identity.as_ref())
         .map(identity::resolve_identity)
@@ -164,17 +171,16 @@ pub(crate) fn resolve_data(
 
     let object_dictionary =
         od::resolve_object_dictionary(app_layers, &param_map, &template_map, &type_map, mode)?;
-    
+
     // 5. --- Assemble final XdcFile ---
     Ok(types::XdcFile {
         header,
         identity,
         device_function, // Add the resolved data
-        device_manager, // Add the resolved data
+        device_manager,  // Add the resolved data
         network_management,
         application_process, // Add the resolved data
         object_dictionary,
         module_management_comm, // Add the resolved data
     })
 }
-

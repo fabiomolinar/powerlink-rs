@@ -25,23 +25,29 @@ fn resolve_capabilities(
         .iter()
         .map(|cl| {
             Ok::<_, XdcError>(types::CharacteristicList {
-                category: cl.category.as_ref().and_then(|c| utils::extract_label(&c.labels)),
+                category: cl
+                    .category
+                    .as_ref()
+                    .and_then(|c| utils::extract_label(&c.labels)),
                 characteristics: cl
                     .characteristic
                     .iter()
                     .map(|c| {
                         Ok::<_, XdcError>(types::Characteristic {
-                            name: utils::extract_label(&c.characteristic_name.labels)
-                                .ok_or(XdcError::MissingElement {
+                            name: utils::extract_label(&c.characteristic_name.labels).ok_or(
+                                XdcError::MissingElement {
                                     element: "characteristicName/label",
-                                })?,
+                                },
+                            )?,
                             content: c
                                 .characteristic_content
                                 .iter()
                                 .map(|cc| {
-                                    utils::extract_label(&cc.labels).ok_or(XdcError::MissingElement {
-                                        element: "characteristicContent/label",
-                                    })
+                                    utils::extract_label(&cc.labels).ok_or(
+                                        XdcError::MissingElement {
+                                            element: "characteristicContent/label",
+                                        },
+                                    )
                                 })
                                 .collect::<Result<Vec<_>, _>>()?,
                         })
@@ -82,10 +88,7 @@ fn resolve_pictures_list(
             Ok(types::Picture {
                 uri: p.uri.clone(),
                 picture_type: p.picture_type.clone().unwrap_or("none".to_string()),
-                number: p
-                    .number
-                    .as_ref()
-                    .and_then(|n| n.parse::<u32>().ok()),
+                number: p.number.as_ref().and_then(|n| n.parse::<u32>().ok()),
                 label: utils::extract_label(&p.labels), // Use utils::
                 description: utils::extract_description(&p.labels), // Use utils::
             })
@@ -117,10 +120,7 @@ fn resolve_connector_list(
         .iter()
         .map(|c| types::Connector {
             id: c.id.clone(),
-            connector_type: c
-                .connector_type
-                .clone()
-                .unwrap_or("POWERLINK".to_string()),
+            connector_type: c.connector_type.clone().unwrap_or("POWERLINK".to_string()),
             interface_id_ref: c.interface_id_ref.clone(),
             label: utils::extract_label(&c.labels), // Use utils::
             description: utils::extract_description(&c.labels), // Use utils::
@@ -138,11 +138,11 @@ fn resolve_firmware_list(
         .map(|f| {
             Ok(types::Firmware {
                 uri: f.uri.clone(),
-                device_revision_number: f.device_revision_number.parse::<u32>().map_err(
-                    |_| XdcError::InvalidAttributeFormat {
+                device_revision_number: f.device_revision_number.parse::<u32>().map_err(|_| {
+                    XdcError::InvalidAttributeFormat {
                         attribute: "deviceRevisionNumber",
-                    },
-                )?,
+                    }
+                })?,
                 build_date: f.build_date.clone(),
                 label: utils::extract_label(&f.labels), // Use utils::
                 description: utils::extract_description(&f.labels), // Use utils::
@@ -178,35 +178,35 @@ pub(super) fn resolve_device_function(
                 .as_ref()
                 .map(resolve_capabilities)
                 .transpose()?;
-            
+
             let pictures = model
                 .pictures_list
                 .as_ref()
                 .map(resolve_pictures_list)
                 .transpose()?
                 .unwrap_or_default();
-            
+
             let dictionaries = model
                 .dictionary_list
                 .as_ref()
                 .map(resolve_dictionary_list)
                 .transpose()?
                 .unwrap_or_default();
-            
+
             let connectors = model
                 .connector_list
                 .as_ref()
                 .map(resolve_connector_list)
                 .transpose()?
                 .unwrap_or_default();
-            
+
             let firmware_list = model
                 .firmware_list
                 .as_ref()
                 .map(resolve_firmware_list)
                 .transpose()?
                 .unwrap_or_default();
-            
+
             let classifications = model
                 .classification_list
                 .as_ref()

@@ -3,8 +3,8 @@
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_layers::DataTypeName;
-use crate::parser::{parse_hex_u16, parse_hex_u8, parse_hex_string};
-use crate::resolver::{utils, ValueMode};
+use crate::parser::{parse_hex_string, parse_hex_u8, parse_hex_u16};
+use crate::resolver::{ValueMode, utils};
 use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -108,13 +108,12 @@ pub(super) fn resolve_object_dictionary<'a>(
                 let data = value_str_opt.and_then(|s| parse_hex_string(s).ok());
 
                 // Perform type validation if we have data
-                if let (Some(data), Some(data_type_id)) = (
-                    data.as_ref(),
-                    model_sub_obj.data_type.as_deref(),
-                ) {
+                if let (Some(data), Some(data_type_id)) =
+                    (data.as_ref(), model_sub_obj.data_type.as_deref())
+                {
                     utils::validate_type(index, sub_index, data, data_type_id, type_map)?;
                 }
-                
+
                 let pdo_mapping = model_sub_obj.pdo_mapping.map(utils::map_pdo_mapping);
 
                 od_sub_objects.push(types::SubObject {
@@ -127,14 +126,14 @@ pub(super) fn resolve_object_dictionary<'a>(
                     access_type: sub_resolved_access, // Use resolved value
                     pdo_mapping,
                     obj_flags: model_sub_obj.obj_flags.clone(),
-                    support: sub_resolved_support,   // Use resolved value
+                    support: sub_resolved_support, // Use resolved value
                     persistent: sub_resolved_persistent, // Use resolved value
                     allowed_values: sub_resolved_allowed_values, // MODIFIED: Assign resolved values
                     data,
                 });
             }
         }
-        
+
         let pdo_mapping = model_obj.pdo_mapping.map(utils::map_pdo_mapping);
 
         od_objects.push(types::Object {
@@ -144,11 +143,11 @@ pub(super) fn resolve_object_dictionary<'a>(
             data_type: model_obj.data_type.clone(),
             low_limit: model_obj.low_limit.clone(), // MODIFIED: Pass through low_limit
             high_limit: model_obj.high_limit.clone(), // MODIFIED: Pass through high_limit
-            access_type: resolved_access, // Use resolved value
+            access_type: resolved_access,           // Use resolved value
             pdo_mapping,
             obj_flags: model_obj.obj_flags.clone(),
-            support: resolved_support,   // Use resolved value
-            persistent: resolved_persistent, // Use resolved value
+            support: resolved_support,               // Use resolved value
+            persistent: resolved_persistent,         // Use resolved value
             allowed_values: resolved_allowed_values, // MODIFIED: Assign resolved values
             data: object_data,
             sub_objects: od_sub_objects,
@@ -199,17 +198,15 @@ fn resolve_value_from_param<'a>(
         ValueMode::Actual => param.actual_value.as_ref().or(param.default_value.as_ref()),
         ValueMode::Default => param.default_value.as_ref().or(param.actual_value.as_ref()),
     };
-    
-    direct_value
-        .map(|v| &v.value)
-        .or_else(|| {
-            // 2. If no direct value, check for a template reference
-            param
-                .template_id_ref
-                .as_ref()
-                .and_then(|template_id| template_map.get(template_id))
-                .map(|v| &v.value)
-        })
+
+    direct_value.map(|v| &v.value).or_else(|| {
+        // 2. If no direct value, check for a template reference
+        param
+            .template_id_ref
+            .as_ref()
+            .and_then(|template_id| template_map.get(template_id))
+            .map(|v| &v.value)
+    })
 }
 
 /// Helper to get the raw value string for a VAR object.
@@ -221,8 +218,14 @@ fn get_value_str_for_object<'a>(
 ) -> Option<&'a String> {
     // 1. Check for direct value on the <Object> tag
     let direct_value = match mode {
-        ValueMode::Actual => model_obj.actual_value.as_ref().or(model_obj.default_value.as_ref()),
-        ValueMode::Default => model_obj.default_value.as_ref().or(model_obj.actual_value.as_ref()),
+        ValueMode::Actual => model_obj
+            .actual_value
+            .as_ref()
+            .or(model_obj.default_value.as_ref()),
+        ValueMode::Default => model_obj
+            .default_value
+            .as_ref()
+            .or(model_obj.actual_value.as_ref()),
     };
 
     direct_value.or_else(|| {
@@ -246,10 +249,16 @@ fn get_value_str_for_subobject<'a>(
 ) -> Option<&'a String> {
     // 1. Check for direct value on the <SubObject> tag
     let direct_value = match mode {
-        ValueMode::Actual => model_sub_obj.actual_value.as_ref().or(model_sub_obj.default_value.as_ref()),
-        ValueMode::Default => model_sub_obj.default_value.as_ref().or(model_sub_obj.actual_value.as_ref()),
+        ValueMode::Actual => model_sub_obj
+            .actual_value
+            .as_ref()
+            .or(model_sub_obj.default_value.as_ref()),
+        ValueMode::Default => model_sub_obj
+            .default_value
+            .as_ref()
+            .or(model_sub_obj.actual_value.as_ref()),
     };
-    
+
     direct_value
         .or_else(|| {
             // 2. If no direct value, resolve via SubObject's uniqueIDRef

@@ -10,11 +10,17 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap; // Added for storage map
 use alloc::string::String; // Correctly import String
 use alloc::vec::Vec;
+use log::warn;
 use powerlink_rs::od::{
-    AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping,
+    AccessType,
+    Category,
+    Object,
+    ObjectDictionary,
+    ObjectEntry,
+    ObjectValue,
+    PdoMapping,
     ValueRange, // Import ValueRange
-};
-use log::warn; // Import warn
+}; // Import warn
 
 /// Converts a parsed `XdcFile` into the `ObjectDictionary` format required
 /// by the `powerlink-rs` core crate.
@@ -49,7 +55,12 @@ pub fn to_core_od(xdc_file: &XdcFile) -> Result<ObjectDictionary<'static>, XdcEr
             category: map_support_to_category(obj.support),
             access: obj.access_type.map(map_access_type),
             // The XDC file's data *is* the default value for the core.
-            default_value: obj.data.as_ref().map(|d| map_data_to_value(d, obj.data_type.as_deref())).transpose()?.flatten(),
+            default_value: obj
+                .data
+                .as_ref()
+                .map(|d| map_data_to_value(d, obj.data_type.as_deref()))
+                .transpose()?
+                .flatten(),
             value_range, // MODIFIED: Assign the resolved value range
             pdo_mapping: obj.pdo_mapping.map(map_pdo_mapping),
         };
@@ -73,8 +84,7 @@ pub fn xdc_to_storage_map(
     for obj in &xdc_file.object_dictionary.objects {
         if obj.object_type == "7" {
             // This is a VAR. Data is on the object itself (sub-index 0).
-            if let (Some(data), Some(data_type_id)) =
-                (obj.data.as_ref(), obj.data_type.as_deref())
+            if let (Some(data), Some(data_type_id)) = (obj.data.as_ref(), obj.data_type.as_deref())
             {
                 if let Some(value) = map_data_to_value(data, Some(data_type_id))? {
                     map.insert((obj.index, 0), value);
@@ -125,7 +135,7 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
                 .and_then(|d| d.first())
                 .copied()
                 .unwrap_or(0);
-            
+
             // Pre-allocate based on sub-index 0
             sub_values.resize(num_entries as usize, ObjectValue::Unsigned8(0)); // Fill with dummy data
 
@@ -133,12 +143,14 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
                 if sub_obj.sub_index == 0 {
                     continue;
                 }
-                let value = sub_obj.data.as_ref()
+                let value = sub_obj
+                    .data
+                    .as_ref()
                     .map(|d| map_data_to_value(d, sub_obj.data_type.as_deref()))
                     .transpose()?
                     .flatten()
                     .ok_or(XdcError::ValidationError("Array sub-object missing data"))?;
-                
+
                 let idx = sub_obj.sub_index as usize - 1;
                 if let Some(slot) = sub_values.get_mut(idx) {
                     *slot = value;
@@ -166,12 +178,14 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
                 if sub_obj.sub_index == 0 {
                     continue;
                 }
-                let value = sub_obj.data.as_ref()
+                let value = sub_obj
+                    .data
+                    .as_ref()
                     .map(|d| map_data_to_value(d, sub_obj.data_type.as_deref()))
                     .transpose()?
                     .flatten()
                     .ok_or(XdcError::ValidationError("Record sub-object missing data"))?;
-                
+
                 let idx = sub_obj.sub_index as usize - 1;
                 if let Some(slot) = sub_values.get_mut(idx) {
                     *slot = value;
@@ -184,7 +198,10 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
 }
 
 /// Maps a raw byte slice and a data type ID string to the core `ObjectValue` enum.
-fn map_data_to_value(data: &[u8], data_type_id: Option<&str>) -> Result<Option<ObjectValue>, XdcError> {
+fn map_data_to_value(
+    data: &[u8],
+    data_type_id: Option<&str>,
+) -> Result<Option<ObjectValue>, XdcError> {
     let id = match data_type_id {
         Some(id) => id,
         None => return Ok(None), // Cannot map without a type
@@ -211,7 +228,8 @@ fn map_data_to_value(data: &[u8], data_type_id: Option<&str>) -> Result<Option<O
         "0007" => from_le!(u32, ObjectValue::Unsigned32),
         "0008" => from_le!(f32, ObjectValue::Real32),
         "0009" => Ok(Some(ObjectValue::VisibleString(
-            String::from_utf8(data.to_vec()).map_err(|_| XdcError::ValidationError("Invalid UTF-8"))?,
+            String::from_utf8(data.to_vec())
+                .map_err(|_| XdcError::ValidationError("Invalid UTF-8"))?,
         ))),
         "000A" => Ok(Some(ObjectValue::OctetString(data.to_vec()))),
         "000F" => Ok(Some(ObjectValue::Domain(data.to_vec()))),
@@ -271,7 +289,7 @@ fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
         // MODIFIED: Use from_str_radix, not parse()
         T::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok()
     }
-    
+
     // Helper to parse, supporting "0x" hex or decimal
     fn parse_num<T: FromStrRadix + core::str::FromStr>(s: &str) -> Option<T> {
         if let Some(hex_str) = s.strip_prefix("0x") {
@@ -280,19 +298,51 @@ fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
             s.parse::<T>().ok()
         }
     }
-    
+
     // Trait to unify from_str_radix and FromStr
     trait FromStrRadix: Sized {
         fn from_str_radix(src: &str, radix: u32) -> Result<Self, core::num::ParseIntError>;
     }
-    impl FromStrRadix for i8 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i8::from_str_radix(s, r) } }
-    impl FromStrRadix for i16 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i16::from_str_radix(s, r) } }
-    impl FromStrRadix for i32 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i32::from_str_radix(s, r) } }
-    impl FromStrRadix for i64 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i64::from_str_radix(s, r) } }
-    impl FromStrRadix for u8 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u8::from_str_radix(s, r) } }
-    impl FromStrRadix for u16 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u16::from_str_radix(s, r) } }
-    impl FromStrRadix for u32 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u32::from_str_radix(s, r) } }
-    impl FromStrRadix for u64 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u64::from_str_radix(s, r) } }
+    impl FromStrRadix for i8 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            i8::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for i16 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            i16::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for i32 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            i32::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for i64 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            i64::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for u8 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            u8::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for u16 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            u16::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for u32 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            u32::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for u64 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            u64::from_str_radix(s, r)
+        }
+    }
 
     match data_type_id {
         "0001" => parse_num::<u8>(s).map(ObjectValue::Boolean),
@@ -309,7 +359,10 @@ fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
         "001B" => parse_num::<u64>(s).map(ObjectValue::Unsigned64),
         // Other types (Integer24, Domain, etc.) are not handled for ranges yet
         _ => {
-            warn!("ValueRange parsing not implemented for dataType {}", data_type_id);
+            warn!(
+                "ValueRange parsing not implemented for dataType {}",
+                data_type_id
+            );
             None
         }
     }
@@ -335,10 +388,16 @@ fn resolve_value_range(
             parse_string_to_value(high_str, dt_id),
         ) {
             (Some(min_val), Some(max_val)) => {
-                return Some(ValueRange { min: min_val, max: max_val });
+                return Some(ValueRange {
+                    min: min_val,
+                    max: max_val,
+                });
             }
             _ => {
-                warn!("Failed to parse low/high limit strings ('{}', '{}') for dataType {}", low_str, high_str, dt_id);
+                warn!(
+                    "Failed to parse low/high limit strings ('{}', '{}') for dataType {}",
+                    low_str, high_str, dt_id
+                );
                 // Fall through to check allowedValues
             }
         }
@@ -354,10 +413,16 @@ fn resolve_value_range(
                 parse_string_to_value(&range.max_value, dt_id),
             ) {
                 (Some(min_val), Some(max_val)) => {
-                    return Some(ValueRange { min: min_val, max: max_val });
+                    return Some(ValueRange {
+                        min: min_val,
+                        max: max_val,
+                    });
                 }
                 _ => {
-                    warn!("Failed to parse <range> min/max strings ('{}', '{}') for dataType {}", range.min_value, range.max_value, dt_id);
+                    warn!(
+                        "Failed to parse <range> min/max strings ('{}', '{}') for dataType {}",
+                        range.min_value, range.max_value, dt_id
+                    );
                 }
             }
         }
@@ -405,7 +470,7 @@ mod tests {
         } else {
             panic!("Expected Object::Variable");
         }
-        
+
         // We can't check metadata easily as `entries` is private.
         // This test now correctly verifies the data conversion.
     }
@@ -424,7 +489,7 @@ mod tests {
                             name: "Count".to_string(),
                             object_type: "7".to_string(),
                             data_type: Some("0005".to_string()), // Unsigned8
-                            data: Some(vec![2]), // Number of entries
+                            data: Some(vec![2]),                 // Number of entries
                             ..Default::default()
                         },
                         SubObject {
@@ -451,7 +516,7 @@ mod tests {
         };
 
         let core_od = to_core_od(&xdc_file).unwrap();
-        
+
         // Use the public API of the core OD to check the values
         let entry = core_od.read_object(0x1018).unwrap();
         if let Object::Record(vals) = entry {
@@ -527,15 +592,24 @@ mod tests {
             ObjectValue::Integer8(-128)
         );
         assert_eq!(
-            map_data_to_value(&[0xFE, 0xFF], Some("0003")).unwrap().unwrap(),
+            map_data_to_value(&[0xFE, 0xFF], Some("0003"))
+                .unwrap()
+                .unwrap(),
             ObjectValue::Integer16(-2)
         );
         assert_eq!(
-            map_data_to_value(&[0x01, 0x00, 0x00, 0x80], Some("0004")).unwrap().unwrap(),
+            map_data_to_value(&[0x01, 0x00, 0x00, 0x80], Some("0004"))
+                .unwrap()
+                .unwrap(),
             ObjectValue::Integer32(-2147483647)
         );
         assert_eq!(
-            map_data_to_value(&[0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F], Some("0015")).unwrap().unwrap(),
+            map_data_to_value(
+                &[0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F],
+                Some("0015")
+            )
+            .unwrap()
+            .unwrap(),
             ObjectValue::Integer64(i64::MAX - 1)
         );
         assert_eq!(
@@ -543,23 +617,39 @@ mod tests {
             ObjectValue::Unsigned8(0x42)
         );
         assert_eq!(
-            map_data_to_value(&[0x34, 0x12], Some("0006")).unwrap().unwrap(),
+            map_data_to_value(&[0x34, 0x12], Some("0006"))
+                .unwrap()
+                .unwrap(),
             ObjectValue::Unsigned16(0x1234)
         );
         assert_eq!(
-            map_data_to_value(&[0x78, 0x56, 0x34, 0x12], Some("0007")).unwrap().unwrap(),
+            map_data_to_value(&[0x78, 0x56, 0x34, 0x12], Some("0007"))
+                .unwrap()
+                .unwrap(),
             ObjectValue::Unsigned32(0x12345678)
         );
         assert_eq!(
-            map_data_to_value(&[0x44, 0x33, 0x22, 0x11, 0xEF, 0xCD, 0xAB, 0x89], Some("001B")).unwrap().unwrap(),
+            map_data_to_value(
+                &[0x44, 0x33, 0x22, 0x11, 0xEF, 0xCD, 0xAB, 0x89],
+                Some("001B")
+            )
+            .unwrap()
+            .unwrap(),
             ObjectValue::Unsigned64(0x89ABCDEF11223344)
         );
         assert_eq!(
-            map_data_to_value(&[0x00, 0x00, 0xC0, 0x3F], Some("0008")).unwrap().unwrap(),
+            map_data_to_value(&[0x00, 0x00, 0xC0, 0x3F], Some("0008"))
+                .unwrap()
+                .unwrap(),
             ObjectValue::Real32(1.5)
         );
         assert_eq!(
-            map_data_to_value(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x3F], Some("0011")).unwrap().unwrap(),
+            map_data_to_value(
+                &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x3F],
+                Some("0011")
+            )
+            .unwrap()
+            .unwrap(),
             ObjectValue::Real64(1.5)
         );
 
@@ -588,7 +678,7 @@ mod tests {
             map_data_to_value(&[0xFF], Some("0009")), // Invalid UTF-8
             Err(XdcError::ValidationError("Invalid UTF-8"))
         ));
-        
+
         // Test unknown type
         assert_eq!(
             map_data_to_value(&[0x01, 0x02], Some("9999")).unwrap(),
@@ -603,8 +693,14 @@ mod tests {
         assert_eq!(map_access_type(Public::ReadOnly), AccessType::ReadOnly);
         assert_eq!(map_access_type(Public::WriteOnly), AccessType::WriteOnly);
         assert_eq!(map_access_type(Public::ReadWrite), AccessType::ReadWrite);
-        assert_eq!(map_access_type(Public::ReadWriteInput), AccessType::ReadWrite);
-        assert_eq!(map_access_type(Public::ReadWriteOutput), AccessType::ReadWrite);
+        assert_eq!(
+            map_access_type(Public::ReadWriteInput),
+            AccessType::ReadWrite
+        );
+        assert_eq!(
+            map_access_type(Public::ReadWriteOutput),
+            AccessType::ReadWrite
+        );
         assert_eq!(map_access_type(Public::NoAccess), AccessType::ReadOnly);
     }
 
@@ -621,9 +717,18 @@ mod tests {
     #[test]
     fn test_map_support_to_category() {
         use types::ParameterSupport as Public;
-        assert_eq!(map_support_to_category(Some(Public::Mandatory)), Category::Mandatory);
-        assert_eq!(map_support_to_category(Some(Public::Optional)), Category::Optional);
-        assert_eq!(map_support_to_category(Some(Public::Conditional)), Category::Conditional);
+        assert_eq!(
+            map_support_to_category(Some(Public::Mandatory)),
+            Category::Mandatory
+        );
+        assert_eq!(
+            map_support_to_category(Some(Public::Optional)),
+            Category::Optional
+        );
+        assert_eq!(
+            map_support_to_category(Some(Public::Conditional)),
+            Category::Conditional
+        );
         assert_eq!(map_support_to_category(None), Category::Optional);
     }
 
@@ -652,7 +757,7 @@ mod tests {
                                 name: "Count".to_string(),
                                 object_type: "7".to_string(),
                                 data_type: Some("0005".to_string()), // U8
-                                data: Some(vec![2]), // Number of entries
+                                data: Some(vec![2]),                 // Number of entries
                                 ..Default::default()
                             },
                             SubObject {
@@ -714,16 +819,10 @@ mod tests {
         assert_eq!(map.len(), 6);
 
         // Check VAR
-        assert_eq!(
-            map.get(&(0x1006, 0)),
-            Some(&ObjectValue::Unsigned32(10000))
-        );
+        assert_eq!(map.get(&(0x1006, 0)), Some(&ObjectValue::Unsigned32(10000)));
 
         // Check RECORD
-        assert_eq!(
-            map.get(&(0x1018, 0)),
-            Some(&ObjectValue::Unsigned8(2))
-        );
+        assert_eq!(map.get(&(0x1018, 0)), Some(&ObjectValue::Unsigned8(2)));
         assert_eq!(
             map.get(&(0x1018, 1)),
             Some(&ObjectValue::Unsigned32(0x12345678))
@@ -734,10 +833,7 @@ mod tests {
         );
 
         // Check ARRAY
-         assert_eq!(
-            map.get(&(0x2000, 0)),
-            Some(&ObjectValue::Unsigned8(1))
-        );
+        assert_eq!(map.get(&(0x2000, 0)), Some(&ObjectValue::Unsigned8(1)));
         assert_eq!(
             map.get(&(0x2000, 1)),
             Some(&ObjectValue::Unsigned16(0x2211))

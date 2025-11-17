@@ -3,10 +3,10 @@
 //! Contains model structs related to `<ApplicationProcess>`.
 //! (Schema: `ProfileBody_Device_Powerlink.xsd`)
 
-use serde::{Deserialize, Serialize};
-use alloc::vec::Vec;
+use super::common::{DataTypeIDRef, Glabels, bool_false, is_false};
 use alloc::string::String;
-use super::common::{bool_false, is_false, DataTypeIDRef, Glabels};
+use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 
 // --- STRUCTS for ApplicationProcess (Task 5) ---
 
@@ -15,37 +15,65 @@ use super::common::{bool_false, is_false, DataTypeIDRef, Glabels};
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ApplicationProcess {
     /// Contains user-defined data types (EPSG 311, 7.4.7.2).
-    #[serde(rename = "dataTypeList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "dataTypeList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub data_type_list: Option<AppDataTypeList>,
 
     /// Contains function type definitions (EPSG 311, 7.4.7.3).
-    #[serde(rename = "functionTypeList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "functionTypeList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub function_type_list: Option<FunctionTypeList>,
-    
+
     /// Contains function instances (EPSG 311, 7.4.7.5).
-    #[serde(rename = "functionInstanceList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "functionInstanceList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub function_instance_list: Option<FunctionInstanceList>,
-    
+
     /// Contains parameter templates (EPSG 311, 7.4.7.6).
-    #[serde(rename = "templateList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "templateList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub template_list: Option<TemplateList>,
 
     /// Contains parameter definitions (EPSG 311, 7.4.7.7).
     #[serde(rename = "parameterList")] // Required
     pub parameter_list: ParameterList,
-    
+
     /// Contains parameter groupings (EPSG 311, 7.4.7.8).
-    #[serde(rename = "parameterGroupList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "parameterGroupList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub parameter_group_list: Option<ParameterGroupList>,
 }
 
 /// Represents `<templateList>` (EPSG 311, 7.4.7.6).
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct TemplateList {
-    #[serde(rename = "parameterTemplate", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "parameterTemplate",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub parameter_template: Vec<Parameter>, // Use Parameter struct, as it's identical
-    
-    #[serde(rename = "allowedValuesTemplate", default, skip_serializing_if = "Vec::is_empty")]
+
+    #[serde(
+        rename = "allowedValuesTemplate",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub allowed_values_template: Vec<AllowedValuesTemplate>,
 }
 
@@ -57,7 +85,7 @@ pub struct AllowedValuesTemplate {
 
     #[serde(rename = "value", default, skip_serializing_if = "Vec::is_empty")]
     pub value: Vec<Value>,
-    
+
     #[serde(rename = "range", default, skip_serializing_if = "Vec::is_empty")]
     pub range: Vec<Range>,
 }
@@ -104,10 +132,10 @@ pub enum ParameterSupport {
 pub struct VariableRef {
     #[serde(rename = "instanceIDRef", default)]
     pub instance_id_ref: Vec<InstanceIDRef>,
-    
+
     #[serde(rename = "variableIDRef")]
     pub variable_id_ref: VariableIDRef,
-    
+
     #[serde(rename = "memberRef", default, skip_serializing_if = "Vec::is_empty")]
     pub member_ref: Vec<MemberRef>,
 
@@ -129,7 +157,11 @@ pub struct VariableIDRef {
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct MemberRef {
-    #[serde(rename = "@uniqueIDRef", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@uniqueIDRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub unique_id_ref: Option<String>,
     #[serde(rename = "@index", default, skip_serializing_if = "Option::is_none")]
     pub index: Option<i64>,
@@ -159,7 +191,7 @@ pub enum ParameterDataType {
     LREAL,
     STRING,
     WSTRING,
-    
+
     // Other choices
     #[serde(rename = "dataTypeIDRef")] // Fix: Add rename attribute
     DataTypeIDRef(DataTypeIDRef),
@@ -191,12 +223,16 @@ pub struct Denotation {
 /// Represents `<allowedValues>` (EPSG 311, 7.4.7.7.2.7).
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AllowedValues {
-    #[serde(rename = "@templateIDRef", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@templateIDRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub template_id_ref: Option<String>,
 
     #[serde(rename = "value", default, skip_serializing_if = "Vec::is_empty")]
     pub value: Vec<Value>,
-    
+
     #[serde(rename = "range", default, skip_serializing_if = "Vec::is_empty")]
     pub range: Vec<Range>,
 }
@@ -217,7 +253,11 @@ pub struct Range {
 pub struct Unit {
     #[serde(flatten)]
     pub labels: Glabels,
-    #[serde(rename = "@multiplier", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@multiplier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub multiplier: Option<String>,
     #[serde(rename = "@unitURI", default, skip_serializing_if = "Option::is_none")]
     pub unit_uri: Option<String>,
@@ -245,46 +285,81 @@ pub struct Parameter {
 
     #[serde(rename = "@support", default, skip_serializing_if = "Option::is_none")]
     pub support: Option<ParameterSupport>,
-    
-    #[serde(rename = "@persistent", default = "bool_false", skip_serializing_if = "is_false")]
+
+    #[serde(
+        rename = "@persistent",
+        default = "bool_false",
+        skip_serializing_if = "is_false"
+    )]
     pub persistent: bool,
-    
+
     #[serde(rename = "@offset", default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<String>,
 
-    #[serde(rename = "@multiplier", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@multiplier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub multiplier: Option<String>,
 
     /// An optional reference to a `<parameterTemplate>`.
-    #[serde(rename = "@templateIDRef", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@templateIDRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub template_id_ref: Option<String>,
-    
+
     // --- Elements ---
-    
     #[serde(flatten)]
     pub labels: Glabels,
-    
+
     #[serde(flatten)]
     pub data_type: ParameterDataType,
-    
-    #[serde(rename = "conditionalSupport", default, skip_serializing_if = "Vec::is_empty")]
+
+    #[serde(
+        rename = "conditionalSupport",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub conditional_support: Vec<ConditionalSupport>,
 
-    #[serde(rename = "denotation", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "denotation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub denotation: Option<Denotation>,
-    
+
     /// The `actualValue` element, if present (less common for defaults).
-    #[serde(rename = "actualValue", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "actualValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub actual_value: Option<Value>,
 
     /// The `defaultValue` element, if present.
-    #[serde(rename = "defaultValue", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "defaultValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub default_value: Option<Value>,
-    
-    #[serde(rename = "substituteValue", default, skip_serializing_if = "Option::is_none")]
+
+    #[serde(
+        rename = "substituteValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub substitute_value: Option<Value>,
 
-    #[serde(rename = "allowedValues", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "allowedValues",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub allowed_values: Option<AllowedValues>,
 
     #[serde(rename = "unit", default, skip_serializing_if = "Option::is_none")]
@@ -301,14 +376,18 @@ pub struct Parameter {
 pub struct Value {
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<Glabels>,
-    
+
     #[serde(rename = "@value")]
     pub value: String,
 
     #[serde(rename = "@offset", default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<String>,
 
-    #[serde(rename = "@multiplier", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@multiplier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub multiplier: Option<String>,
 }
 
@@ -366,7 +445,11 @@ pub struct AppStruct {
     pub unique_id: String,
     #[serde(flatten)]
     pub labels: Glabels,
-    #[serde(rename = "varDeclaration", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "varDeclaration",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub var_declaration: Vec<VarDeclaration>,
 }
 
@@ -379,7 +462,11 @@ pub struct VarDeclaration {
     pub unique_id: String,
     #[serde(rename = "@size", default, skip_serializing_if = "Option::is_none")]
     pub size: Option<String>, // xsd:positiveInteger
-    #[serde(rename = "@initialValue", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@initialValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub initial_value: Option<String>,
     #[serde(flatten)]
     pub labels: Glabels,
@@ -421,7 +508,11 @@ pub struct AppDerived {
     pub name: String,
     #[serde(rename = "@uniqueID")]
     pub unique_id: String,
-    #[serde(rename = "@description", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@description",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub description: Option<String>,
     #[serde(flatten)]
     pub labels: Glabels,
@@ -442,7 +533,11 @@ pub struct Count {
     pub labels: Glabels,
     #[serde(rename = "defaultValue")]
     pub default_value: Value,
-    #[serde(rename = "allowedValues", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "allowedValues",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub allowed_values: Option<AllowedValues>,
 }
 
@@ -451,7 +546,11 @@ pub struct Count {
 /// Represents `<functionTypeList>` (EPSG 311, 7.4.7.3)
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct FunctionTypeList {
-    #[serde(rename = "functionType", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "functionType",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub function_type: Vec<FunctionType>,
 }
 
@@ -470,7 +569,11 @@ pub struct FunctionType {
     pub version_info: Vec<VersionInfo>,
     #[serde(rename = "interfaceList")]
     pub interface_list: InterfaceList,
-    #[serde(rename = "functionInstanceList", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "functionInstanceList",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub function_instance_list: Option<FunctionInstanceList>,
 }
 
@@ -494,23 +597,39 @@ pub struct VersionInfo {
 pub struct InterfaceList {
     #[serde(rename = "inputVars", default, skip_serializing_if = "Option::is_none")]
     pub input_vars: Option<VarList>,
-    #[serde(rename = "outputVars", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "outputVars",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub output_vars: Option<VarList>,
-    #[serde(rename = "configVars", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "configVars",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub config_vars: Option<VarList>,
 }
 
 /// Represents a list of `<varDeclaration>`
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct VarList {
-     #[serde(rename = "varDeclaration", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "varDeclaration",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub var_declaration: Vec<VarDeclaration>,
 }
 
 /// Represents `<functionInstanceList>` (EPSG 311, 7.4.7.5)
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct FunctionInstanceList {
-    #[serde(rename = "functionInstance", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "functionInstance",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub function_instance: Vec<FunctionInstance>,
     #[serde(rename = "connection", default, skip_serializing_if = "Vec::is_empty")]
     pub connection: Vec<Connection>,
@@ -536,7 +655,11 @@ pub struct Connection {
     pub source: String,
     #[serde(rename = "@destination")]
     pub destination: String,
-    #[serde(rename = "@description", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@description",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub description: Option<String>,
 }
 
@@ -545,7 +668,11 @@ pub struct Connection {
 /// Represents `<parameterGroupList>` (EPSG 311, 7.4.7.8)
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct ParameterGroupList {
-    #[serde(rename = "parameterGroup", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "parameterGroup",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub parameter_group: Vec<ParameterGroup>,
 }
 
@@ -554,22 +681,46 @@ pub struct ParameterGroupList {
 pub struct ParameterGroup {
     #[serde(rename = "@uniqueID")]
     pub unique_id: String,
-    #[serde(rename = "@kindOfAccess", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@kindOfAccess",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub kind_of_access: Option<String>,
-    #[serde(rename = "@configParameter", default = "bool_false", skip_serializing_if = "is_false")]
+    #[serde(
+        rename = "@configParameter",
+        default = "bool_false",
+        skip_serializing_if = "is_false"
+    )]
     pub config_parameter: bool,
-    #[serde(rename = "@groupLevelVisible", default = "bool_false", skip_serializing_if = "is_false")]
+    #[serde(
+        rename = "@groupLevelVisible",
+        default = "bool_false",
+        skip_serializing_if = "is_false"
+    )]
     pub group_level_visible: bool,
-    #[serde(rename = "@conditionalUniqueIDRef", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@conditionalUniqueIDRef",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub conditional_unique_id_ref: Option<String>, // xsd:IDREF
-    #[serde(rename = "@conditionalValue", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@conditionalValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub conditional_value: Option<String>,
-    #[serde(rename = "@bitOffset", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@bitOffset",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub bit_offset: Option<String>, // xsd:nonNegativeInteger
-    
+
     #[serde(flatten)]
     pub labels: Glabels,
-    
+
     // This choice allows nesting groups or referencing parameters
     #[serde(rename = "$value", default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<ParameterGroupItem>,
@@ -588,12 +739,28 @@ pub enum ParameterGroupItem {
 pub struct ParameterRef {
     #[serde(rename = "@uniqueIDRef")]
     pub unique_id_ref: String, // xsd:IDREF
-    #[serde(rename = "@actualValue", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@actualValue",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub actual_value: Option<String>,
-    #[serde(rename = "@visible", default = "bool_false", skip_serializing_if = "is_false")]
+    #[serde(
+        rename = "@visible",
+        default = "bool_false",
+        skip_serializing_if = "is_false"
+    )]
     pub visible: bool,
-    #[serde(rename = "@locked", default = "bool_false", skip_serializing_if = "is_false")]
+    #[serde(
+        rename = "@locked",
+        default = "bool_false",
+        skip_serializing_if = "is_false"
+    )]
     pub locked: bool,
-    #[serde(rename = "@bitOffset", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "@bitOffset",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub bit_offset: Option<String>, // xsd:nonNegativeInteger
 }

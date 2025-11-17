@@ -1,7 +1,7 @@
 // crates/powerlink-rs-xdc/tests/parsing.rs
 
 use powerlink_rs_xdc::{
-    load_xdc_from_str, load_xdd_defaults_from_str, save_xdc_to_string, ParameterAccess,
+    ParameterAccess, load_xdc_from_str, load_xdd_defaults_from_str, save_xdc_to_string,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ fn load_test_file(name: &str) -> String {
     path.push("tests");
     path.push("data");
     path.push(name);
-    
+
     fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("Failed to read test file {:?}: {}", path, e))
 }
@@ -82,12 +82,10 @@ fn test_round_trip_static_xdd() {
 
     // 2. Save it back to a new XDC-style string
     // This converts `file1.data` (from `defaultValue`) into `actualValue` attributes.
-    let xdc_string_new =
-        save_xdc_to_string(&file1).expect("Failed to serialize XDC to string");
+    let xdc_string_new = save_xdc_to_string(&file1).expect("Failed to serialize XDC to string");
 
     // 3. Load the *new* string, parsing `actualValue`
-    let file2 =
-        load_xdc_from_str(&xdc_string_new).expect("Failed to parse newly serialized XDC");
+    let file2 = load_xdc_from_str(&xdc_string_new).expect("Failed to parse newly serialized XDC");
 
     // 4. Compare
     // We can't compare `file1 == file2` directly yet because the builder
@@ -108,7 +106,11 @@ fn test_round_trip_static_xdd() {
 fn test_load_dynamic_xdd() {
     let xml_content = load_test_file("MyDevice.xdd");
     let result = load_xdd_defaults_from_str(&xml_content);
-    assert!(result.is_ok(), "Failed to parse dynamic XDD: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse dynamic XDD: {:?}",
+        result.err()
+    );
 
     let xdc_file = result.unwrap();
     // Find a known object and check its value

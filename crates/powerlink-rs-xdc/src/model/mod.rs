@@ -5,9 +5,9 @@
 
 #![allow(clippy::pedantic)] // XML schema names are not idiomatic Rust
 
-use serde::{Deserialize, Serialize};
-use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 
 // --- Sub-modules ---
 
@@ -15,24 +15,23 @@ pub mod app_layers;
 pub mod app_process;
 pub mod common;
 pub mod device_function; // Added new module
+pub mod device_manager; // Added for DeviceManager
 pub mod header;
 pub mod identity;
-pub mod net_mgmt;
-pub mod device_manager; // Added for DeviceManager
-pub mod modular;        // Added for modular device support
+pub mod modular;
+pub mod net_mgmt; // Added for modular device support
 
 // --- Public Re-exports from Sub-modules ---
 // We only re-export the top-level container and profile structs.
 // Other modules will use full paths (e.g., `model::identity::DeviceIdentity`).
 
-pub use header::ProfileHeader;
-pub use identity::DeviceIdentity;
 pub use app_layers::ApplicationLayers;
 pub use app_process::ApplicationProcess;
-pub use net_mgmt::NetworkManagement;
+pub use device_function::DeviceFunction;
 pub use device_manager::DeviceManager; // Added re-export
-pub use device_function::DeviceFunction; // Added re-export
-
+pub use header::ProfileHeader;
+pub use identity::DeviceIdentity;
+pub use net_mgmt::NetworkManagement; // Added re-export
 
 /// The root element of an XDC/XDD file.
 /// (Based on ISO 15745-1:2005/Amd.1)
@@ -68,7 +67,7 @@ impl Default for Iso15745ProfileContainer {
 pub struct Iso15745Profile {
     #[serde(rename = "ProfileHeader")]
     pub profile_header: ProfileHeader,
-    
+
     #[serde(rename = "ProfileBody")]
     pub profile_body: ProfileBody,
 }
@@ -81,16 +80,28 @@ pub struct ProfileBody {
     pub xsi_type: Option<String>,
 
     /// This field is only present in the Communication Network Profile.
-    #[serde(rename = "ApplicationLayers", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ApplicationLayers",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub application_layers: Option<ApplicationLayers>,
 
     /// This field is only present in the Device Profile.
-    #[serde(rename = "DeviceIdentity", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "DeviceIdentity",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub device_identity: Option<DeviceIdentity>,
 
     /// This field is only present in the Device Profile.
     /// (from `ProfileBody_Device_Powerlink.xsd`)
-    #[serde(rename = "DeviceManager", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "DeviceManager",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub device_manager: Option<DeviceManager>,
 
     /// This field is only present in the Device Profile.
@@ -105,14 +116,26 @@ pub struct ProfileBody {
     ///
     /// The user's `src/model/mod.rs` already has `application_process`.
     /// I will add `device_function`.
-    #[serde(rename = "DeviceFunction", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "DeviceFunction",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub device_function: Vec<DeviceFunction>,
 
     /// This field is only present in the Device Profile.
-    #[serde(rename = "ApplicationProcess", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ApplicationProcess",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub application_process: Option<ApplicationProcess>,
 
     /// This field is only present in the Communication Network Profile.
-    #[serde(rename = "NetworkManagement", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "NetworkManagement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub network_management: Option<NetworkManagement>,
 }

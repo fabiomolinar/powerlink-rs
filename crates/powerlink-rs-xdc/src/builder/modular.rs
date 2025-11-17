@@ -100,9 +100,7 @@ fn build_model_range(public: &types::Range) -> model::modular::Range {
             _ => model::modular::AddressingAttribute::Continuous, // Default
         },
         sort_step: public.sort_step.map(|s| s.to_string()),
-        pdo_mapping: public
-            .pdo_mapping
-            .map(super::map_pdo_mapping_to_model),
+        pdo_mapping: public.pdo_mapping.map(super::map_pdo_mapping_to_model),
     }
 }
 

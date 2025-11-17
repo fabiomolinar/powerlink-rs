@@ -15,10 +15,10 @@ use alloc::vec::Vec;
 pub struct XdcFile {
     /// Metadata from the `<ProfileHeader>` block.
     pub header: ProfileHeader,
-    
+
     /// Information from the `<DeviceIdentity>` block.
     pub identity: Identity,
-    
+
     /// Information from the `<DeviceFunction>` block.
     /// This is a Vec because the schema allows 1..unbounded.
     pub device_function: Vec<DeviceFunction>,
@@ -32,10 +32,10 @@ pub struct XdcFile {
 
     /// Information from the `<ApplicationProcess>` block.
     pub application_process: Option<ApplicationProcess>,
-    
+
     /// The complete Object Dictionary for the device.
     pub object_dictionary: ObjectDictionary,
-    
+
     /// Information from the `<moduleManagement>` block in the *Communication Profile*.
     /// This defines the OD index ranges for modular devices.
     pub module_management_comm: Option<ModuleManagementComm>,
@@ -70,24 +70,24 @@ pub struct Identity {
     pub vendor_id: u32,
     /// `<vendorText>` (First available label)
     pub vendor_text: Option<String>,
-    
+
     /// `<deviceFamily>` (First available label)
     pub device_family: Option<String>,
     /// `<productFamily>`
     pub product_family: Option<String>,
-    
+
     /// `<productName>` (Mandatory)
     pub product_name: String,
     /// `<productID>` (as a u32, parsed from hex)
     pub product_id: u32,
     /// `<productText>` (First available label)
     pub product_text: Option<String>,
-    
+
     /// All `<orderNumber>` elements.
     pub order_number: Vec<String>,
     /// All `<version>` elements.
     pub versions: Vec<Version>,
-    
+
     /// `<buildDate>`
     pub build_date: Option<String>,
     /// `<specificationRevision>`
@@ -461,7 +461,7 @@ pub struct Diagnostic {
 #[derive(Debug, Default, PartialEq)]
 pub struct ErrorDefinition {
     pub name: String,
-    pub value: String, 
+    pub value: String,
     pub add_info: Vec<AddInfo>,
 }
 
@@ -758,7 +758,7 @@ pub struct ObjectDictionary {
 pub struct Object {
     /// `@index` (as a u16, parsed from hex)
     pub index: u16,
-    
+
     // --- Metadata ---
     /// `@name`
     pub name: String,
@@ -782,12 +782,12 @@ pub struct Object {
     pub persistent: bool,
     /// Resolved `<allowedValues>` from `<parameter>`.
     pub allowed_values: Option<AllowedValues>,
-    
+
     // --- Value ---
     /// The resolved data for this object, from `actualValue` or `defaultValue`.
     /// This is `None` for RECORD types (where data is in sub-objects).
     pub data: Option<Vec<u8>>,
-    
+
     // --- Children ---
     /// All `<SubObject>` children.
     pub sub_objects: Vec<SubObject>,
@@ -798,7 +798,7 @@ pub struct Object {
 pub struct SubObject {
     /// `@subIndex` (as a u8, parsed from hex)
     pub sub_index: u8,
-    
+
     // --- Metadata ---
     /// `@name`
     pub name: String,
@@ -822,7 +822,7 @@ pub struct SubObject {
     pub persistent: bool,
     /// Resolved `<allowedValues>` from `<parameter>`.
     pub allowed_values: Option<AllowedValues>,
-    
+
     // --- Value ---
     /// The resolved data for this sub-object, from `actualValue` or `defaultValue`.
     pub data: Option<Vec<u8>>,

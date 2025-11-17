@@ -106,10 +106,7 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
                 name: var.name.clone(),
                 unique_id: var.unique_id.clone(),
                 data_type: get_data_type_name(&var.data_type),
-                size: var
-                    .size
-                    .as_ref()
-                    .and_then(|s| s.parse::<u32>().ok()),
+                size: var.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
                 label: utils::extract_label(&var.labels), // Use utils::
                 description: utils::extract_description(&var.labels), // Use utils::
             })
@@ -167,10 +164,7 @@ fn resolve_enum(model: &model::app_process::AppEnum) -> Result<types::AppEnum, X
             .as_ref()
             .map(get_data_type_name)
             .unwrap_or_default(),
-        size_in_bits: model
-            .size
-            .as_ref()
-            .and_then(|s| s.parse::<u32>().ok()),
+        size_in_bits: model.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
         values,
     })
 }
@@ -211,18 +205,15 @@ fn resolve_parameter_group(
         .items
         .iter()
         .map(|item| match item {
-            ParameterGroupItem::ParameterGroup(pg) => {
-                Ok(types::ParameterGroupItem::Group(resolve_parameter_group(pg)?))
-            }
+            ParameterGroupItem::ParameterGroup(pg) => Ok(types::ParameterGroupItem::Group(
+                resolve_parameter_group(pg)?,
+            )),
             ParameterGroupItem::ParameterRef(pr) => {
                 Ok(types::ParameterGroupItem::Parameter(types::ParameterRef {
                     unique_id_ref: pr.unique_id_ref.clone(),
                     visible: pr.visible,
                     locked: pr.locked,
-                    bit_offset: pr
-                        .bit_offset
-                        .as_ref()
-                        .and_then(|s| s.parse::<u32>().ok()),
+                    bit_offset: pr.bit_offset.as_ref().and_then(|s| s.parse::<u32>().ok()),
                 }))
             }
         })
@@ -283,35 +274,26 @@ fn resolve_function_type(
 fn resolve_interface_list(
     model: &model::app_process::InterfaceList,
 ) -> Result<types::InterfaceList, XdcError> {
-    let inputs = model
-        .input_vars
-        .as_ref()
-        .map_or(Ok(Vec::new()), |vars| {
-            vars.var_declaration
-                .iter()
-                .map(resolve_var_declaration)
-                .collect()
-        })?;
+    let inputs = model.input_vars.as_ref().map_or(Ok(Vec::new()), |vars| {
+        vars.var_declaration
+            .iter()
+            .map(resolve_var_declaration)
+            .collect()
+    })?;
 
-    let outputs = model
-        .output_vars
-        .as_ref()
-        .map_or(Ok(Vec::new()), |vars| {
-            vars.var_declaration
-                .iter()
-                .map(resolve_var_declaration)
-                .collect()
-        })?;
+    let outputs = model.output_vars.as_ref().map_or(Ok(Vec::new()), |vars| {
+        vars.var_declaration
+            .iter()
+            .map(resolve_var_declaration)
+            .collect()
+    })?;
 
-    let configs = model
-        .config_vars
-        .as_ref()
-        .map_or(Ok(Vec::new()), |vars| {
-            vars.var_declaration
-                .iter()
-                .map(resolve_var_declaration)
-                .collect()
-        })?;
+    let configs = model.config_vars.as_ref().map_or(Ok(Vec::new()), |vars| {
+        vars.var_declaration
+            .iter()
+            .map(resolve_var_declaration)
+            .collect()
+    })?;
 
     Ok(types::InterfaceList {
         inputs,
@@ -358,10 +340,10 @@ fn resolve_function_instance_list(
 mod tests {
     use super::*;
     use crate::model::app_process::{
-        AppArray, AppDerived, AppEnum, AppStruct, Count,
-        EnumValue, FunctionInstance, FunctionInstanceList, FunctionType, FunctionTypeList,
-        InterfaceList, ParameterDataType, ParameterGroup, ParameterGroupItem, ParameterRef,
-        Subrange, VarDeclaration, VarList, VersionInfo,
+        AppArray, AppDerived, AppEnum, AppStruct, Count, EnumValue, FunctionInstance,
+        FunctionInstanceList, FunctionType, FunctionTypeList, InterfaceList, ParameterDataType,
+        ParameterGroup, ParameterGroupItem, ParameterRef, Subrange, VarDeclaration, VarList,
+        VersionInfo,
     };
     use crate::model::common::{DataTypeIDRef, Glabels, Label, LabelChoice};
     use crate::resolver::utils::{extract_description, extract_label};
@@ -402,10 +384,7 @@ mod tests {
                 }),
             ],
         };
-        assert_eq!(
-            extract_description(&labels),
-            Some("Test Desc".to_string())
-        );
+        assert_eq!(extract_description(&labels), Some("Test Desc".to_string()));
 
         let labels_no_desc = Glabels {
             items: vec![LabelChoice::Label(Default::default())],

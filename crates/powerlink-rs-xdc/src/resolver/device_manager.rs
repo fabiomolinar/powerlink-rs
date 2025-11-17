@@ -33,9 +33,7 @@ fn resolve_combined_state(
 }
 
 /// ResolVes an `<LEDstate>` model into the public type.
-fn resolve_led_state(
-    model: &model::device_manager::LEDstate,
-) -> Result<types::LEDstate, XdcError> {
+fn resolve_led_state(model: &model::device_manager::LEDstate) -> Result<types::LEDstate, XdcError> {
     Ok(types::LEDstate {
         unique_id: model.unique_id.clone(),
         state: match model.state {

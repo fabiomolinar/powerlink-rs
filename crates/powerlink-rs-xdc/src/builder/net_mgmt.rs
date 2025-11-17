@@ -11,14 +11,14 @@ pub(super) fn build_model_network_management(
 ) -> model::net_mgmt::NetworkManagement {
     let general_features = model::net_mgmt::GeneralFeatures {
         dll_feature_mn: public.general_features.dll_feature_mn,
-        nmt_boot_time_not_active: public
-            .general_features
-            .nmt_boot_time_not_active
-            .to_string(),
+        nmt_boot_time_not_active: public.general_features.nmt_boot_time_not_active.to_string(),
         nmt_cycle_time_max: public.general_features.nmt_cycle_time_max.to_string(),
         nmt_cycle_time_min: public.general_features.nmt_cycle_time_min.to_string(),
         nmt_error_entries: public.general_features.nmt_error_entries.to_string(),
-        nmt_max_cn_number: public.general_features.nmt_max_cn_number.map(|v| v.to_string()),
+        nmt_max_cn_number: public
+            .general_features
+            .nmt_max_cn_number
+            .map(|v| v.to_string()),
         pdo_dynamic_mapping: public.general_features.pdo_dynamic_mapping,
         sdo_client: public.general_features.sdo_client,
         sdo_server: public.general_features.sdo_server,
@@ -36,13 +36,13 @@ pub(super) fn build_model_network_management(
         }
     });
 
-    let cn_features = public.cn_features.as_ref().map(|cnf| {
-        model::net_mgmt::CnFeatures {
+    let cn_features = public
+        .cn_features
+        .as_ref()
+        .map(|cnf| model::net_mgmt::CnFeatures {
             dll_cn_feature_multiplex: cnf.dll_cn_feature_multiplex,
             dll_cn_pres_chaining: cnf.dll_cn_pres_chaining,
-            nmt_cn_pre_op2_to_ready2_op: cnf
-                .nmt_cn_pre_op2_to_ready2_op
-                .map(|v| v.to_string()),
+            nmt_cn_pre_op2_to_ready2_op: cnf.nmt_cn_pre_op2_to_ready2_op.map(|v| v.to_string()),
             nmt_cn_soc_2_preq: cnf.nmt_cn_soc_2_preq.to_string(),
             nmt_cn_dna: cnf.nmt_cn_dna.map(|dna| match dna {
                 types::NmtCnDna::DoNotClear => model::net_mgmt::CnFeaturesNmtCnDna::DoNotClear,
@@ -54,8 +54,7 @@ pub(super) fn build_model_network_management(
                 }
             }),
             ..Default::default()
-        }
-    });
+        });
 
     // TODO: Implement Diagnostic builder
     let diagnostic = None;

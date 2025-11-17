@@ -4,11 +4,11 @@
 
 use crate::error::XdcError;
 use crate::model;
-use crate::parser::{parse_hex_u16, parse_hex_u8};
+use crate::parser::{parse_hex_u8, parse_hex_u16};
+use crate::resolver::utils;
 use crate::types;
 use alloc::string::{String, ToString}; // Fix: Add String import
-use alloc::vec::Vec;
-use crate::resolver::utils; // Use the OD utils for mapping
+use alloc::vec::Vec; // Use the OD utils for mapping
 
 /// Helper to resolve a `<fileList>` into a `Vec<String>`.
 fn resolve_file_list(model: &model::modular::FileList) -> Result<Vec<String>, XdcError> {
@@ -19,11 +19,12 @@ fn resolve_file_list(model: &model::modular::FileList) -> Result<Vec<String>, Xd
 fn resolve_connected_module(
     model: &model::modular::ConnectedModule,
 ) -> Result<types::ConnectedModule, XdcError> {
-    let position = model.position.parse::<u32>().map_err(|_| {
-        XdcError::InvalidAttributeFormat {
+    let position = model
+        .position
+        .parse::<u32>()
+        .map_err(|_| XdcError::InvalidAttributeFormat {
             attribute: "connectedModule @position",
-        }
-    })?;
+        })?;
 
     let address = model
         .address
@@ -65,11 +66,13 @@ fn resolve_interface_device(
         .transpose()?
         .unwrap_or_default();
 
-    let max_modules = model.max_modules.parse::<u32>().map_err(|_| {
-        XdcError::InvalidAttributeFormat {
-            attribute: "interface @maxModules",
-        }
-    })?;
+    let max_modules =
+        model
+            .max_modules
+            .parse::<u32>()
+            .map_err(|_| XdcError::InvalidAttributeFormat {
+                attribute: "interface @maxModules",
+            })?;
 
     let module_addressing = match model.module_addressing {
         model::modular::ModuleAddressingHead::Manual => "manual".to_string(),
@@ -174,9 +177,7 @@ fn resolve_range(model: &model::modular::Range) -> Result<types::Range, XdcError
 }
 
 /// Helper to resolve a `<rangeList>`.
-fn resolve_range_list(
-    model: &model::modular::RangeList,
-) -> Result<Vec<types::Range>, XdcError> {
+fn resolve_range_list(model: &model::modular::RangeList) -> Result<Vec<types::Range>, XdcError> {
     model.range.iter().map(resolve_range).collect()
 }
 

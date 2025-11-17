@@ -2,9 +2,9 @@
 
 //! Contains builder functions to convert `types::DeviceManager` into `model::DeviceManager`.
 
+use crate::model::common::{Description, Glabels, Label, LabelChoice};
 use crate::{model, types};
 use alloc::{string::ToString, vec};
-use crate::model::common::{Glabels, Label, LabelChoice, Description};
 
 /// Helper to convert public `types::LEDstate` to `model::device_manager::LEDstate`.
 fn build_model_led_state(public: &types::LEDstate) -> model::device_manager::LEDstate {
@@ -102,22 +102,25 @@ fn build_model_combined_state(
 pub(super) fn build_model_device_manager(
     public: &types::DeviceManager,
 ) -> model::device_manager::DeviceManager {
-    let indicator_list = public.indicator_list.as_ref().map(|indicators| {
-        model::device_manager::IndicatorList {
-            led_list: Some(model::device_manager::LEDList {
-                led: indicators.leds.iter().map(build_model_led).collect(),
-                combined_state: indicators
-                    .combined_states
-                    .iter()
-                    .map(build_model_combined_state)
-                    .collect(),
-            }),
-        }
-    });
+    let indicator_list =
+        public
+            .indicator_list
+            .as_ref()
+            .map(|indicators| model::device_manager::IndicatorList {
+                led_list: Some(model::device_manager::LEDList {
+                    led: indicators.leds.iter().map(build_model_led).collect(),
+                    combined_state: indicators
+                        .combined_states
+                        .iter()
+                        .map(build_model_combined_state)
+                        .collect(),
+                }),
+            });
 
-    let module_management = public.module_management.as_ref().map(|mgmt| {
-        super::modular::build_model_module_management_device(mgmt)
-    });
+    let module_management = public
+        .module_management
+        .as_ref()
+        .map(|mgmt| super::modular::build_model_module_management_device(mgmt));
 
     model::device_manager::DeviceManager {
         indicator_list,
@@ -149,7 +152,7 @@ mod tests {
             led_type: Some("device".to_string()),
             states: vec![public_led_state],
         };
-        
+
         let public_combined_state = types::CombinedState {
             label: Some("Combined Error".to_string()),
             description: None,
@@ -170,24 +173,36 @@ mod tests {
         // 3. Verify the model
         let model_indicator_list = model_dm.indicator_list.unwrap();
         let model_led_list = model_indicator_list.led_list.unwrap();
-        
+
         // Check LED
         assert_eq!(model_led_list.led.len(), 1);
         let model_led = &model_led_list.led[0];
-        assert_eq!(model_led.led_colors, model::device_manager::LEDcolors::Bicolor);
-        assert_eq!(model_led.led_type, Some(model::device_manager::LEDtype::Device));
-        
+        assert_eq!(
+            model_led.led_colors,
+            model::device_manager::LEDcolors::Bicolor
+        );
+        assert_eq!(
+            model_led.led_type,
+            Some(model::device_manager::LEDtype::Device)
+        );
+
         // Check LEDstate
         assert_eq!(model_led.led_state.len(), 1);
         let model_state = &model_led.led_state[0];
         assert_eq!(model_state.unique_id, "uid_led_state_1");
-        assert_eq!(model_state.state, model::device_manager::LEDstateEnum::Flashing);
+        assert_eq!(
+            model_state.state,
+            model::device_manager::LEDstateEnum::Flashing
+        );
         assert_eq!(model_state.led_color, model::device_manager::LEDcolor::Red);
-        
+
         // Check CombinedState
         assert_eq!(model_led_list.combined_state.len(), 1);
         let model_combined = &model_led_list.combined_state[0];
         assert_eq!(model_combined.led_state_ref.len(), 1);
-        assert_eq!(model_combined.led_state_ref[0].state_id_ref, "uid_led_state_1");
+        assert_eq!(
+            model_combined.led_state_ref[0].state_id_ref,
+            "uid_led_state_1"
+        );
     }
 }
