@@ -10,8 +10,8 @@ use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 
 /// Helper to extract the first available `<label>` value from a `g_labels` group.
-pub(super) fn extract_label(labels: &model::common::Glabels) -> Option<String> {
-    labels.items.iter().find_map(|item| {
+pub(super) fn extract_label(items: &[model::common::LabelChoice]) -> Option<String> {
+    items.iter().find_map(|item| {
         if let model::common::LabelChoice::Label(label) = item {
             Some(label.value.clone())
         } else {
@@ -21,8 +21,8 @@ pub(super) fn extract_label(labels: &model::common::Glabels) -> Option<String> {
 }
 
 /// Helper to extract the first available `<description>` value from a `g_labels` group.
-pub(super) fn extract_description(labels: &model::common::Glabels) -> Option<String> {
-    labels.items.iter().find_map(|item| {
+pub(super) fn extract_description(items: &[model::common::LabelChoice]) -> Option<String> {
+    items.iter().find_map(|item| {
         if let model::common::LabelChoice::Description(desc) = item {
             Some(desc.value.clone())
         } else {
@@ -137,9 +137,7 @@ pub(super) fn get_data_type_size(
 }
 
 /// Maps the internal model enum (`ObjectAccessType`) to the public types enum (`ParameterAccess`).
-pub(super) fn map_access_type(
-    model: model::app_layers::ObjectAccessType,
-) -> types::ParameterAccess {
+pub(super) fn map_access_type(model: model::app_layers::ObjectAccessType) -> types::ParameterAccess {
     match model {
         model::app_layers::ObjectAccessType::ReadOnly => types::ParameterAccess::ReadOnly,
         model::app_layers::ObjectAccessType::WriteOnly => types::ParameterAccess::WriteOnly,
@@ -149,9 +147,7 @@ pub(super) fn map_access_type(
 }
 
 /// Maps the internal model enum (`ObjectPdoMapping`) to the public types enum.
-pub(super) fn map_pdo_mapping(
-    model: model::app_layers::ObjectPdoMapping,
-) -> types::ObjectPdoMapping {
+pub(super) fn map_pdo_mapping(model: model::app_layers::ObjectPdoMapping) -> types::ObjectPdoMapping {
     match model {
         model::app_layers::ObjectPdoMapping::No => types::ObjectPdoMapping::No,
         model::app_layers::ObjectPdoMapping::Default => types::ObjectPdoMapping::Default,
@@ -162,28 +158,20 @@ pub(super) fn map_pdo_mapping(
 }
 
 /// Maps the `ApplicationProcess` `ParameterAccess` enum to the public `types` enum.
-pub(super) fn map_param_access(
-    model: model::app_process::ParameterAccess,
-) -> types::ParameterAccess {
+pub(super) fn map_param_access(model: model::app_process::ParameterAccess) -> types::ParameterAccess {
     match model {
         model::app_process::ParameterAccess::Const => types::ParameterAccess::Constant,
         model::app_process::ParameterAccess::Read => types::ParameterAccess::ReadOnly,
         model::app_process::ParameterAccess::Write => types::ParameterAccess::WriteOnly,
         model::app_process::ParameterAccess::ReadWrite => types::ParameterAccess::ReadWrite,
-        model::app_process::ParameterAccess::ReadWriteInput => {
-            types::ParameterAccess::ReadWriteInput
-        }
-        model::app_process::ParameterAccess::ReadWriteOutput => {
-            types::ParameterAccess::ReadWriteOutput
-        }
+        model::app_process::ParameterAccess::ReadWriteInput => types::ParameterAccess::ReadWriteInput,
+        model::app_process::ParameterAccess::ReadWriteOutput => types::ParameterAccess::ReadWriteOutput,
         model::app_process::ParameterAccess::NoAccess => types::ParameterAccess::NoAccess,
     }
 }
 
 /// Maps the `ApplicationProcess` `ParameterSupport` enum to the public `types` enum.
-pub(super) fn map_param_support(
-    model: model::app_process::ParameterSupport,
-) -> types::ParameterSupport {
+pub(super) fn map_param_support(model: model::app_process::ParameterSupport) -> types::ParameterSupport {
     match model {
         model::app_process::ParameterSupport::Mandatory => types::ParameterSupport::Mandatory,
         model::app_process::ParameterSupport::Optional => types::ParameterSupport::Optional,
@@ -195,13 +183,8 @@ pub(super) fn map_param_support(
 mod tests {
     use super::*;
     use crate::model::app_layers::{DataTypeName, ObjectAccessType, ObjectPdoMapping};
-    use crate::model::app_process::{
-        ParameterAccess as ParamAccessModel, ParameterSupport as ParamSupportModel,
-    };
-    use crate::types::{
-        ObjectPdoMapping as PdoPublic, ParameterAccess as ParamAccessPublic,
-        ParameterSupport as ParamSupportPublic,
-    };
+    use crate::model::app_process::{ParameterAccess as ParamAccessModel, ParameterSupport as ParamSupportModel};
+    use crate::types::{ParameterAccess as ParamAccessPublic, ParameterSupport as ParamSupportPublic, ObjectPdoMapping as PdoPublic};
     use alloc::collections::BTreeMap;
     use alloc::string::ToString;
     use alloc::vec;
@@ -210,9 +193,9 @@ mod tests {
     fn get_test_type_map() -> BTreeMap<String, DataTypeName> {
         let mut map = BTreeMap::new();
         map.insert("0005".to_string(), DataTypeName::Unsigned8);
+        map.insert("0006".to_string(), DataTypeName::Unsigned16);
         map.insert("0007".to_string(), DataTypeName::Unsigned32);
-        map.insert("0009".to_string(), DataTypeName::VisibleString);
-        map.insert("0401".to_string(), DataTypeName::MacAddress);
+        map.insert("001B".to_string(), DataTypeName::Unsigned64);
         map
     }
 
@@ -235,7 +218,7 @@ mod tests {
         assert_eq!(get_data_type_size("0010", &empty_map), Some(3)); // Integer24
         assert_eq!(get_data_type_size("001B", &empty_map), Some(8)); // Unsigned64
         assert_eq!(get_data_type_size("0403", &empty_map), Some(8)); // NETTIME
-
+        
         // Test variable-sized type
         assert_eq!(get_data_type_size("000A", &empty_map), None); // Octet_String
         // Test unknown type
@@ -245,7 +228,7 @@ mod tests {
     #[test]
     fn test_validate_type() {
         let type_map = get_test_type_map();
-
+        
         // 1. Success case
         let data_ok = vec![0x12, 0x34, 0x56, 0x78];
         let result_ok = validate_type(0x1000, 1, &data_ok, "0007", &type_map);
@@ -254,16 +237,13 @@ mod tests {
         // 2. Failure case (length mismatch)
         let data_fail = vec![0x12, 0x34]; // 2 bytes
         let result_fail = validate_type(0x1000, 1, &data_fail, "0007", &type_map); // Expects 4 bytes
-        assert!(matches!(
-            result_fail,
-            Err(XdcError::TypeValidationError {
-                index: 0x1000,
-                sub_index: 1,
-                data_type: _,
-                expected_bytes: 4,
-                actual_bytes: 2,
-            })
-        ));
+        assert!(matches!(result_fail, Err(XdcError::TypeValidationError {
+            index: 0x1000,
+            sub_index: 1,
+            data_type: _,
+            expected_bytes: 4,
+            actual_bytes: 2,
+        })));
 
         // 3. Success on variable-sized type (should always pass)
         let data_var = vec![0x48, 0x69];
@@ -273,84 +253,36 @@ mod tests {
 
     #[test]
     fn test_map_access_type() {
-        assert_eq!(
-            map_access_type(ObjectAccessType::ReadOnly),
-            ParamAccessPublic::ReadOnly
-        );
-        assert_eq!(
-            map_access_type(ObjectAccessType::WriteOnly),
-            ParamAccessPublic::WriteOnly
-        );
-        assert_eq!(
-            map_access_type(ObjectAccessType::ReadWrite),
-            ParamAccessPublic::ReadWrite
-        );
-        assert_eq!(
-            map_access_type(ObjectAccessType::Constant),
-            ParamAccessPublic::Constant
-        );
+        assert_eq!(map_access_type(ObjectAccessType::ReadOnly), ParamAccessPublic::ReadOnly);
+        assert_eq!(map_access_type(ObjectAccessType::WriteOnly), ParamAccessPublic::WriteOnly);
+        assert_eq!(map_access_type(ObjectAccessType::ReadWrite), ParamAccessPublic::ReadWrite);
+        assert_eq!(map_access_type(ObjectAccessType::Constant), ParamAccessPublic::Constant);
     }
 
     #[test]
     fn test_map_pdo_mapping() {
         assert_eq!(map_pdo_mapping(ObjectPdoMapping::No), PdoPublic::No);
-        assert_eq!(
-            map_pdo_mapping(ObjectPdoMapping::Default),
-            PdoPublic::Default
-        );
-        assert_eq!(
-            map_pdo_mapping(ObjectPdoMapping::Optional),
-            PdoPublic::Optional
-        );
+        assert_eq!(map_pdo_mapping(ObjectPdoMapping::Default), PdoPublic::Default);
+        assert_eq!(map_pdo_mapping(ObjectPdoMapping::Optional), PdoPublic::Optional);
         assert_eq!(map_pdo_mapping(ObjectPdoMapping::Tpdo), PdoPublic::Tpdo);
         assert_eq!(map_pdo_mapping(ObjectPdoMapping::Rpdo), PdoPublic::Rpdo);
     }
 
     #[test]
     fn test_map_param_access() {
-        assert_eq!(
-            map_param_access(ParamAccessModel::Const),
-            ParamAccessPublic::Constant
-        );
-        assert_eq!(
-            map_param_access(ParamAccessModel::Read),
-            ParamAccessPublic::ReadOnly
-        );
-        assert_eq!(
-            map_param_access(ParamAccessModel::Write),
-            ParamAccessPublic::WriteOnly
-        );
-        assert_eq!(
-            map_param_access(ParamAccessModel::ReadWrite),
-            ParamAccessPublic::ReadWrite
-        );
-        assert_eq!(
-            map_param_access(ParamAccessModel::ReadWriteInput),
-            ParamAccessPublic::ReadWriteInput
-        );
-        assert_eq!(
-            map_param_access(ParamAccessModel::ReadWriteOutput),
-            ParamAccessPublic::ReadWriteOutput
-        );
-        assert_eq!(
-            map_param_access(ParamAccessModel::NoAccess),
-            ParamAccessPublic::NoAccess
-        );
+        assert_eq!(map_param_access(ParamAccessModel::Const), ParamAccessPublic::Constant);
+        assert_eq!(map_param_access(ParamAccessModel::Read), ParamAccessPublic::ReadOnly);
+        assert_eq!(map_param_access(ParamAccessModel::Write), ParamAccessPublic::WriteOnly);
+        assert_eq!(map_param_access(ParamAccessModel::ReadWrite), ParamAccessPublic::ReadWrite);
+        assert_eq!(map_param_access(ParamAccessModel::ReadWriteInput), ParamAccessPublic::ReadWriteInput);
+        assert_eq!(map_param_access(ParamAccessModel::ReadWriteOutput), ParamAccessPublic::ReadWriteOutput);
+        assert_eq!(map_param_access(ParamAccessModel::NoAccess), ParamAccessPublic::NoAccess);
     }
 
     #[test]
     fn test_map_param_support() {
-        assert_eq!(
-            map_param_support(ParamSupportModel::Mandatory),
-            ParamSupportPublic::Mandatory
-        );
-        assert_eq!(
-            map_param_support(ParamSupportModel::Optional),
-            ParamSupportPublic::Optional
-        );
-        assert_eq!(
-            map_param_support(ParamSupportModel::Conditional),
-            ParamSupportPublic::Conditional
-        );
+        assert_eq!(map_param_support(ParamSupportModel::Mandatory), ParamSupportPublic::Mandatory);
+        assert_eq!(map_param_support(ParamSupportModel::Optional), ParamSupportPublic::Optional);
+        assert_eq!(map_param_support(ParamSupportModel::Conditional), ParamSupportPublic::Conditional);
     }
 }

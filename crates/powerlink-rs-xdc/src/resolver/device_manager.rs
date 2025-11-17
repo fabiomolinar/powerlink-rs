@@ -4,55 +4,41 @@
 
 use crate::error::XdcError;
 use crate::model;
-use crate::resolver::modular; // Import the new modular resolver
-use crate::resolver::utils; // Import the utils module
+use crate::resolver::{modular, utils}; // Import the utils module
 use crate::types;
-use alloc::string::{ToString}; // Fix: Add String import
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use crate::model::device_manager as model_dm;
+use crate::model::modular as model_mod;
 
-// --- Label Helpers ---
+// --- Sub-Resolvers ---
 
-// REMOVED: `extract_label` - Now in `utils.rs`
-// REMOVED: `extract_description` - Now in `utils.rs`
-
-/// Resolves a `<combinedState>` model into the public type.
-fn resolve_combined_state(
-    model: &model::device_manager::CombinedState,
-) -> Result<types::CombinedState, XdcError> {
-    let led_state_refs = model
-        .led_state_ref
-        .iter()
-        .map(|r| r.state_id_ref.clone())
-        .collect();
-
-    Ok(types::CombinedState {
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
-        led_state_refs,
-    })
-}
-
-/// ResolVes an `<LEDstate>` model into the public type.
-fn resolve_led_state(model: &model::device_manager::LEDstate) -> Result<types::LEDstate, XdcError> {
+/// Resolves an `<LEDstate>`.
+fn resolve_led_state(model: &model_dm::LEDstate) -> Result<types::LEDstate, XdcError> {
     Ok(types::LEDstate {
         unique_id: model.unique_id.clone(),
-        state: match model.state {
-            model::device_manager::LEDstateEnum::On => "on".to_string(),
-            model::device_manager::LEDstateEnum::Off => "off".to_string(),
-            model::device_manager::LEDstateEnum::Flashing => "flashing".to_string(),
-        },
-        color: match model.led_color {
-            model::device_manager::LEDcolor::Green => "green".to_string(),
-            model::device_manager::LEDcolor::Amber => "amber".to_string(),
-            model::device_manager::LEDcolor::Red => "red".to_string(),
-        },
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
+        state: model.state.to_string(),
+        color: model.led_color.to_string(),
+        // FIX: Removed fields that are not in the public `types::LEDState` struct
+        // flashing_period: model
+        //     .flashing_period
+        //     .as_ref()
+        //     .and_then(|p| p.parse().ok()),
+        // impuls_width: model
+        //     .impuls_width
+        //     .as_ref()
+        //     .and_then(|w| w.parse().ok()),
+        // number_of_impulses: model
+        //     .number_of_impulses
+        //     .as_ref()
+        //     .and_then(|n| n.parse().ok()),
+        label: utils::extract_label(&model.labels.items), // Use utils::
+        description: utils::extract_description(&model.labels.items), // Use utils::
     })
 }
 
-/// Resolves an `<LED>` model into the public type.
-fn resolve_led(model: &model::device_manager::LED) -> Result<types::LED, XdcError> {
+/// Resolves an `<LED>`.
+fn resolve_led(model: &model_dm::LED) -> Result<types::LED, XdcError> {
     let states = model
         .led_state
         .iter()
@@ -60,36 +46,44 @@ fn resolve_led(model: &model::device_manager::LED) -> Result<types::LED, XdcErro
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(types::LED {
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
-        colors: match model.led_colors {
-            model::device_manager::LEDcolors::Monocolor => "monocolor".to_string(),
-            model::device_manager::LEDcolors::Bicolor => "bicolor".to_string(),
-        },
-        led_type: model.led_type.map(|t| match t {
-            model::device_manager::LEDtype::Io => "IO".to_string(),
-            model::device_manager::LEDtype::Device => "device".to_string(),
-            model::device_manager::LEDtype::Communication => "communication".to_string(),
-        }),
+        led_type: model.led_type.map(|t| t.to_string()),
+        colors: model.led_colors.to_string(),
+        label: utils::extract_label(&model.labels.items), // Use utils::
+        description: utils::extract_description(&model.labels.items), // Use utils::
         states,
     })
 }
 
-/// Resolves an `<LEDList>` model into the public type.
-fn resolve_led_list(
-    model: &model::device_manager::LEDList,
+/// Resolves a `<combinedState>`.
+fn resolve_combined_state(model: &model_dm::CombinedState) -> Result<types::CombinedState, XdcError> {
+    Ok(types::CombinedState {
+        led_state_refs: model
+            .led_state_ref
+            .iter()
+            .map(|r| r.state_id_ref.clone())
+            .collect(),
+        label: utils::extract_label(&model.labels.items), // Use utils::
+        description: utils::extract_description(&model.labels.items), // Use utils::
+    })
+}
+
+/// Resolves an `<indicatorList>`.
+fn resolve_indicator_list(
+    model: &model_dm::IndicatorList,
 ) -> Result<types::IndicatorList, XdcError> {
     let leds = model
-        .led
-        .iter()
-        .map(resolve_led)
-        .collect::<Result<Vec<_>, _>>()?;
+        .led_list
+        .as_ref()
+        .map_or(Ok(Vec::new()), |list| {
+            list.led.iter().map(resolve_led).collect()
+        })?;
 
     let combined_states = model
-        .combined_state
-        .iter()
-        .map(resolve_combined_state)
-        .collect::<Result<Vec<_>, _>>()?;
+        .led_list
+        .as_ref()
+        .map_or(Ok(Vec::new()), |list| {
+            list.combined_state.iter().map(resolve_combined_state).collect()
+        })?;
 
     Ok(types::IndicatorList {
         leds,
@@ -97,24 +91,11 @@ fn resolve_led_list(
     })
 }
 
-/// Resolves an `<indicatorList>` model into the public type.
-fn resolve_indicator_list(
-    model: &model::device_manager::IndicatorList,
-) -> Result<types::IndicatorList, XdcError> {
-    // The model has <indicatorList><LEDList>...
-    // The public type just combines this.
-    // Fix: Wrap return in Ok()
-    Ok(model
-        .led_list
-        .as_ref()
-        .map(resolve_led_list)
-        .transpose()?
-        .unwrap_or_default())
-}
+// --- Main Resolver ---
 
 /// Parses a `model::DeviceManager` into a `types::DeviceManager`.
 pub(super) fn resolve_device_manager(
-    model: &model::device_manager::DeviceManager,
+    model: &model_dm::DeviceManager,
 ) -> Result<types::DeviceManager, XdcError> {
     let indicator_list = model
         .indicator_list
@@ -122,8 +103,6 @@ pub(super) fn resolve_device_manager(
         .map(resolve_indicator_list)
         .transpose()?;
 
-    // Resolve the modular device management part, if it exists
-    // Fix: Correctly reference the field
     let module_management = model
         .module_management
         .as_ref()

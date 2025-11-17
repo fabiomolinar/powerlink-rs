@@ -6,28 +6,16 @@ use crate::model::common::{AttributedGlabels, Glabels, LabelChoice};
 use crate::parser::parse_hex_u32;
 use crate::types;
 use alloc::string::String;
+use crate::resolver::utils; // Import utils
 
 /// Helper to extract the first available `<label>` value from a `g_labels` group.
-#[allow(dead_code)]
 fn extract_label_from_glabels(labels: &Glabels) -> Option<String> {
-    labels.items.iter().find_map(|item| {
-        if let LabelChoice::Label(label) = item {
-            Some(label.value.clone())
-        } else {
-            None
-        }
-    })
+    utils::extract_label(&labels.items) // FIX: Pass .items
 }
 
 /// Helper to extract the first available `<label>` value from an `AttributedGlabels` struct.
 fn extract_label_from_attributed_glabels(attributed_labels: &AttributedGlabels) -> Option<String> {
-    attributed_labels.items.iter().find_map(|item| {
-        if let LabelChoice::Label(label) = item {
-            Some(label.value.clone())
-        } else {
-            None
-        }
-    })
+    utils::extract_label(&attributed_labels.items) // FIX: Pass .items
 }
 
 /// Parses a `model::DeviceIdentity` into a clean `types::Identity`.

@@ -4,12 +4,9 @@
 
 #![allow(clippy::pedantic)] // XML schema names are not idiomatic Rust
 
-use crate::model::common::{Description, Glabels, Label, LabelChoice};
 use crate::{model, types};
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{string::{String, ToString}, vec, vec::Vec};
+use crate::model::common::{Glabels, Label, LabelChoice, Description};
 
 /// Helper to create a `Glabels` struct from optional label and description strings.
 fn build_glabels(label: Option<&String>, description: Option<&String>) -> Glabels {
@@ -36,13 +33,14 @@ fn build_model_characteristic(
 ) -> model::device_function::Characteristic {
     model::device_function::Characteristic {
         characteristic_name: model::device_function::CharacteristicName {
-            labels: build_glabels(Some(&public.name), None),
+            items: build_glabels(Some(&public.name), None).items, // FIX: Assign to items
         },
         characteristic_content: public
             .content
             .iter()
             .map(|c| model::device_function::CharacteristicContent {
-                labels: build_glabels(Some(c), None),
+                items: build_glabels(Some(c), None).items, // FIX: Assign to items
+                ..Default::default()
             })
             .collect(),
     }
@@ -53,12 +51,9 @@ fn build_model_characteristics_list(
     public: &types::CharacteristicList,
 ) -> model::device_function::CharacteristicsList {
     model::device_function::CharacteristicsList {
-        category: public
-            .category
-            .as_ref()
-            .map(|c| model::device_function::Category {
-                labels: build_glabels(Some(c), None),
-            }),
+        category: public.category.as_ref().map(|c| model::device_function::Category {
+            labels: build_glabels(Some(c), None),
+        }),
         characteristic: public
             .characteristics
             .iter()
@@ -79,7 +74,9 @@ fn build_model_compliant_with(
 }
 
 /// Converts a public `types::Capabilities` into a `model::device_function::Capabilities`.
-fn build_model_capabilities(public: &types::Capabilities) -> model::device_function::Capabilities {
+fn build_model_capabilities(
+    public: &types::Capabilities,
+) -> model::device_function::Capabilities {
     model::device_function::Capabilities {
         characteristics_list: public
             .characteristics
@@ -161,18 +158,10 @@ pub(super) fn build_model_device_function(
                 picture: public.pictures.iter().map(build_model_picture).collect(),
             }),
             dictionary_list: Some(model::device_function::DictionaryList {
-                dictionary: public
-                    .dictionaries
-                    .iter()
-                    .map(build_model_dictionary)
-                    .collect(),
+                dictionary: public.dictionaries.iter().map(build_model_dictionary).collect(),
             }),
             connector_list: Some(model::device_function::ConnectorList {
-                connector: public
-                    .connectors
-                    .iter()
-                    .map(build_model_connector)
-                    .collect(),
+                connector: public.connectors.iter().map(build_model_connector).collect(),
             }),
             firmware_list: Some(model::device_function::FirmwareList {
                 firmware: public
@@ -195,7 +184,8 @@ pub(super) fn build_model_device_function(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::common::LabelChoice;
+    use crate::model::common::{Description, Label, LabelChoice};
+    use crate::model::device_function as model_df;
     use crate::types;
     use alloc::string::ToString;
     use alloc::vec;
@@ -237,18 +227,18 @@ mod tests {
         let model_char = build_model_characteristic(&pub_char);
 
         // Check name (which is a label)
-        assert_eq!(model_char.characteristic_name.labels.items.len(), 1);
+        assert_eq!(model_char.characteristic_name.items.len(), 1); // FIX: Access .items
         assert!(
-            matches!(&model_char.characteristic_name.labels.items[0], LabelChoice::Label(l) if l.value == "Rate")
+            matches!(&model_char.characteristic_name.items[0], LabelChoice::Label(l) if l.value == "Rate") // FIX: Access .items
         );
 
         // Check content (which are also labels)
         assert_eq!(model_char.characteristic_content.len(), 2);
         assert!(
-            matches!(&model_char.characteristic_content[0].labels.items[0], LabelChoice::Label(l) if l.value == "100 MBit/s")
+            matches!(&model_char.characteristic_content[0].items[0], LabelChoice::Label(l) if l.value == "100 MBit/s") // FIX: Access .items
         );
         assert!(
-            matches!(&model_char.characteristic_content[1].labels.items[0], LabelChoice::Label(l) if l.value == "Full Duplex")
+            matches!(&model_char.characteristic_content[1].items[0], LabelChoice::Label(l) if l.value == "Full Duplex") // FIX: Access .items
         );
     }
 

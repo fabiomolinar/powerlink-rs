@@ -8,6 +8,7 @@ use alloc::vec::Vec;
 use alloc::string::String;
 use super::common::Glabels;
 use super::modular::ModuleManagementDevice; // Import modular struct
+use core::fmt; // Import for Display trait
 
 /// Represents the `<DeviceManager>` element.
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -45,6 +46,15 @@ pub enum LEDcolors {
     Bicolor,
 }
 
+impl fmt::Display for LEDcolors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LEDcolors::Monocolor => write!(f, "monocolor"),
+            LEDcolors::Bicolor => write!(f, "bicolor"),
+        }
+    }
+}
+
 // Fix: Add Default implementation
 impl Default for LEDcolors {
     fn default() -> Self {
@@ -61,6 +71,16 @@ pub enum LEDtype {
     Device,
     #[serde(rename = "communication")]
     Communication,
+}
+
+impl fmt::Display for LEDtype {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LEDtype::Io => write!(f, "IO"),
+            LEDtype::Device => write!(f, "device"),
+            LEDtype::Communication => write!(f, "communication"),
+        }
+    }
 }
 
 /// Represents an `<LED>` element.
@@ -87,6 +107,16 @@ pub enum LEDstateEnum {
     Flashing,
 }
 
+impl fmt::Display for LEDstateEnum {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LEDstateEnum::On => write!(f, "on"),
+            LEDstateEnum::Off => write!(f, "off"),
+            LEDstateEnum::Flashing => write!(f, "flashing"),
+        }
+    }
+}
+
 // Fix: Add Default implementation
 impl Default for LEDstateEnum {
     fn default() -> Self {
@@ -103,6 +133,16 @@ pub enum LEDcolor {
     Amber,
     #[serde(rename = "red")]
     Red,
+}
+
+impl fmt::Display for LEDcolor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LEDcolor::Green => write!(f, "green"),
+            LEDcolor::Amber => write!(f, "amber"),
+            LEDcolor::Red => write!(f, "red"),
+        }
+    }
 }
 
 // Fix: Add Default implementation

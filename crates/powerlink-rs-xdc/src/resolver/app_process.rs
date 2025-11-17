@@ -106,9 +106,12 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
                 name: var.name.clone(),
                 unique_id: var.unique_id.clone(),
                 data_type: get_data_type_name(&var.data_type),
-                size: var.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
-                label: utils::extract_label(&var.labels), // Use utils::
-                description: utils::extract_description(&var.labels), // Use utils::
+                size: var
+                    .size
+                    .as_ref()
+                    .and_then(|s| s.parse::<u32>().ok()),
+                label: utils::extract_label(&var.labels.items), // FIX: Pass .items
+                description: utils::extract_description(&var.labels.items), // FIX: Pass .items
             })
         })
         .collect::<Result<Vec<_>, XdcError>>()?;
@@ -116,8 +119,8 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
     Ok(types::AppStruct {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
+        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
+        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
         members,
     })
 }
@@ -133,8 +136,8 @@ fn resolve_array(model: &model::app_process::AppArray) -> Result<types::AppArray
     Ok(types::AppArray {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
+        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
+        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
         lower_limit: subrange.lower_limit.parse().unwrap_or(0),
         upper_limit: subrange.upper_limit.parse().unwrap_or(0),
         data_type: get_data_type_name(&model.data_type),
@@ -147,24 +150,27 @@ fn resolve_enum(model: &model::app_process::AppEnum) -> Result<types::AppEnum, X
         .enum_value
         .iter()
         .map(|val| types::EnumValue {
-            name: utils::extract_label(&val.labels).unwrap_or_default(), // Name comes from <label>
+            name: utils::extract_label(&val.labels.items).unwrap_or_default(), // Name comes from <label>
             value: val.value.clone().unwrap_or_default(),
-            label: utils::extract_label(&val.labels), // Use utils::
-            description: utils::extract_description(&val.labels), // Use utils::
+            label: utils::extract_label(&val.labels.items), // FIX: Pass .items
+            description: utils::extract_description(&val.labels.items), // FIX: Pass .items
         })
         .collect();
 
     Ok(types::AppEnum {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
+        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
+        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
         data_type: model
             .data_type
             .as_ref()
             .map(get_data_type_name)
             .unwrap_or_default(),
-        size_in_bits: model.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
+        size_in_bits: model
+            .size
+            .as_ref()
+            .and_then(|s| s.parse::<u32>().ok()),
         values,
     })
 }
@@ -180,8 +186,8 @@ fn resolve_derived(model: &model::app_process::AppDerived) -> Result<types::AppD
     Ok(types::AppDerived {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
+        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
+        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
         data_type: get_data_type_name(&model.data_type),
         count,
     })
@@ -205,15 +211,18 @@ fn resolve_parameter_group(
         .items
         .iter()
         .map(|item| match item {
-            ParameterGroupItem::ParameterGroup(pg) => Ok(types::ParameterGroupItem::Group(
-                resolve_parameter_group(pg)?,
-            )),
+            ParameterGroupItem::ParameterGroup(pg) => {
+                Ok(types::ParameterGroupItem::Group(resolve_parameter_group(pg)?))
+            }
             ParameterGroupItem::ParameterRef(pr) => {
                 Ok(types::ParameterGroupItem::Parameter(types::ParameterRef {
                     unique_id_ref: pr.unique_id_ref.clone(),
                     visible: pr.visible,
                     locked: pr.locked,
-                    bit_offset: pr.bit_offset.as_ref().and_then(|s| s.parse::<u32>().ok()),
+                    bit_offset: pr
+                        .bit_offset
+                        .as_ref()
+                        .and_then(|s| s.parse::<u32>().ok()),
                 }))
             }
         })
@@ -221,8 +230,8 @@ fn resolve_parameter_group(
 
     Ok(types::ParameterGroup {
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
+        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
+        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
         items,
     })
 }
@@ -249,8 +258,8 @@ fn resolve_function_type(
             version: v.version.clone(),
             author: v.author.clone(),
             date: v.date.clone(),
-            label: utils::extract_label(&v.labels), // Use utils::
-            description: utils::extract_description(&v.labels), // Use utils::
+            label: utils::extract_label(&v.labels.items), // FIX: Pass .items
+            description: utils::extract_description(&v.labels.items), // FIX: Pass .items
         })
         .collect();
 
@@ -263,8 +272,8 @@ fn resolve_function_type(
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
         package: model.package.clone(),
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
+        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
+        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
         version_info,
         interface,
     })
@@ -274,26 +283,35 @@ fn resolve_function_type(
 fn resolve_interface_list(
     model: &model::app_process::InterfaceList,
 ) -> Result<types::InterfaceList, XdcError> {
-    let inputs = model.input_vars.as_ref().map_or(Ok(Vec::new()), |vars| {
-        vars.var_declaration
-            .iter()
-            .map(resolve_var_declaration)
-            .collect()
-    })?;
+    let inputs = model
+        .input_vars
+        .as_ref()
+        .map_or(Ok(Vec::new()), |vars| {
+            vars.var_declaration
+                .iter()
+                .map(resolve_var_declaration)
+                .collect()
+        })?;
 
-    let outputs = model.output_vars.as_ref().map_or(Ok(Vec::new()), |vars| {
-        vars.var_declaration
-            .iter()
-            .map(resolve_var_declaration)
-            .collect()
-    })?;
+    let outputs = model
+        .output_vars
+        .as_ref()
+        .map_or(Ok(Vec::new()), |vars| {
+            vars.var_declaration
+                .iter()
+                .map(resolve_var_declaration)
+                .collect()
+        })?;
 
-    let configs = model.config_vars.as_ref().map_or(Ok(Vec::new()), |vars| {
-        vars.var_declaration
-            .iter()
-            .map(resolve_var_declaration)
-            .collect()
-    })?;
+    let configs = model
+        .config_vars
+        .as_ref()
+        .map_or(Ok(Vec::new()), |vars| {
+            vars.var_declaration
+                .iter()
+                .map(resolve_var_declaration)
+                .collect()
+        })?;
 
     Ok(types::InterfaceList {
         inputs,
@@ -312,8 +330,8 @@ fn resolve_var_declaration(
         data_type: get_data_type_name(&model.data_type),
         size: model.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
         initial_value: model.initial_value.clone(),
-        label: utils::extract_label(&model.labels), // Use utils::
-        description: utils::extract_description(&model.labels), // Use utils::
+        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
+        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
     })
 }
 
@@ -328,8 +346,8 @@ fn resolve_function_instance_list(
                 name: inst.name.clone(),
                 unique_id: inst.unique_id.clone(),
                 type_id_ref: inst.type_id_ref.clone(),
-                label: utils::extract_label(&inst.labels), // Use utils::
-                description: utils::extract_description(&inst.labels), // Use utils::
+                label: utils::extract_label(&inst.labels.items), // FIX: Pass .items
+                description: utils::extract_description(&inst.labels.items), // FIX: Pass .items
             })
         })
         .collect()
@@ -340,10 +358,10 @@ fn resolve_function_instance_list(
 mod tests {
     use super::*;
     use crate::model::app_process::{
-        AppArray, AppDerived, AppEnum, AppStruct, Count, EnumValue, FunctionInstance,
-        FunctionInstanceList, FunctionType, FunctionTypeList, InterfaceList, ParameterDataType,
-        ParameterGroup, ParameterGroupItem, ParameterRef, Subrange, VarDeclaration, VarList,
-        VersionInfo,
+        AppArray, AppDerived, AppEnum, AppStruct, Count,
+        EnumValue, FunctionInstance, FunctionInstanceList, FunctionType, FunctionTypeList,
+        InterfaceList, ParameterDataType, ParameterGroup, ParameterGroupItem, ParameterRef,
+        Subrange, VarDeclaration, VarList, VersionInfo,
     };
     use crate::model::common::{DataTypeIDRef, Glabels, Label, LabelChoice};
     use crate::resolver::utils::{extract_description, extract_label};
@@ -355,41 +373,36 @@ mod tests {
 
     #[test]
     fn test_extract_label() {
-        let labels = Glabels {
-            items: vec![
-                LabelChoice::Description(Default::default()),
-                LabelChoice::Label(Label {
-                    lang: "en".into(),
-                    value: "Test Label".into(),
-                }),
-            ],
-        };
-        assert_eq!(extract_label(&labels), Some("Test Label".to_string()));
+        let items = vec![
+            LabelChoice::Description(Default::default()),
+            LabelChoice::Label(Label {
+                lang: "en".into(),
+                value: "Test Label".into(),
+            }),
+        ];
+        assert_eq!(extract_label(&items), Some("Test Label".to_string()));
 
-        let labels_no_label = Glabels {
-            items: vec![LabelChoice::Description(Default::default())],
-        };
-        assert_eq!(extract_label(&labels_no_label), None);
+        let items_no_label = vec![LabelChoice::Description(Default::default())];
+        assert_eq!(extract_label(&items_no_label), None);
     }
 
     #[test]
     fn test_extract_description() {
-        let labels = Glabels {
-            items: vec![
-                LabelChoice::Label(Default::default()),
-                LabelChoice::Description(model::common::Description {
-                    lang: "en".into(),
-                    value: "Test Desc".into(),
-                    ..Default::default()
-                }),
-            ],
-        };
-        assert_eq!(extract_description(&labels), Some("Test Desc".to_string()));
+        let items = vec![
+            LabelChoice::Label(Default::default()),
+            LabelChoice::Description(model::common::Description {
+                lang: "en".into(),
+                value: "Test Desc".into(),
+                ..Default::default()
+            }),
+        ];
+        assert_eq!(
+            extract_description(&items),
+            Some("Test Desc".to_string())
+        );
 
-        let labels_no_desc = Glabels {
-            items: vec![LabelChoice::Label(Default::default())],
-        };
-        assert_eq!(extract_description(&labels_no_desc), None);
+        let items_no_desc = vec![LabelChoice::Label(Default::default())];
+        assert_eq!(extract_description(&items_no_desc), None);
     }
 
     #[test]

@@ -9,6 +9,8 @@ use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::num::ParseIntError; // Import for new helper
+use hex::FromHexError; // Import for new helper
 
 /// Iterates the `model::ObjectList` and resolves it into a rich, public `types::ObjectDictionary`.
 pub(super) fn resolve_object_dictionary<'a>(
@@ -163,7 +165,7 @@ pub(super) fn resolve_object_dictionary<'a>(
 fn parse_value_to_bytes(
     s: &str,
     data_type_id: Option<&str>,
-    _type_map: &BTreeMap<String, DataTypeName>, // type_map is only needed for decimal parsing logic
+    type_map: &BTreeMap<String, DataTypeName>,
 ) -> Result<Vec<u8>, XdcError> {
     let id = data_type_id.ok_or(XdcError::ValidationError(
         "Cannot parse value string to bytes without dataType",
@@ -222,7 +224,7 @@ fn resolve_allowed_values(
         .iter()
         .map(|v| types::Value {
             value: v.value.clone(),
-            label: v.labels.as_ref().and_then(utils::extract_label),
+            label: v.labels.as_ref().and_then(|glabels| utils::extract_label(&glabels.items)), // FIX: Pass .items
         })
         .collect();
 
@@ -330,7 +332,7 @@ mod tests {
     use crate::model;
     use crate::model::app_layers::{Object, SubObject};
     use crate::model::app_process::{
-        AllowedValues as ModelAllowedValues, Range as ModelRange, Value as ModelValue,
+        AllowedValues as ModelAllowedValues, Parameter, Range as ModelRange, Value as ModelValue,
     };
     use crate::model::common::{Glabels, Label, LabelChoice};
     use crate::types;
