@@ -192,3 +192,249 @@ pub(super) fn build_model_device_function(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::common::{Description, Label, LabelChoice};
+    use crate::model::device_function as model_df;
+    use crate::types;
+    use alloc::string::ToString;
+    use alloc::vec;
+
+    // --- UNIT TESTS for helpers ---
+
+    #[test]
+    fn test_build_glabels() {
+        // 1. Test with label and description
+        let label = Some("My Label".to_string());
+        let desc = Some("My Description".to_string());
+        let glabels1 = build_glabels(label.as_ref(), desc.as_ref());
+
+        assert_eq!(glabels1.items.len(), 2);
+        assert!(matches!(&glabels1.items[0], LabelChoice::Label(l) if l.value == "My Label"));
+        assert!(matches!(&glabels1.items[1], LabelChoice::Description(d) if d.value == "My Description"));
+
+        // 2. Test with only label
+        let glabels2 = build_glabels(label.as_ref(), None);
+        assert_eq!(glabels2.items.len(), 1);
+        assert!(matches!(&glabels2.items[0], LabelChoice::Label(l) if l.value == "My Label"));
+
+        // 3. Test with only description
+        let glabels3 = build_glabels(None, desc.as_ref());
+        assert_eq!(glabels3.items.len(), 1);
+        assert!(matches!(&glabels3.items[0], LabelChoice::Description(d) if d.value == "My Description"));
+
+        // 4. Test with None
+        let glabels4 = build_glabels(None, None);
+        assert!(glabels4.items.is_empty());
+    }
+
+    #[test]
+    fn test_build_model_characteristic() {
+        let pub_char = types::Characteristic {
+            name: "Rate".to_string(),
+            content: vec!["100 MBit/s".to_string(), "Full Duplex".to_string()],
+        };
+        let model_char = build_model_characteristic(&pub_char);
+
+        // Check name (which is a label)
+        assert_eq!(model_char.characteristic_name.labels.items.len(), 1);
+        assert!(
+            matches!(&model_char.characteristic_name.labels.items[0], LabelChoice::Label(l) if l.value == "Rate")
+        );
+
+        // Check content (which are also labels)
+        assert_eq!(model_char.characteristic_content.len(), 2);
+        assert!(
+            matches!(&model_char.characteristic_content[0].labels.items[0], LabelChoice::Label(l) if l.value == "100 MBit/s")
+        );
+        assert!(
+            matches!(&model_char.characteristic_content[1].labels.items[0], LabelChoice::Label(l) if l.value == "Full Duplex")
+        );
+    }
+
+    #[test]
+    fn test_build_model_capabilities() {
+        let pub_caps = types::Capabilities {
+            characteristics: vec![types::CharacteristicList {
+                category: Some("General".to_string()),
+                characteristics: vec![types::Characteristic {
+                    name: "Rate".to_string(),
+                    ..Default::default()
+                }],
+            }],
+            standard_compliance: vec![types::StandardCompliance {
+                name: "EN 12345".to_string(),
+                range: "international".to_string(),
+                description: Some("Test standard".to_string()),
+            }],
+        };
+        let model_caps = build_model_capabilities(&pub_caps);
+
+        // Check characteristics list
+        assert_eq!(model_caps.characteristics_list.len(), 1);
+        let model_char_list = &model_caps.characteristics_list[0];
+        assert!(model_char_list.category.is_some());
+        let cat_label = &model_char_list.category.as_ref().unwrap().labels.items[0];
+        assert!(matches!(cat_label, LabelChoice::Label(l) if l.value == "General"));
+        assert_eq!(model_char_list.characteristic.len(), 1);
+
+        // Check standard compliance
+        let std_list = model_caps.standard_compliance_list.unwrap();
+        assert_eq!(std_list.compliant_with.len(), 1);
+        let model_std = &std_list.compliant_with[0];
+        assert_eq!(model_std.name, "EN 12345");
+        assert_eq!(model_std.range, Some("international".to_string()));
+        let std_desc = &model_std.labels.items[0];
+        assert!(matches!(std_desc, LabelChoice::Description(d) if d.value == "Test standard"));
+    }
+
+    #[test]
+    fn test_build_model_picture() {
+        let pub_pic = types::Picture {
+            uri: "./icon.png".to_string(),
+            picture_type: "icon".to_string(),
+            number: Some(1),
+            label: Some("Icon".to_string()),
+            description: Some("A device icon".to_string()),
+        };
+        let model_pic = build_model_picture(&pub_pic);
+        assert_eq!(model_pic.uri, "./icon.png");
+        assert_eq!(model_pic.picture_type, Some("icon".to_string()));
+        assert_eq!(model_pic.number, Some("1".to_string()));
+        assert_eq!(model_pic.labels.items.len(), 2); // Label and Description
+    }
+
+    #[test]
+    fn test_build_model_dictionary() {
+        let pub_dict = types::Dictionary {
+            uri: "./texts_en.xml".to_string(),
+            lang: "en".to_string(),
+            dict_id: "en_dict".to_string(),
+        };
+        let model_dict = build_model_dictionary(&pub_dict);
+        assert_eq!(model_dict.file.uri, "./texts_en.xml");
+        assert_eq!(model_dict.lang, "en");
+        assert_eq!(model_dict.dict_id, "en_dict");
+    }
+
+    #[test]
+    fn test_build_model_connector() {
+        let pub_conn = types::Connector {
+            id: "conn1".to_string(),
+            connector_type: "RJ45".to_string(),
+            interface_id_ref: Some("if_1".to_string()),
+            label: Some("EPL 1".to_string()),
+            ..Default::default()
+        };
+        let model_conn = build_model_connector(&pub_conn);
+        assert_eq!(model_conn.id, "conn1");
+        assert_eq!(model_conn.connector_type, Some("RJ45".to_string()));
+        assert_eq!(model_conn.interface_id_ref, Some("if_1".to_string()));
+        assert_eq!(model_conn.labels.items.len(), 1); // Only label
+    }
+
+    #[test]
+    fn test_build_model_firmware() {
+        let pub_fw = types::Firmware {
+            uri: "./fw.bin".to_string(),
+            device_revision_number: 123,
+            build_date: Some("2024-01-01".to_string()),
+            ..Default::default()
+        };
+        let model_fw = build_model_firmware(&pub_fw);
+        assert_eq!(model_fw.uri, "./fw.bin");
+        assert_eq!(model_fw.device_revision_number, "123");
+        assert_eq!(model_fw.build_date, Some("2024-01-01".to_string()));
+    }
+
+    #[test]
+    fn test_build_model_classification() {
+        let pub_class = types::Classification {
+            value: "IO".to_string(),
+        };
+        let model_class = build_model_classification(&pub_class);
+        assert_eq!(model_class.value, "IO");
+    }
+
+    // --- INTEGRATION TEST for build_model_device_function ---
+
+    #[test]
+    fn test_build_model_device_function() {
+        let pub_df_vec = vec![types::DeviceFunction {
+            capabilities: Some(types::Capabilities {
+                characteristics: vec![types::CharacteristicList {
+                    category: Some("General".to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            pictures: vec![types::Picture {
+                uri: "./icon.png".to_string(),
+                ..Default::default()
+            }],
+            dictionaries: vec![types::Dictionary {
+                dict_id: "en_dict".to_string(),
+                ..Default::default()
+            }],
+            connectors: vec![types::Connector {
+                id: "conn1".to_string(),
+                ..Default::default()
+            }],
+            firmware_list: vec![types::Firmware {
+                uri: "./fw.bin".to_string(),
+                device_revision_number: 1,
+                ..Default::default()
+            }],
+            classifications: vec![types::Classification {
+                value: "IO".to_string(),
+            }],
+        }];
+
+        let model_df_vec = build_model_device_function(&pub_df_vec);
+
+        assert_eq!(model_df_vec.len(), 1);
+        let model_df = &model_df_vec[0];
+
+        // Check that all lists were populated
+        assert!(model_df.capabilities.is_some());
+        assert!(model_df.pictures_list.is_some());
+        assert!(model_df.dictionary_list.is_some());
+        assert!(model_df.connector_list.is_some());
+        assert!(model_df.firmware_list.is_some());
+        assert!(model_df.classification_list.is_some());
+
+        // Spot check content
+        assert_eq!(
+            model_df.capabilities.as_ref().unwrap().characteristics_list[0]
+                .category
+                .as_ref()
+                .unwrap()
+                .labels
+                .items
+                .len(),
+            1
+        );
+        assert_eq!(
+            model_df.pictures_list.as_ref().unwrap().picture[0].uri,
+            "./icon.png"
+        );
+        assert_eq!(
+            model_df.dictionary_list.as_ref().unwrap().dictionary[0].dict_id,
+            "en_dict"
+        );
+        assert_eq!(
+            model_df.connector_list.as_ref().unwrap().connector[0].id,
+            "conn1"
+        );
+        assert_eq!(
+            model_df.firmware_list.as_ref().unwrap().firmware[0].device_revision_number,
+            "1"
+        );
+        assert_eq!(
+            model_df.classification_list.as_ref().unwrap().classification[0].value,
+            "IO"
+        );
+    }
+}

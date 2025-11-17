@@ -206,3 +206,178 @@ pub(super) fn resolve_module_management_comm(
     let interfaces = resolve_interface_list_comm(&model.interface_list)?;
     Ok(types::ModuleManagementComm { interfaces })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::app_layers::ObjectPdoMapping;
+    use crate::model::modular as model_mod;
+    use crate::types;
+    use alloc::string::ToString;
+    use alloc::vec;
+
+    // --- resolve_module_management_device tests ---
+
+    #[test]
+    fn test_resolve_connected_module() {
+        let model_cm = model_mod::ConnectedModule {
+            child_id_ref: "child1".to_string(),
+            position: "3".to_string(),
+            address: Some("5".to_string()),
+        };
+        let pub_cm = resolve_connected_module(&model_cm).unwrap();
+        assert_eq!(pub_cm.child_id_ref, "child1");
+        assert_eq!(pub_cm.position, 3);
+        assert_eq!(pub_cm.address, Some(5));
+    }
+
+    #[test]
+    fn test_resolve_interface_device() {
+        let model_if = model_mod::InterfaceDevice {
+            unique_id: "if1".to_string(),
+            interface_type: "X2X".to_string(),
+            max_modules: "10".to_string(),
+            module_addressing: model_mod::ModuleAddressingHead::Position,
+            file_list: model_mod::FileList {
+                file: vec![model_mod::File {
+                    uri: "file1.xdd".to_string(),
+                }],
+            },
+            connected_module_list: Some(model_mod::ConnectedModuleList {
+                connected_module: vec![model_mod::ConnectedModule {
+                    child_id_ref: "child1".to_string(),
+                    position: "1".to_string(),
+                    ..Default::default()
+                }],
+            }),
+            ..Default::default()
+        };
+
+        let pub_if = resolve_interface_device(&model_if).unwrap();
+        assert_eq!(pub_if.unique_id, "if1");
+        assert_eq!(pub_if.max_modules, 10);
+        assert_eq!(pub_if.module_addressing, "position");
+        assert_eq!(pub_if.file_list.len(), 1);
+        assert_eq!(pub_if.file_list[0], "file1.xdd");
+        assert_eq!(pub_if.connected_modules.len(), 1);
+        assert_eq!(pub_if.connected_modules[0].position, 1);
+    }
+
+    #[test]
+    fn test_resolve_module_interface() {
+        let model_mi = model_mod::ModuleInterface {
+            child_id: "child_abc".to_string(),
+            interface_type: "X2X".to_string(),
+            module_addressing: model_mod::ModuleAddressingChild::Next,
+            ..Default::default()
+        };
+
+        let pub_mi = resolve_module_interface(&model_mi).unwrap();
+        assert_eq!(pub_mi.child_id, "child_abc");
+        assert_eq!(pub_mi.interface_type, "X2X");
+        assert_eq!(pub_mi.module_addressing, "next");
+    }
+
+    #[test]
+    fn test_resolve_module_management_device() {
+        let model_mmd = model_mod::ModuleManagementDevice {
+            interface_list: model_mod::InterfaceListDevice {
+                interface: vec![model_mod::InterfaceDevice {
+                    unique_id: "if1".to_string(),
+                    interface_type: "X2X".to_string(),
+                    max_modules: "10".to_string(),
+                    ..Default::default()
+                }],
+            },
+            module_interface: Some(model_mod::ModuleInterface {
+                child_id: "child_abc".to_string(),
+                ..Default::default()
+            }),
+        };
+
+        let pub_mmd = resolve_module_management_device(&model_mmd).unwrap();
+        assert_eq!(pub_mmd.interfaces.len(), 1);
+        assert_eq!(pub_mmd.interfaces[0].unique_id, "if1");
+        assert!(pub_mmd.module_interface.is_some());
+        assert_eq!(pub_mmd.module_interface.unwrap().child_id, "child_abc");
+    }
+
+    // --- resolve_module_management_comm tests ---
+
+    #[test]
+    fn test_resolve_range() {
+        let model_range = model_mod::Range {
+            name: "DigitalInputs".to_string(),
+            base_index: "6000".to_string(),
+            max_index: Some("60FF".to_string()),
+            max_sub_index: "FE".to_string(),
+            sort_mode: model_mod::SortMode::Index,
+            sort_number: model_mod::AddressingAttribute::Address,
+            sort_step: Some("16".to_string()),
+            pdo_mapping: Some(ObjectPdoMapping::Rpdo),
+        };
+
+        let pub_range = resolve_range(&model_range).unwrap();
+        assert_eq!(pub_range.name, "DigitalInputs");
+        assert_eq!(pub_range.base_index, 0x6000);
+        assert_eq!(pub_range.max_index, Some(0x60FF));
+        assert_eq!(pub_range.max_sub_index, 0xFE);
+        assert_eq!(pub_range.sort_mode, "index");
+        assert_eq!(pub_range.sort_number, "address");
+        assert_eq!(pub_range.sort_step, Some(16));
+        assert_eq!(pub_range.pdo_mapping, Some(types::ObjectPdoMapping::Rpdo));
+    }
+
+    #[test]
+    fn test_resolve_range_invalid_hex() {
+        let model_range = model_mod::Range {
+            base_index: "NOT_HEX".to_string(),
+            max_sub_index: "01".to_string(),
+            ..Default::default()
+        };
+        assert!(matches!(
+            resolve_range(&model_range),
+            Err(XdcError::InvalidAttributeFormat { .. })
+        ));
+
+        let model_range_bad_step = model_mod::Range {
+            base_index: "6000".to_string(),
+            max_sub_index: "01".to_string(),
+            sort_step: Some("NOT_A_NUM".to_string()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            resolve_range(&model_range_bad_step),
+            Err(XdcError::InvalidAttributeFormat {
+                attribute: "range @sortStep"
+            })
+        ));
+    }
+
+    #[test]
+    fn test_resolve_module_management_comm() {
+        let model_mmc = model_mod::ModuleManagementComm {
+            interface_list: model_mod::InterfaceListComm {
+                interface: vec![model_mod::InterfaceComm {
+                    unique_id_ref: "if1".to_string(),
+                    range_list: model_mod::RangeList {
+                        range: vec![model_mod::Range {
+                            name: "DigitalInputs".to_string(),
+                            base_index: "6000".to_string(),
+                            max_sub_index: "FF".to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                }],
+            },
+        };
+
+        let pub_mmc = resolve_module_management_comm(&model_mmc).unwrap();
+        assert_eq!(pub_mmc.interfaces.len(), 1);
+        let pub_if = &pub_mmc.interfaces[0];
+        assert_eq!(pub_if.unique_id_ref, "if1");
+        assert_eq!(pub_if.ranges.len(), 1);
+        assert_eq!(pub_if.ranges[0].name, "DigitalInputs");
+        assert_eq!(pub_if.ranges[0].base_index, 0x6000);
+    }
+}

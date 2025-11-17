@@ -3,28 +3,20 @@
 //! Contains model structs related to `<DeviceManager>`.
 //! (Schema: `ProfileBody_Device_Powerlink.xsd`)
 
-use super::common::Glabels;
-use super::modular::ModuleManagementDevice;
-use alloc::string::String;
+use serde::{Deserialize, Serialize};
 use alloc::vec::Vec;
-use serde::{Deserialize, Serialize}; // Import modular struct
+use alloc::string::String;
+use super::common::Glabels;
+use super::modular::ModuleManagementDevice; // Import modular struct
 
 /// Represents the `<DeviceManager>` element.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DeviceManager {
-    #[serde(
-        rename = "indicatorList",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "indicatorList", default, skip_serializing_if = "Option::is_none")]
     pub indicator_list: Option<IndicatorList>,
     /// This field is only present in Modular Head device profiles.
     /// (from `ProfileBody_Device_Powerlink_Modular_Head.xsd`)
-    #[serde(
-        rename = "moduleManagement",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "moduleManagement", default, skip_serializing_if = "Option::is_none")]
     pub module_management: Option<ModuleManagementDevice>,
 }
 
@@ -40,11 +32,7 @@ pub struct IndicatorList {
 pub struct LEDList {
     #[serde(rename = "LED", default, skip_serializing_if = "Vec::is_empty")]
     pub led: Vec<LED>,
-    #[serde(
-        rename = "combinedState",
-        default,
-        skip_serializing_if = "Vec::is_empty"
-    )]
+    #[serde(rename = "combinedState", default, skip_serializing_if = "Vec::is_empty")]
     pub combined_state: Vec<CombinedState>,
 }
 
@@ -135,28 +123,16 @@ pub struct LEDstate {
     pub state: LEDstateEnum,
     #[serde(rename = "@LEDcolor")]
     pub led_color: LEDcolor,
-    #[serde(
-        rename = "@flashingPeriod",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "@flashingPeriod", default, skip_serializing_if = "Option::is_none")]
     pub flashing_period: Option<String>, // xsd:unsignedInt
-    #[serde(
-        rename = "@impulsWidth",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "@impulsWidth", default, skip_serializing_if = "Option::is_none")]
     pub impuls_width: Option<String>, // xsd:unsignedByte, default "50"
-    #[serde(
-        rename = "@numberOfImpulses",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "@numberOfImpulses", default, skip_serializing_if = "Option::is_none")]
     pub number_of_impulses: Option<String>, // xsd:unsignedByte, default "1"
 }
 
 /// Represents an `<LEDstateRef>` element.
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct LEDstateRef {
     #[serde(rename = "@stateIDRef")]
     pub state_id_ref: String, // xsd:IDREF
