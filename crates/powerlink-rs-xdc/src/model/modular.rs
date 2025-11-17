@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use alloc::vec::Vec;
 use alloc::string::String;
 use super::common::Glabels;
-use super::app_layers::{Object, ObjectPdoMapping};
+use super::app_layers::ObjectPdoMapping;
 
 // --- Common Modular Types (from CommonElements_Modular.xsd) ---
 
@@ -254,30 +254,4 @@ pub struct InterfaceListComm {
 pub struct ModuleManagementComm {
     #[serde(rename = "interfaceList")]
     pub interface_list: InterfaceListComm,
-}
-
-/// Represents the modified `<Object>` type for modular head devices.
-/// (from `t_Object_Extension_Head`)
-#[derive(Debug, Serialize, Deserialize, Default)]
-pub struct ObjectModularHead {
-    // We flatten the standard Object to include all its fields and attributes
-    #[serde(flatten)]
-    pub object: Object,
-    
-    // Add the modular-specific attribute
-    #[serde(rename = "@rangeSelector", default, skip_serializing_if = "Option::is_none")]
-    pub range_selector: Option<String>,
-}
-
-/// Represents the modified `<Object>` type for modular child devices.
-/// (from `t_Object_Extension`)
-#[derive(Debug, Serialize, Deserialize, Default)]
-pub struct ObjectModularChild {
-    // We flatten the standard Object to include all its fields and attributes
-    #[serde(flatten)]
-    pub object: Object,
-    
-    // Add the modular-specific attribute (which is required here)
-    #[serde(rename = "@rangeSelector")]
-    pub range_selector: String,
 }
