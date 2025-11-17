@@ -33,14 +33,14 @@ pub use parser::{load_xdc_from_str, load_xdd_defaults_from_str};
 
 // Public Types
 pub use types::{
-    AddInfo, AppArray, AppDataType, AppDerived, AppEnum, AppStruct, ApplicationProcess,
-    Capabilities, Characteristic, CharacteristicList, Classification, CnFeatures, CombinedState,
-    ConnectedModule, Connector, Count, DeviceFunction, DeviceManager, Diagnostic, Dictionary,
-    EnumValue, ErrorDefinition, Firmware, FunctionInstance, FunctionType, GeneralFeatures,
-    Identity, IndicatorList, InterfaceComm, InterfaceDevice, InterfaceList, LED, LEDstate,
-    MnFeatures, ModuleInterface, ModuleManagementComm, ModuleManagementDevice, NetworkManagement,
-    NmtCnDna, Object, ObjectDictionary, ObjectPdoMapping, ParameterAccess, ParameterGroup,
-    ParameterGroupItem, ParameterRef, ParameterSupport, Picture, ProfileHeader, Range,
-    StandardCompliance, StaticErrorBit, StructMember, SubObject, VarDeclaration, Version,
-    VersionInfo, XdcFile,
+    AddInfo, AllowedValues, AppArray, AppDataType, AppDerived, AppEnum, AppStruct,
+    ApplicationProcess, Capabilities, Characteristic, CharacteristicList, Classification,
+    CnFeatures, CombinedState, ConnectedModule, Connector, Count, DeviceFunction, DeviceManager,
+    Diagnostic, Dictionary, EnumValue, ErrorDefinition, Firmware, FunctionInstance, FunctionType,
+    GeneralFeatures, Identity, IndicatorList, InterfaceComm, InterfaceDevice, InterfaceList, LED,
+    LEDstate, MnFeatures, ModuleInterface, ModuleManagementComm, ModuleManagementDevice,
+    NetworkManagement, NmtCnDna, Object, ObjectDictionary, ObjectPdoMapping, ParameterAccess,
+    ParameterGroup, ParameterGroupItem, ParameterRef, ParameterSupport, Picture, ProfileHeader,
+    Range, StandardCompliance, StaticErrorBit, StructMember, SubObject, Value, ValueRange,
+    VarDeclaration, Version, VersionInfo, XdcFile,
 };

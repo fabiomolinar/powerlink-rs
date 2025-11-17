@@ -5,8 +5,9 @@
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_process::{AppDataTypeChoice, ParameterGroupItem};
-use crate::model::common::{Glabels, LabelChoice};
+// Removed unused import: use crate::model::common::{Glabels, LabelChoice};
 // Removed unused import: use crate::parser::parse_hex_u8;
+use crate::resolver::utils; // Import the utils module
 use crate::types;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -14,27 +15,8 @@ use alloc::vec::Vec;
 
 // --- Label Helpers ---
 
-/// Helper to extract the first available `<label>` value from a `g_labels` group.
-fn extract_label(labels: &Glabels) -> Option<String> {
-    labels.items.iter().find_map(|item| {
-        if let LabelChoice::Label(label) = item {
-            Some(label.value.clone())
-        } else {
-            None
-        }
-    })
-}
-
-/// Helper to extract the first available `<description>` value from a `g_labels` group.
-fn extract_description(labels: &Glabels) -> Option<String> {
-    labels.items.iter().find_map(|item| {
-        if let LabelChoice::Description(desc) = item {
-            Some(desc.value.clone())
-        } else {
-            None
-        }
-    })
-}
+// REMOVED: `extract_label` - Now in `utils.rs`
+// REMOVED: `extract_description` - Now in `utils.rs`
 
 /// Helper to extract the name of a `ParameterDataType` enum.
 fn get_data_type_name(data_type: &model::app_process::ParameterDataType) -> String {
@@ -128,8 +110,8 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
                     .size
                     .as_ref()
                     .and_then(|s| s.parse::<u32>().ok()),
-                label: extract_label(&var.labels),
-                description: extract_description(&var.labels),
+                label: utils::extract_label(&var.labels), // Use utils::
+                description: utils::extract_description(&var.labels), // Use utils::
             })
         })
         .collect::<Result<Vec<_>, XdcError>>()?;
@@ -137,8 +119,8 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
     Ok(types::AppStruct {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
         members,
     })
 }
@@ -154,8 +136,8 @@ fn resolve_array(model: &model::app_process::AppArray) -> Result<types::AppArray
     Ok(types::AppArray {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
         lower_limit: subrange.lower_limit.parse().unwrap_or(0),
         upper_limit: subrange.upper_limit.parse().unwrap_or(0),
         data_type: get_data_type_name(&model.data_type),
@@ -168,18 +150,18 @@ fn resolve_enum(model: &model::app_process::AppEnum) -> Result<types::AppEnum, X
         .enum_value
         .iter()
         .map(|val| types::EnumValue {
-            name: extract_label(&val.labels).unwrap_or_default(), // Name comes from <label>
+            name: utils::extract_label(&val.labels).unwrap_or_default(), // Name comes from <label>
             value: val.value.clone().unwrap_or_default(),
-            label: extract_label(&val.labels),
-            description: extract_description(&val.labels),
+            label: utils::extract_label(&val.labels), // Use utils::
+            description: utils::extract_description(&val.labels), // Use utils::
         })
         .collect();
 
     Ok(types::AppEnum {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
         data_type: model
             .data_type
             .as_ref()
@@ -204,8 +186,8 @@ fn resolve_derived(model: &model::app_process::AppDerived) -> Result<types::AppD
     Ok(types::AppDerived {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
         data_type: get_data_type_name(&model.data_type),
         count,
     })
@@ -248,8 +230,8 @@ fn resolve_parameter_group(
 
     Ok(types::ParameterGroup {
         unique_id: model.unique_id.clone(),
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
         items,
     })
 }
@@ -276,8 +258,8 @@ fn resolve_function_type(
             version: v.version.clone(),
             author: v.author.clone(),
             date: v.date.clone(),
-            label: extract_label(&v.labels),
-            description: extract_description(&v.labels),
+            label: utils::extract_label(&v.labels), // Use utils::
+            description: utils::extract_description(&v.labels), // Use utils::
         })
         .collect();
 
@@ -290,8 +272,8 @@ fn resolve_function_type(
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
         package: model.package.clone(),
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
         version_info,
         interface,
     })
@@ -348,8 +330,8 @@ fn resolve_var_declaration(
         data_type: get_data_type_name(&model.data_type),
         size: model.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
         initial_value: model.initial_value.clone(),
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
     })
 }
 
@@ -364,8 +346,8 @@ fn resolve_function_instance_list(
                 name: inst.name.clone(),
                 unique_id: inst.unique_id.clone(),
                 type_id_ref: inst.type_id_ref.clone(),
-                label: extract_label(&inst.labels),
-                description: extract_description(&inst.labels),
+                label: utils::extract_label(&inst.labels), // Use utils::
+                description: utils::extract_description(&inst.labels), // Use utils::
             })
         })
         .collect()
@@ -382,6 +364,7 @@ mod tests {
         Subrange, VarDeclaration, VarList, VersionInfo,
     };
     use crate::model::common::{DataTypeIDRef, Glabels, Label, LabelChoice};
+    use crate::resolver::utils::{extract_description, extract_label};
     use crate::types;
     use alloc::string::ToString;
     use alloc::vec;

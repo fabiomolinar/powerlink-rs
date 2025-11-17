@@ -485,6 +485,35 @@ pub struct StaticErrorBit {
 
 // --- Application Process ---
 
+/// Represents `<allowedValues>` from `<parameter>` (EPSG 311, 7.4.7.7.2.7).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AllowedValues {
+    /// A list of enumerated allowed values.
+    pub values: Vec<Value>,
+    /// A list of allowed ranges.
+    pub ranges: Vec<ValueRange>,
+}
+
+/// Represents a single `<value>` from `<allowedValues>`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Value {
+    /// The literal value string (e.g., "1", "0x0A").
+    pub value: String,
+    /// An optional label for this value.
+    pub label: Option<String>,
+}
+
+/// Represents a `<range>` from `<allowedValues>`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ValueRange {
+    /// The literal `minValue` string.
+    pub min_value: String,
+    /// The literal `maxValue` string.
+    pub max_value: String,
+    /// An optional `step` string.
+    pub step: Option<String>,
+}
+
 /// Represents the `<ApplicationProcess>` block, containing user-defined
 /// data types, parameters, and groupings.
 #[derive(Debug, Default, PartialEq)]
@@ -751,6 +780,8 @@ pub struct Object {
     pub support: Option<ParameterSupport>,
     /// Resolved `persistent` flag from `<parameter @persistent>`.
     pub persistent: bool,
+    /// Resolved `<allowedValues>` from `<parameter>`.
+    pub allowed_values: Option<AllowedValues>,
     
     // --- Value ---
     /// The resolved data for this object, from `actualValue` or `defaultValue`.
@@ -789,6 +820,8 @@ pub struct SubObject {
     pub support: Option<ParameterSupport>,
     /// Resolved `persistent` flag from `<parameter @persistent>`.
     pub persistent: bool,
+    /// Resolved `<allowedValues>` from `<parameter>`.
+    pub allowed_values: Option<AllowedValues>,
     
     // --- Value ---
     /// The resolved data for this sub-object, from `actualValue` or `defaultValue`.

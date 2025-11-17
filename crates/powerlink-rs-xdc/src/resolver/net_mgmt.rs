@@ -5,7 +5,8 @@ use crate::model;
 use crate::types;
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::model::common::{Glabels, LabelChoice}; // Import label helpers
+use crate::model::common::Glabels; // Import label helpers
+use crate::resolver::utils; // Import the utils module
 
 /// Helper to parse a string attribute as a u32.
 fn parse_u32_attr(s: Option<String>) -> u32 {
@@ -13,31 +14,8 @@ fn parse_u32_attr(s: Option<String>) -> u32 {
 }
 
 
-/// Helper to extract the first available `<label>` value from a `g_labels` group.
-fn extract_label(labels: &Option<Glabels>) -> Option<String> {
-    labels.as_ref().and_then(|glabels| {
-        glabels.items.iter().find_map(|item| {
-            if let LabelChoice::Label(label) = item {
-                Some(label.value.clone())
-            } else {
-                None
-            }
-        })
-    })
-}
-
-/// Helper to extract the first available `<description>` value from a `g_labels` group.
-fn extract_description(labels: &Option<Glabels>) -> Option<String> {
-    labels.as_ref().and_then(|glabels| {
-        glabels.items.iter().find_map(|item| {
-            if let LabelChoice::Description(desc) = item {
-                Some(desc.value.clone())
-            } else {
-                None
-            }
-        })
-    })
-}
+// REMOVED: `extract_label` - Now in `utils.rs`
+// REMOVED: `extract_description` - Now in `utils.rs`
 
 /// Parses a `model::NetworkManagement` into a `types::NetworkManagement`.
 pub(super) fn resolve_network_management(
@@ -104,7 +82,7 @@ fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diag
                         name: ai.name.clone(),
                         bit_offset: ai.bit_offset.parse().unwrap_or(0),
                         len: ai.len.parse().unwrap_or(0),
-                        description: extract_description(&ai.labels),
+                        description: ai.labels.as_ref().and_then(utils::extract_description), // Use utils::
                     }).collect(),
                 })
                 .collect()
@@ -116,8 +94,8 @@ fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diag
             types::StaticErrorBit {
                 name: bit.name.clone(),
                 offset: bit.offset.parse().unwrap_or(0),
-                label: extract_label(&bit.labels),
-                description: extract_description(&bit.labels),
+                label: bit.labels.as_ref().and_then(utils::extract_label), // Use utils::
+                description: bit.labels.as_ref().and_then(utils::extract_description), // Use utils::
             }
         }).collect()
     });
@@ -133,6 +111,7 @@ mod tests {
         AddInfo, AddInfoValue, CnFeatures, CnFeaturesNmtCnDna, Diagnostic, Error, ErrorBit,
         ErrorList, GeneralFeatures, MnFeatures, NetworkManagement, StaticErrorBitField,
     };
+    use crate::resolver::utils::{extract_description, extract_label};
     use crate::types;
     use alloc::string::ToString;
     use alloc::vec;
@@ -164,12 +143,10 @@ mod tests {
 
     #[test]
     fn test_extract_label() {
-        // Test None
-        assert_eq!(extract_label(&None), None);
 
         // Test Some(Glabels) with no items
         let glabels_empty = Some(Glabels { items: vec![] });
-        assert_eq!(extract_label(&glabels_empty), None);
+        assert_eq!(extract_label(&glabels_empty.unwrap_or_default()), None);
 
         // Test Some(Glabels) with only description
         let glabels_desc = Some(Glabels {
@@ -179,7 +156,7 @@ mod tests {
                 ..Default::default()
             })],
         });
-        assert_eq!(extract_label(&glabels_desc), None);
+        assert_eq!(extract_label(&glabels_desc.unwrap_or_default()), None);
 
         // Test Some(Glabels) with one label
         let glabels_one = Some(Glabels {
@@ -189,7 +166,7 @@ mod tests {
             })],
         });
         assert_eq!(
-            extract_label(&glabels_one),
+            extract_label(&glabels_one.unwrap_or_default()),
             Some("First Label".to_string())
         );
 
@@ -212,19 +189,17 @@ mod tests {
             ],
         });
         assert_eq!(
-            extract_label(&glabels_multi),
+            extract_label(&glabels_multi.unwrap_or_default()),
             Some("First Label".to_string())
         );
     }
 
     #[test]
     fn test_extract_description() {
-        // Test None
-        assert_eq!(extract_description(&None), None);
 
         // Test Some(Glabels) with no items
         let glabels_empty = Some(Glabels { items: vec![] });
-        assert_eq!(extract_description(&glabels_empty), None);
+        assert_eq!(extract_description(&glabels_empty.unwrap_or_default()), None);
 
         // Test Some(Glabels) with only label
         let glabels_label = Some(Glabels {
@@ -233,7 +208,7 @@ mod tests {
                 value: "A label".to_string(),
             })],
         });
-        assert_eq!(extract_description(&glabels_label), None);
+        assert_eq!(extract_description(&glabels_label.unwrap_or_default()), None);
 
         // Test Some(Glabels) with one description
         let glabels_one = Some(Glabels {
@@ -244,7 +219,7 @@ mod tests {
             })],
         });
         assert_eq!(
-            extract_description(&glabels_one),
+            extract_description(&glabels_one.unwrap_or_default()),
             Some("First Description".to_string())
         );
 
@@ -268,7 +243,7 @@ mod tests {
             ],
         });
         assert_eq!(
-            extract_description(&glabels_multi),
+            extract_description(&glabels_multi.unwrap_or_default()),
             Some("First Description".to_string())
         );
     }

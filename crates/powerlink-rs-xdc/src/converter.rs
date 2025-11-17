@@ -34,6 +34,7 @@ pub fn to_core_od(xdc_file: &XdcFile) -> Result<ObjectDictionary<'static>, XdcEr
         let value_range = resolve_value_range(
             obj.low_limit.as_deref(),
             obj.high_limit.as_deref(),
+            obj.allowed_values.as_ref(), // Pass in the new field
             obj.data_type.as_deref(),
         );
 
@@ -278,24 +279,50 @@ fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
 fn resolve_value_range(
     low_limit_str: Option<&str>,
     high_limit_str: Option<&str>,
+    allowed_values: Option<&types::AllowedValues>, // MODIFIED: Added parameter
     data_type_id: Option<&str>,
 ) -> Option<ValueRange> {
-    match (low_limit_str, high_limit_str, data_type_id) {
-        (Some(low_str), Some(high_str), Some(dt_id)) => {
+    let dt_id = match data_type_id {
+        Some(id) => id,
+        None => return None, // Cannot parse range without a type
+    };
+
+    // Priority 1: Direct lowLimit/highLimit attributes on the <Object> or <SubObject>.
+    if let (Some(low_str), Some(high_str)) = (low_limit_str, high_limit_str) {
+        match (
+            parse_string_to_value(low_str, dt_id),
+            parse_string_to_value(high_str, dt_id),
+        ) {
+            (Some(min_val), Some(max_val)) => {
+                return Some(ValueRange { min: min_val, max: max_val });
+            }
+            _ => {
+                warn!("Failed to parse low/high limit strings ('{}', '{}') for dataType {}", low_str, high_str, dt_id);
+                // Fall through to check allowedValues
+            }
+        }
+    }
+
+    // Priority 2: <allowedValues> from the resolved <parameter>.
+    if let Some(av) = allowed_values {
+        // The core `ValueRange` struct only supports min/max, not enumerated values.
+        // We will use the *first* <range> element we find.
+        if let Some(range) = av.ranges.first() {
             match (
-                parse_string_to_value(low_str, dt_id),
-                parse_string_to_value(high_str, dt_id),
+                parse_string_to_value(&range.min_value, dt_id),
+                parse_string_to_value(&range.max_value, dt_id),
             ) {
-                (Some(min_val), Some(max_val)) => Some(ValueRange { min: min_val, max: max_val }),
+                (Some(min_val), Some(max_val)) => {
+                    return Some(ValueRange { min: min_val, max: max_val });
+                }
                 _ => {
-                    warn!("Failed to parse low/high limit strings ('{}', '{}') for dataType {}", low_str, high_str, dt_id);
-                    None
+                    warn!("Failed to parse <range> min/max strings ('{}', '{}') for dataType {}", range.min_value, range.max_value, dt_id);
                 }
             }
         }
-        _ => None, // No range specified
+        // TODO: The core `ValueRange` could be extended to support enumerated `allowedValues.values`.
+        // For now, we only support <range>.
     }
-    // TODO: This only handles lowLimit/highLimit.
-    // The next step is to also check obj.allowed_values and
-    // merge the results if both are present.
+
+    None // No range specified or found
 }

@@ -28,6 +28,8 @@ pub(super) fn resolve_object_dictionary<'a>(
         let mut resolved_access = model_obj.access_type.map(utils::map_access_type);
         let mut resolved_support = None;
         let mut resolved_persistent = false;
+        // MODIFIED: Add allowed_values
+        let mut resolved_allowed_values: Option<types::AllowedValues> = None;
         let mut object_data: Option<Vec<u8>> = None;
         let mut od_sub_objects: Vec<types::SubObject> = Vec::new();
 
@@ -38,6 +40,12 @@ pub(super) fn resolve_object_dictionary<'a>(
                 resolved_access = param.access.map(utils::map_param_access);
                 resolved_support = param.support.map(utils::map_param_support);
                 resolved_persistent = param.persistent;
+                // MODIFIED: Resolve allowedValues from the parameter
+                resolved_allowed_values = param
+                    .allowed_values
+                    .as_ref()
+                    .map(resolve_allowed_values)
+                    .transpose()?;
             }
         }
         // --- End: Resolve Object Attributes ---
@@ -65,6 +73,8 @@ pub(super) fn resolve_object_dictionary<'a>(
                 let mut sub_resolved_access = model_sub_obj.access_type.map(utils::map_access_type);
                 let mut sub_resolved_support = None;
                 let mut sub_resolved_persistent = false;
+                // MODIFIED: Add allowed_values
+                let mut sub_resolved_allowed_values: Option<types::AllowedValues> = None;
 
                 // Check if a parameter reference overrides these attributes
                 if let Some(id_ref) = model_sub_obj.unique_id_ref.as_ref() {
@@ -73,6 +83,12 @@ pub(super) fn resolve_object_dictionary<'a>(
                         sub_resolved_access = param.access.map(utils::map_param_access);
                         sub_resolved_support = param.support.map(utils::map_param_support);
                         sub_resolved_persistent = param.persistent;
+                        // MODIFIED: Resolve allowedValues from the parameter
+                        sub_resolved_allowed_values = param
+                            .allowed_values
+                            .as_ref()
+                            .map(resolve_allowed_values)
+                            .transpose()?;
                     }
                 }
                 // --- End: Resolve SubObject Attributes ---
@@ -113,6 +129,7 @@ pub(super) fn resolve_object_dictionary<'a>(
                     obj_flags: model_sub_obj.obj_flags.clone(),
                     support: sub_resolved_support,   // Use resolved value
                     persistent: sub_resolved_persistent, // Use resolved value
+                    allowed_values: sub_resolved_allowed_values, // MODIFIED: Assign resolved values
                     data,
                 });
             }
@@ -132,6 +149,7 @@ pub(super) fn resolve_object_dictionary<'a>(
             obj_flags: model_obj.obj_flags.clone(),
             support: resolved_support,   // Use resolved value
             persistent: resolved_persistent, // Use resolved value
+            allowed_values: resolved_allowed_values, // MODIFIED: Assign resolved values
             data: object_data,
             sub_objects: od_sub_objects,
         });
@@ -140,6 +158,33 @@ pub(super) fn resolve_object_dictionary<'a>(
     Ok(types::ObjectDictionary {
         objects: od_objects,
     })
+}
+
+// --- NEW Helper to resolve allowedValues ---
+/// Resolves a `model::app_process::AllowedValues` into a `types::AllowedValues`.
+fn resolve_allowed_values(
+    model: &model::app_process::AllowedValues,
+) -> Result<types::AllowedValues, XdcError> {
+    let values = model
+        .value
+        .iter()
+        .map(|v| types::Value {
+            value: v.value.clone(),
+            label: v.labels.as_ref().and_then(utils::extract_label),
+        })
+        .collect();
+
+    let ranges = model
+        .range
+        .iter()
+        .map(|r| types::ValueRange {
+            min_value: r.min_value.value.clone(),
+            max_value: r.max_value.value.clone(),
+            step: r.step.as_ref().map(|s| s.value.clone()),
+        })
+        .collect();
+
+    Ok(types::AllowedValues { values, ranges })
 }
 
 /// Resolves the value string for an Object or Parameter.

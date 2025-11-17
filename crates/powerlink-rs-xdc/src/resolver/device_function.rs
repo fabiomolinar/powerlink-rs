@@ -4,33 +4,15 @@
 
 use crate::error::XdcError;
 use crate::model;
+use crate::resolver::utils; // Import the utils module
 use crate::types;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 // --- Label Helpers ---
 
-/// Helper to extract the first available `<label>` value from a `g_labels` group.
-fn extract_label(labels: &model::common::Glabels) -> Option<String> {
-    labels.items.iter().find_map(|item| {
-        if let model::common::LabelChoice::Label(label) = item {
-            Some(label.value.clone())
-        } else {
-            None
-        }
-    })
-}
-
-/// Helper to extract the first available `<description>` value from a `g_labels` group.
-fn extract_description(labels: &model::common::Glabels) -> Option<String> {
-    labels.items.iter().find_map(|item| {
-        if let model::common::LabelChoice::Description(desc) = item {
-            Some(desc.value.clone())
-        } else {
-            None
-        }
-    })
-}
+// REMOVED: `extract_label` - Now in `utils.rs`
+// REMOVED: `extract_description` - Now in `utils.rs`
 
 // --- Sub-Resolvers ---
 
@@ -43,13 +25,13 @@ fn resolve_capabilities(
         .iter()
         .map(|cl| {
             Ok::<_, XdcError>(types::CharacteristicList {
-                category: cl.category.as_ref().and_then(|c| extract_label(&c.labels)),
+                category: cl.category.as_ref().and_then(|c| utils::extract_label(&c.labels)),
                 characteristics: cl
                     .characteristic
                     .iter()
                     .map(|c| {
                         Ok::<_, XdcError>(types::Characteristic {
-                            name: extract_label(&c.characteristic_name.labels)
+                            name: utils::extract_label(&c.characteristic_name.labels)
                                 .ok_or(XdcError::MissingElement {
                                     element: "characteristicName/label",
                                 })?,
@@ -57,7 +39,7 @@ fn resolve_capabilities(
                                 .characteristic_content
                                 .iter()
                                 .map(|cc| {
-                                    extract_label(&cc.labels).ok_or(XdcError::MissingElement {
+                                    utils::extract_label(&cc.labels).ok_or(XdcError::MissingElement {
                                         element: "characteristicContent/label",
                                     })
                                 })
@@ -78,7 +60,7 @@ fn resolve_capabilities(
                 .map(|cw| types::StandardCompliance {
                     name: cw.name.clone(),
                     range: cw.range.clone().unwrap_or("international".to_string()),
-                    description: extract_description(&cw.labels),
+                    description: utils::extract_description(&cw.labels), // Use utils::
                 })
                 .collect()
         });
@@ -104,8 +86,8 @@ fn resolve_pictures_list(
                     .number
                     .as_ref()
                     .and_then(|n| n.parse::<u32>().ok()),
-                label: extract_label(&p.labels),
-                description: extract_description(&p.labels),
+                label: utils::extract_label(&p.labels), // Use utils::
+                description: utils::extract_description(&p.labels), // Use utils::
             })
         })
         .collect()
@@ -140,8 +122,8 @@ fn resolve_connector_list(
                 .clone()
                 .unwrap_or("POWERLINK".to_string()),
             interface_id_ref: c.interface_id_ref.clone(),
-            label: extract_label(&c.labels),
-            description: extract_description(&c.labels),
+            label: utils::extract_label(&c.labels), // Use utils::
+            description: utils::extract_description(&c.labels), // Use utils::
         })
         .collect())
 }
@@ -162,8 +144,8 @@ fn resolve_firmware_list(
                     },
                 )?,
                 build_date: f.build_date.clone(),
-                label: extract_label(&f.labels),
-                description: extract_description(&f.labels),
+                label: utils::extract_label(&f.labels), // Use utils::
+                description: utils::extract_description(&f.labels), // Use utils::
             })
         })
         .collect()

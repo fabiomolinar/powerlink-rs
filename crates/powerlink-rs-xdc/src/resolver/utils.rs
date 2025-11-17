@@ -9,6 +9,28 @@ use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 
+/// Helper to extract the first available `<label>` value from a `g_labels` group.
+pub(super) fn extract_label(labels: &model::common::Glabels) -> Option<String> {
+    labels.items.iter().find_map(|item| {
+        if let model::common::LabelChoice::Label(label) = item {
+            Some(label.value.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Helper to extract the first available `<description>` value from a `g_labels` group.
+pub(super) fn extract_description(labels: &model::common::Glabels) -> Option<String> {
+    labels.items.iter().find_map(|item| {
+        if let model::common::LabelChoice::Description(desc) = item {
+            Some(desc.value.clone())
+        } else {
+            None
+        }
+    })
+}
+
 /// Validates that the length of the parsed data matches the expected
 /// size of the given `dataType` ID.
 pub(super) fn validate_type(
@@ -82,7 +104,7 @@ pub(super) fn get_data_type_size(
             "0003" => Some(2), // Integer16
             "0004" => Some(4), // Integer32
             "0005" => Some(1), // Unsigned8
-            "0006" => Some(2), // Unsigned16
+            "0006" => Some(2), // Integer16
             "0007" => Some(4), // Unsigned32
             "0008" => Some(4), // Real32
             "0010" => Some(3), // Integer24

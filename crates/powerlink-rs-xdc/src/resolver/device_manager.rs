@@ -5,31 +5,15 @@
 use crate::error::XdcError;
 use crate::model;
 use crate::resolver::modular; // Import the new modular resolver
+use crate::resolver::utils; // Import the utils module
 use crate::types;
 use alloc::string::{String, ToString}; // Fix: Add String import
 use alloc::vec::Vec;
 
-/// Helper to extract the first available `<label>` value from a `g_labels` group.
-fn extract_label(labels: &model::common::Glabels) -> Option<String> {
-    labels.items.iter().find_map(|item| {
-        if let model::common::LabelChoice::Label(label) = item {
-            Some(label.value.clone())
-        } else {
-            None
-        }
-    })
-}
+// --- Label Helpers ---
 
-/// Helper to extract the first available `<description>` value from a `g_labels` group.
-fn extract_description(labels: &model::common::Glabels) -> Option<String> {
-    labels.items.iter().find_map(|item| {
-        if let model::common::LabelChoice::Description(desc) = item {
-            Some(desc.value.clone())
-        } else {
-            None
-        }
-    })
-}
+// REMOVED: `extract_label` - Now in `utils.rs`
+// REMOVED: `extract_description` - Now in `utils.rs`
 
 /// Resolves a `<combinedState>` model into the public type.
 fn resolve_combined_state(
@@ -42,8 +26,8 @@ fn resolve_combined_state(
         .collect();
 
     Ok(types::CombinedState {
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
         led_state_refs,
     })
 }
@@ -64,8 +48,8 @@ fn resolve_led_state(
             model::device_manager::LEDcolor::Amber => "amber".to_string(),
             model::device_manager::LEDcolor::Red => "red".to_string(),
         },
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
     })
 }
 
@@ -78,8 +62,8 @@ fn resolve_led(model: &model::device_manager::LED) -> Result<types::LED, XdcErro
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(types::LED {
-        label: extract_label(&model.labels),
-        description: extract_description(&model.labels),
+        label: utils::extract_label(&model.labels), // Use utils::
+        description: utils::extract_description(&model.labels), // Use utils::
         colors: match model.led_colors {
             model::device_manager::LEDcolors::Monocolor => "monocolor".to_string(),
             model::device_manager::LEDcolors::Bicolor => "bicolor".to_string(),
