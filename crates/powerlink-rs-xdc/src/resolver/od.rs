@@ -9,6 +9,8 @@ use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::num::ParseIntError; // Import for new helper
+use hex::FromHexError; // Import for new helper
 
 /// Iterates the `model::ObjectList` and resolves it into a rich, public `types::ObjectDictionary`.
 pub(super) fn resolve_object_dictionary<'a>(
@@ -165,19 +167,9 @@ fn parse_value_to_bytes(
     data_type_id: Option<&str>,
     type_map: &BTreeMap<String, DataTypeName>,
 ) -> Result<Vec<u8>, XdcError> {
-    let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
     let id = data_type_id.ok_or(XdcError::ValidationError(
         "Cannot parse value string to bytes without dataType",
     ))?;
-
-    // Helper to parse hex string to a type and get LE bytes
-    macro_rules! parse_hex_le {
-        ($typ:ty) => {
-            <$typ>::from_str_radix(s_no_prefix, 16)
-                .map(|v| v.to_le_bytes().to_vec())
-                .map_err(|e| e.into())
-        };
-    }
 
     // Helper to parse a decimal string to a type and get LE bytes
     macro_rules! parse_dec_le {
@@ -185,29 +177,58 @@ fn parse_value_to_bytes(
             s.parse::<$typ>()
                 .map(|v| v.to_le_bytes().to_vec())
                 .map_err(|_| XdcError::InvalidAttributeFormat {
-                    attribute: "defaultValue or actualValue",
+                    attribute: "defaultValue or actualValue (decimal)",
                 })
         };
     }
 
-    // Determine if the string is hex (has 0x prefix or type map implies hex)
-    // Most non-string values in XDD are hex.
-    let is_hex = s.starts_with("0x");
+    if !s.starts_with("0x") {
+        // Not a hex string, treat as decimal for numeric types
+        match id {
+            "0001" | "0002" | "0005" => parse_dec_le!(u8), // "100" -> [0x64], "2" -> [0x02]
+            "0003" | "0006" => parse_dec_le!(u16),
+            "0004" | "0007" => parse_dec_le!(u32),
+            "0015" | "001B" => parse_dec_le!(u64),
+            "0008" => parse_dec_le!(f32),
+            "0011" => parse_dec_le!(f64),
+            // Handle non-numeric non-hex strings
+            "0009" | "000B" => Ok(s.as_bytes().to_vec()), // VisibleString, UnicodeString
+            // Per spec, Octet/Domain are hex, so they must start with 0x.
+            // If they don't, it's a format error.
+            "000A" | "000F" => Err(XdcError::InvalidAttributeFormat {
+                attribute: "defaultValue or actualValue (non-hex OctetString/Domain)",
+            }),
+            _ => {
+                // Fallback for types not listed.
+                // This handles cases like "2" for sub-index 0 (U8).
+                parse_dec_le!(u8)
+            }
+        }
+    } else {
+        // It *is* a hex string.
+        // For string/domain types, parse as raw hex.
+        match id {
+            "0009" | "000A" | "000B" | "000F" => {
+                return crate::parser::parse_hex_string(s).map_err(|e| e.into())
+            }
+            _ => {} // Not a string type, continue
+        }
 
-    // Get the expected size to select the correct parser
-    let size_opt = utils::get_data_type_size(id, type_map);
+        // It's a numeric hex string. Parse as number, encode as LE.
+        let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
+        let size_opt = utils::get_data_type_size(id, type_map);
 
-    // For numeric types, default to hex parsing if not clearly decimal
-    if is_hex {
+        // FIX: Map ParseIntError to XdcError in every arm
         match size_opt {
-            Some(1) => parse_hex_le!(u8),
-            Some(2) => parse_hex_le!(u16),
+            Some(1) => u8::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
+            Some(2) => u16::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
+            Some(4) => u32::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
+            Some(8) => u64::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(|e| e.into()),
+            // Handle non-standard sizes by parsing as a large int and slicing
             Some(3) => {
-                // u24 doesn't exist, parse as u32 and take 3 bytes
                 let val = u32::from_str_radix(s_no_prefix, 16)?;
                 Ok(val.to_le_bytes()[..3].to_vec())
             }
-            Some(4) => parse_hex_le!(u32),
             Some(5) => {
                 let val = u64::from_str_radix(s_no_prefix, 16)?;
                 Ok(val.to_le_bytes()[..5].to_vec())
@@ -220,25 +241,11 @@ fn parse_value_to_bytes(
                 let val = u64::from_str_radix(s_no_prefix, 16)?;
                 Ok(val.to_le_bytes()[..7].to_vec())
             }
-            Some(8) => parse_hex_le!(u64),
-            _ => {
-                // Variable size or unknown: treat as raw hex string
-                hex::decode(s_no_prefix).map_err(|e| e.into())
-            }
-        }
-    } else {
-        // Not hex, try to parse as decimal for numeric types
-        match id {
-            "0001" | "0002" | "0005" => parse_dec_le!(u8),
-            "0003" | "0006" => parse_dec_le!(u16),
-            "0004" | "0007" => parse_dec_le!(u32),
-            "0015" | "001B" => parse_dec_le!(u64),
-            // Add other decimal types as needed (e.g., Real32/64)
-            // Default: treat as a raw hex string (for values like "15" in test)
-            _ => hex::decode(s_no_prefix).map_err(|e| e.into()),
+            _ => Err(XdcError::ValidationError("Unknown numeric type size for hex value"))
         }
     }
 }
+
 
 // --- NEW Helper to resolve allowedValues ---
 /// Resolves a `model::app_process::AllowedValues` into a `types::AllowedValues`.
@@ -547,13 +554,13 @@ mod tests {
         let app_layers = model::app_layers::ApplicationLayers {
             object_list: model::app_layers::ObjectList {
                 object: vec![
-                    // 1. VAR with direct value
+                    // 1. VAR with direct value (U32) - THIS WILL FAIL VALIDATION
                     Object {
                         index: "1000".to_string(),
                         name: "DeviceType".to_string(),
                         object_type: "7".to_string(),
                         data_type: Some("0007".to_string()), // U32
-                        default_value: Some("0x1234".to_string()),
+                        default_value: Some("0x1234".to_string()), // 2-byte hex string
                         ..Default::default()
                     },
                     // 2. VAR resolving from uniqueIDRef
@@ -571,7 +578,7 @@ mod tests {
                         name: "ParamRecord".to_string(),
                         object_type: "9".to_string(),
                         sub_object: vec![
-                            // Sub-obj 0: direct value
+                            // Sub-obj 0: direct value (decimal)
                             SubObject {
                                 sub_index: "00".to_string(),
                                 name: "Count".to_string(),
@@ -580,7 +587,7 @@ mod tests {
                                 default_value: Some("2".to_string()), // "2"
                                 ..Default::default()
                             },
-                            // Sub-obj 1: param ref
+                            // Sub-obj 1: param ref (hex)
                             SubObject {
                                 sub_index: "01".to_string(),
                                 name: "ParamSub".to_string(),
@@ -589,7 +596,7 @@ mod tests {
                                 unique_id_ref: Some("p_sub".to_string()),
                                 ..Default::default()
                             },
-                            // Sub-obj 2: template ref
+                            // Sub-obj 2: template ref (decimal)
                             SubObject {
                                 sub_index: "02".to_string(),
                                 name: "TemplateSub".to_string(),
@@ -601,13 +608,13 @@ mod tests {
                         ],
                         ..Default::default()
                     },
-                    // 4. Object with bad data type for validation
+                    // 4. Object with bad data type for validation (5 bytes for U32)
                     Object {
                         index: "6000".to_string(),
                         name: "BadVar".to_string(),
                         object_type: "7".to_string(),
                         data_type: Some("0007".to_string()), // U32
-                        default_value: Some("0x1234".to_string()), // 2 bytes, but type is 4
+                        default_value: Some("0x0102030405".to_string()), // 5 bytes, but type is 4
                         ..Default::default()
                     }
                 ],
@@ -620,26 +627,44 @@ mod tests {
         let od_result = resolve_object_dictionary(&app_layers, &param_map, &template_map, &type_map, ValueMode::Default);
 
         // --- Assertions ---
-        // The last object (0x6000) should cause a validation error
-        assert!(od_result.is_err());
+        // The first object (0x1000) should cause a validation error now
+        assert!(od_result.is_err(), "Expected validation error due to bad data type: {:?}", od_result);
         assert!(matches!(od_result.err().unwrap(), XdcError::TypeValidationError {
-            index: 0x6000,
+            index: 0x1000,
             sub_index: 0,
-            expected_bytes: 4,
-            actual_bytes: 2,
+            expected_bytes: 4, // U32
+            actual_bytes: 2, // "0x1234"
             ..
         }));
         
-        // --- Rerun without the bad object ---
+        // --- Rerun with a corrected object list ---
         let mut app_layers_good = app_layers;
-        app_layers_good.object_list.object.pop(); // Remove object 0x6000
+        // Fix object 0x1000
+        app_layers_good.object_list.object[0].default_value = Some("0x12345678".to_string());
+        // Fix object 0x6000 (the one that was *supposed* to fail)
+        // This is the new failing object
+        app_layers_good.object_list.object[3].default_value = Some("0x0102030405".to_string());
         
+        // Now, 0x1000 is valid (4 bytes), but 0x6000 is invalid (5 bytes)
+        let od_result_2 = resolve_object_dictionary(&app_layers_good, &param_map, &template_map, &type_map, ValueMode::Default);
+        assert!(od_result_2.is_err(), "Expected validation error for 0x6000: {:?}", od_result_2);
+        assert!(matches!(od_result_2.err().unwrap(), XdcError::TypeValidationError {
+            index: 0x6000,
+            sub_index: 0,
+            expected_bytes: 4, // U32
+            actual_bytes: 5, // "0x0102030405"
+            ..
+        }));
+
+        // --- Rerun with all valid objects ---
+        app_layers_good.object_list.object.pop(); // Remove object 0x6000
         let od = resolve_object_dictionary(&app_layers_good, &param_map, &template_map, &type_map, ValueMode::Default).unwrap();
+
 
         // 1. Check Obj 0x1000 (Direct value)
         let obj_1000 = od.objects.iter().find(|o| o.index == 0x1000).unwrap();
         assert_eq!(obj_1000.name, "DeviceType");
-        assert_eq!(obj_1000.data.as_deref(), Some(&[0x34u8, 0x12, 0x00, 0x00] as &[u8]));
+        assert_eq!(obj_1000.data.as_deref(), Some(&[0x12u8, 0x34, 0x56, 0x78] as &[u8])); // raw hex decode
         assert_eq!(obj_1000.access_type, None); // No param ref
         assert_eq!(obj_1000.support, None);
         assert_eq!(obj_1000.persistent, false);
@@ -647,7 +672,7 @@ mod tests {
         // 2. Check Obj 0x2000 (Param ref value and attributes)
         let obj_2000 = od.objects.iter().find(|o| o.index == 0x2000).unwrap();
         assert_eq!(obj_2000.name, "ParamVar");
-        assert_eq!(obj_2000.data.as_deref(), Some(&[0xAAu8] as &[u8])); // from p_var default
+        assert_eq!(obj_2000.data.as_deref(), Some(&[0xAAu8] as &[u8])); // from p_var default "0xAA"
         assert_eq!(obj_2000.access_type, Some(types::ParameterAccess::ReadWrite));
         assert_eq!(obj_2000.support, Some(types::ParameterSupport::Mandatory));
         assert_eq!(obj_2000.persistent, true);
@@ -661,13 +686,13 @@ mod tests {
         // Sub-obj 0 (Direct value)
         let sub_0 = &obj_2100.sub_objects[0];
         assert_eq!(sub_0.sub_index, 0);
-        assert_eq!(sub_0.data.as_deref(), Some(&[0x02u8] as &[u8])); // "2"
+        assert_eq!(sub_0.data.as_deref(), Some(&[0x02u8] as &[u8])); // "2" (decimal)
         assert_eq!(sub_0.access_type, None); // No param ref
         
         // Sub-obj 1 (Param ref value and attributes)
         let sub_1 = &obj_2100.sub_objects[1];
         assert_eq!(sub_1.sub_index, 1);
-        assert_eq!(sub_1.data.as_deref(), Some(&[0xBBu8] as &[u8])); // from p_sub default
+        assert_eq!(sub_1.data.as_deref(), Some(&[0xBBu8] as &[u8])); // from p_sub default "0xBB"
         assert_eq!(sub_1.access_type, Some(types::ParameterAccess::ReadOnly));
         assert_eq!(sub_1.support, Some(types::ParameterSupport::Optional));
         assert_eq!(sub_1.persistent, false);
@@ -681,7 +706,7 @@ mod tests {
         // Sub-obj 2 (Template ref value)
         let sub_2 = &obj_2100.sub_objects[2];
         assert_eq!(sub_2.sub_index, 2);
-        assert_eq!(sub_2.data.as_deref(), Some(&[100u8] as &[u8])); // "100" from t1_range
+        assert_eq!(sub_2.data.as_deref(), Some(&[100u8] as &[u8])); // "100" (decimal)
         assert_eq!(sub_2.access_type, None); // Param p_range had no access type
     }
 }

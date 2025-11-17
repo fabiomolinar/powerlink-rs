@@ -24,7 +24,9 @@ use crate::nmt::events::{CnNmtRequest, NmtStateCommand};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
-use log::{error, info, warn, debug};
+use log::{error, info, warn};
+#[cfg(feature = "sdo-udp")]
+use log::debug;
 
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct is a thin wrapper around a context object that holds all state.

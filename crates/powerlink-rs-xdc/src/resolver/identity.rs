@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn test_extract_label_from_attributed_glabels() {
          let attributed = AttributedGlabels {
-            items: vec![
+            items: vec![ // FIX: Populate items directly
                 LabelChoice::Description(model::common::Description {
                     lang: "en".to_string(),
                     value: "A description".to_string(),
