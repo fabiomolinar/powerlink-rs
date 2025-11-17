@@ -32,7 +32,9 @@ pub struct XdcFile {
     /// The complete Object Dictionary for the device.
     pub object_dictionary: ObjectDictionary,
     
-    // We can add ApplicationProcess here later if needed.
+    /// Information from the `<moduleManagement>` block in the *Communication Profile*.
+    /// This defines the OD index ranges for modular devices.
+    pub module_management_comm: Option<ModuleManagementComm>,
 }
 
 // --- Profile Header ---
