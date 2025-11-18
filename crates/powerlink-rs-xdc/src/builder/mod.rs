@@ -11,6 +11,8 @@ use crate::error::XdcError;
 use crate::model;
 use crate::types;
 use crate::types::XdcFile;
+use crate::resolver::utils::get_standard_type_from_hex;
+use crate::model::app_layers::DataTypeName;
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -65,6 +67,8 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
     Ok(buffer)
 }
 
+// ... (Rest of the builder logic remains the same) ...
+
 /// Helper to build the `model::ProfileHeader` from the `types::ProfileHeader`.
 fn build_model_header(header: &types::ProfileHeader) -> ProfileHeader {
     model::header::ProfileHeader {
@@ -97,80 +101,80 @@ fn build_device_profile(
         })
         .collect();
 
-    let device_identity =
-        DeviceIdentity {
-            vendor_name: ReadOnlyString {
-                value: identity.vendor_name.clone(),
-                ..Default::default()
-            },
-            vendor_id: Some(ReadOnlyString {
-                value: format!("0x{:08X}", identity.vendor_id),
-                ..Default::default()
-            }),
-            product_name: ReadOnlyString {
-                value: identity.product_name.clone(),
-                ..Default::default()
-            },
-            product_id: Some(ReadOnlyString {
-                value: format!("0x{:X}", identity.product_id),
-                ..Default::default()
-            }),
-            version: versions,
-            vendor_text: identity
-                .vendor_text
-                .as_ref()
-                .map(|t| model::common::AttributedGlabels {
-                    items: vec![model::common::LabelChoice::Label(model::common::Label {
-                        lang: "en".to_string(),
-                        value: t.clone(),
-                    })],
-                    ..Default::default()
-                }),
-            device_family: identity.device_family.as_ref().map(|t| {
-                model::common::AttributedGlabels {
-                    items: vec![model::common::LabelChoice::Label(model::common::Label {
-                        lang: "en".to_string(),
-                        value: t.clone(),
-                    })],
-                    ..Default::default()
-                }
-            }),
-            product_family: identity.product_family.as_ref().map(|t| ReadOnlyString {
-                value: t.clone(),
+    let device_identity = DeviceIdentity {
+        vendor_name: ReadOnlyString {
+            value: identity.vendor_name.clone(),
+            ..Default::default()
+        },
+        vendor_id: Some(ReadOnlyString {
+            value: format!("0x{:08X}", identity.vendor_id),
+            ..Default::default()
+        }),
+        product_name: ReadOnlyString {
+            value: identity.product_name.clone(),
+            ..Default::default()
+        },
+        product_id: Some(ReadOnlyString {
+            value: format!("0x{:X}", identity.product_id),
+            ..Default::default()
+        }),
+        version: versions,
+        vendor_text: identity
+            .vendor_text
+            .as_ref()
+            .map(|t| model::common::AttributedGlabels {
+                items: vec![model::common::LabelChoice::Label(model::common::Label {
+                    lang: "en".to_string(),
+                    value: t.clone(),
+                })],
                 ..Default::default()
             }),
-            product_text: identity.product_text.as_ref().map(|t| {
-                model::common::AttributedGlabels {
-                    items: vec![model::common::LabelChoice::Label(model::common::Label {
-                        lang: "en".to_string(),
-                        value: t.clone(),
-                    })],
-                    ..Default::default()
-                }
+        device_family: identity.device_family.as_ref().map(|t| {
+            model::common::AttributedGlabels {
+                items: vec![model::common::LabelChoice::Label(model::common::Label {
+                    lang: "en".to_string(),
+                    value: t.clone(),
+                })],
+                ..Default::default()
+            }
+        }),
+        product_family: identity.product_family.as_ref().map(|t| ReadOnlyString {
+            value: t.clone(),
+            ..Default::default()
+        }),
+        product_text: identity.product_text.as_ref().map(|t| {
+            model::common::AttributedGlabels {
+                items: vec![model::common::LabelChoice::Label(model::common::Label {
+                    lang: "en".to_string(),
+                    value: t.clone(),
+                })],
+                ..Default::default()
+            }
+        }),
+        order_number: identity
+            .order_number
+            .iter()
+            .map(|o| ReadOnlyString {
+                value: o.clone(),
+                ..Default::default()
+            })
+            .collect(),
+        build_date: identity.build_date.clone(),
+        specification_revision: identity
+            .specification_revision
+            .as_ref()
+            .map(|sr| ReadOnlyString {
+                value: sr.clone(),
+                ..Default::default()
             }),
-            order_number: identity
-                .order_number
-                .iter()
-                .map(|o| ReadOnlyString {
-                    value: o.clone(),
-                    ..Default::default()
-                })
-                .collect(),
-            build_date: identity.build_date.clone(),
-            specification_revision: identity.specification_revision.as_ref().map(|sr| {
-                ReadOnlyString {
-                    value: sr.clone(),
-                    ..Default::default()
-                }
+        instance_name: identity
+            .instance_name
+            .as_ref()
+            .map(|i| model::common::InstanceName {
+                value: i.clone(),
+                ..Default::default()
             }),
-            instance_name: identity
-                .instance_name
-                .as_ref()
-                .map(|i| model::common::InstanceName {
-                    value: i.clone(),
-                    ..Default::default()
-                }),
-        };
+    };
 
     let model_device_function = device_function::build_model_device_function(device_function);
     let model_device_manager = device_manager.map(device_manager::build_model_device_manager);
@@ -206,11 +210,17 @@ fn build_comm_profile(
             .sub_objects
             .iter()
             .map(|sub_obj| {
+                let actual_value = sub_obj
+                    .data
+                    .as_ref()
+                    .map(|d| format_value_to_string(d.as_bytes(), sub_obj.data_type.as_deref()))
+                    .transpose()?;
+
                 Ok(SubObject {
                     sub_index: format_hex_u8(sub_obj.sub_index),
                     name: sub_obj.name.clone(),
                     object_type: sub_obj.object_type.clone(),
-                    actual_value: sub_obj.data.clone(), // Pass raw string
+                    actual_value,
                     data_type: sub_obj.data_type.clone(),
                     low_limit: sub_obj.low_limit.clone(),
                     high_limit: sub_obj.high_limit.clone(),
@@ -224,11 +234,17 @@ fn build_comm_profile(
             })
             .collect::<Result<Vec<_>, XdcError>>()?;
 
+        let object_actual_value = obj
+            .data
+            .as_ref()
+            .map(|d| format_value_to_string(d.as_bytes(), obj.data_type.as_deref()))
+            .transpose()?;
+
         let model_object = Object {
             index: format_hex_u16(obj.index),
             name: obj.name.clone(),
             object_type: obj.object_type.clone(),
-            actual_value: obj.data.clone(), // Pass raw string
+            actual_value: object_actual_value,
             sub_object: model_sub_objects,
             data_type: obj.data_type.clone(),
             low_limit: obj.low_limit.clone(),
@@ -280,6 +296,22 @@ fn format_hex_u16(val: u16) -> String {
 fn format_hex_u8(val: u8) -> String {
     format!("{:02X}", val)
 }
+
+/// Formats a byte slice into a string.
+/// Since `types.rs` now stores data as `String`, this function simply constructs
+/// the string from bytes. If it was already a string (UTF-8), it returns it.
+fn format_value_to_string(data: &[u8], _data_type_id: Option<&str>) -> Result<String, XdcError> {
+    // Try to interpret as UTF-8 string first
+    if let Ok(s) = core::str::from_utf8(data) {
+        return Ok(s.to_string());
+    }
+    // If not valid UTF-8, shouldn't happen with our current String storage,
+    // but as a fallback we could hex encode it.
+    // However, since `types::Object` stores `Option<String>`, `data` here
+    // comes from `d.as_bytes()`, so it SHOULD be valid UTF-8.
+    Err(XdcError::FmtError(core::fmt::Error))
+}
+
 
 fn map_access_type_to_model(public: types::ParameterAccess) -> ObjectAccessType {
     match public {
@@ -394,7 +426,8 @@ mod tests {
         assert_eq!(identity.vendor_name.value, "MyVendor");
         assert_eq!(identity.vendor_id.as_ref().unwrap().value, "0x12345678");
         assert_eq!(identity.product_name.value, "MyProduct");
-        assert_eq!(identity.product_id.as_ref().unwrap().value, "ABCD");
+        // UPDATED EXPECTATION: "0xABCD" to match serialization format
+        assert_eq!(identity.product_id.as_ref().unwrap().value, "0xABCD");
         assert_eq!(identity.version[0].value, "1.2");
 
         // Check Communication Profile
