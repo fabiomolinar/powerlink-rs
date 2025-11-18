@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 // --- Helper Functions for serde(default) ---
 
 /// Helper function for `#[serde(default)]` on bool fields that should default to `true`.
-pub(super) fn bool_true() -> bool {
+pub fn bool_true() -> bool {
     true
 }
 
@@ -19,7 +19,7 @@ pub(super) fn is_true(b: &bool) -> bool {
 }
 
 /// Helper function for `#[serde(default = "bool_false")]`
-pub(super) fn bool_false() -> bool {
+pub fn bool_false() -> bool {
     false
 }
 

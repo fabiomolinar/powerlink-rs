@@ -4,7 +4,6 @@ use crate::error::XdcError;
 use crate::model;
 use crate::model::app_layers::DataTypeName;
 use crate::parser::{parse_hex_u8, parse_hex_u16};
-// Use super:: to correctly access sibling modules and the ValueMode enum
 use super::{ValueMode, utils}; 
 use crate::types;
 use alloc::collections::BTreeMap;
@@ -12,7 +11,6 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 /// Internal struct to hold resolved attributes for an object/subobject.
-/// This prevents passing 6+ separate arguments around.
 struct ResolvedAttributes {
     access: Option<types::ParameterAccess>,
     support: Option<types::ParameterSupport>,
@@ -34,7 +32,6 @@ pub(super) fn resolve_object_dictionary<'a>(
     for model_obj in &app_layers.object_list.object {
         let index = parse_hex_u16(&model_obj.index)?;
 
-        // 1. Resolve attributes (access, support, data, etc.)
         let attributes = resolve_object_attributes(
             model_obj,
             param_map,
@@ -42,10 +39,9 @@ pub(super) fn resolve_object_dictionary<'a>(
             type_map,
             mode,
             index,
-            0, // SubIndex 0 for the object itself
+            0,
         )?;
 
-        // 2. Resolve SubObjects if present
         let sub_objects = resolve_sub_objects(
             &model_obj.sub_object,
             model_obj.unique_id_ref.as_ref(),
@@ -91,7 +87,6 @@ fn resolve_object_attributes<'a>(
     index: u16,
     sub_index: u8,
 ) -> Result<ResolvedAttributes, XdcError> {
-    // Defaults from the <Object> tag
     let mut resolved = ResolvedAttributes {
         access: model_obj.access_type.map(utils::map_access_type),
         support: None,
@@ -100,12 +95,10 @@ fn resolve_object_attributes<'a>(
         data: None,
     };
 
-    // Override from Parameter if uniqueIDRef exists
     if let Some(id_ref) = model_obj.unique_id_ref.as_ref() {
         apply_parameter_attributes(id_ref, param_map, &mut resolved)?;
     }
 
-    // Resolve Data (Value) if this is a VAR (object_type "7")
     if model_obj.object_type == "7" {
         let value_str_opt = get_value_str_for_object(model_obj, mode, param_map, template_map);
         let data_type_id = model_obj.data_type.as_deref();
@@ -113,7 +106,6 @@ fn resolve_object_attributes<'a>(
         resolved.data = value_str_opt
             .and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
 
-        // Validate data if present
         if let (Some(data), Some(dtype)) = (resolved.data.as_ref(), data_type_id) {
             utils::validate_type(index, sub_index, data, dtype, type_map)?;
         }
@@ -137,7 +129,6 @@ fn resolve_sub_objects<'a>(
     for model_sub in model_subs {
         let sub_index = parse_hex_u8(&model_sub.sub_index)?;
 
-        // Defaults from <SubObject> tag
         let mut resolved = ResolvedAttributes {
             access: model_sub.access_type.map(utils::map_access_type),
             support: None,
@@ -146,12 +137,10 @@ fn resolve_sub_objects<'a>(
             data: None,
         };
 
-        // Override from Parameter
         if let Some(id_ref) = model_sub.unique_id_ref.as_ref() {
             apply_parameter_attributes(id_ref, param_map, &mut resolved)?;
         }
 
-        // Resolve Data (Value)
         let value_str_opt = get_value_str_for_subobject(
             model_sub,
             mode,
@@ -165,7 +154,6 @@ fn resolve_sub_objects<'a>(
         resolved.data = value_str_opt
             .and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
 
-        // Validate data
         if let (Some(data), Some(dtype)) = (resolved.data.as_ref(), data_type_id) {
             utils::validate_type(parent_index, sub_index, data, dtype, type_map)?;
         }
@@ -227,6 +215,9 @@ fn resolve_allowed_values(
                 .labels
                 .as_ref()
                 .and_then(|glabels| utils::extract_label(&glabels.items)),
+            // Fix: Added missing fields `offset` and `multiplier`
+            offset: v.offset.clone(),
+            multiplier: v.multiplier.clone(),
         })
         .collect();
 
@@ -240,7 +231,12 @@ fn resolve_allowed_values(
         })
         .collect();
 
-    Ok(types::AllowedValues { values, ranges })
+    Ok(types::AllowedValues { 
+        // Fix: Added missing field `template_id_ref`
+        template_id_ref: model.template_id_ref.clone(),
+        values, 
+        ranges 
+    })
 }
 
 // --- Helper functions for Value String Resolution ---

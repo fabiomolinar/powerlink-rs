@@ -402,7 +402,6 @@ pub struct GeneralFeatures {
     /// `@SDOSupportUdpIp`
     pub sdo_support_udp_ip: Option<bool>,
 
-    // --- NEW Fields ---
     /// `@NMTIsochronous`
     pub nmt_isochronous: Option<bool>,
     /// `@SDOSupportPDO`
@@ -437,7 +436,6 @@ pub struct MnFeatures {
     /// `@NMTSimpleBoot`
     pub nmt_simple_boot: bool,
 
-    // --- NEW Fields ---
     /// `@NMTServiceUdpIp`
     pub nmt_service_udp_ip: Option<bool>,
     /// `@NMTMNBasicEthernet`
@@ -507,9 +505,11 @@ pub struct StaticErrorBit {
 
 // --- Application Process ---
 
-/// Represents `<allowedValues>` from `<parameter>`.
+/// Represents `<allowedValues>` from `<parameter>` (EPSG 311, 7.4.7.7.2.7).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AllowedValues {
+    /// An optional reference to a template allowedValues.
+    pub template_id_ref: Option<String>,
     /// A list of enumerated allowed values.
     pub values: Vec<Value>,
     /// A list of allowed ranges.
@@ -523,6 +523,10 @@ pub struct Value {
     pub value: String,
     /// An optional label for this value.
     pub label: Option<String>,
+    /// Optional offset for scaling.
+    pub offset: Option<String>,
+    /// Optional multiplier for scaling.
+    pub multiplier: Option<String>,
 }
 
 /// Represents a `<range>` from `<allowedValues>`.
@@ -536,11 +540,16 @@ pub struct ValueRange {
     pub step: Option<String>,
 }
 
-/// Represents the `<ApplicationProcess>` block.
+/// Represents the `<ApplicationProcess>` block, containing user-defined
+/// data types, parameters, and groupings.
 #[derive(Debug, Default, PartialEq)]
 pub struct ApplicationProcess {
     /// List of user-defined data types.
     pub data_types: Vec<AppDataType>,
+    /// List of parameter templates.
+    pub templates: Vec<Parameter>,
+    /// List of actual parameters.
+    pub parameters: Vec<Parameter>,
     /// List of parameter groups.
     pub parameter_groups: Vec<ParameterGroup>,
     /// List of function type definitions.
@@ -573,9 +582,10 @@ pub struct AppStruct {
 pub struct StructMember {
     pub name: String,
     pub unique_id: String,
-    /// The data type of this member.
+    /// The data type of this member (e.g., "UINT", "BOOL", or a `uniqueIDRef`
+    /// to another type in the `dataTypeList`).
     pub data_type: String,
-    /// Size in bits, if applicable.
+    /// Size in bits, if applicable (e.g., for `BITSTRING`).
     pub size: Option<u32>,
     pub label: Option<String>,
     pub description: Option<String>,
@@ -590,7 +600,7 @@ pub struct AppArray {
     pub description: Option<String>,
     pub lower_limit: u32,
     pub upper_limit: u32,
-    /// The data type of the array elements.
+    /// The data type of the array elements (e.g., "UINT", "BOOL", or a `uniqueIDRef`).
     pub data_type: String,
 }
 
@@ -601,7 +611,7 @@ pub struct AppEnum {
     pub unique_id: String,
     pub label: Option<String>,
     pub description: Option<String>,
-    /// The base data type for the enum.
+    /// The base data type for the enum (e.g., "USINT", "UINT").
     pub data_type: String,
     pub size_in_bits: Option<u32>,
     pub values: Vec<EnumValue>,
@@ -623,7 +633,7 @@ pub struct AppDerived {
     pub unique_id: String,
     pub label: Option<String>,
     pub description: Option<String>,
-    /// The base data type this is derived from.
+    /// The base data type this is derived from (e.g., "UINT", "BOOL", or a `uniqueIDRef`).
     pub data_type: String,
     pub count: Option<Count>,
 }
@@ -666,7 +676,79 @@ pub struct ParameterRef {
     pub bit_offset: Option<u32>,
 }
 
-/// Represents a `<functionType>`.
+// --- Parameter ---
+
+/// The data type of a parameter, which can be a simple type (like "UINT"),
+/// a reference to a complex type (`DataTypeIDRef`), or a reference to a variable (`VariableRef`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParameterDataType {
+    // Simple types
+    BOOL,
+    BITSTRING,
+    BYTE,
+    CHAR,
+    WORD,
+    DWORD,
+    LWORD,
+    SINT,
+    INT,
+    DINT,
+    LINT,
+    USINT,
+    UINT,
+    UDINT,
+    ULINT,
+    REAL,
+    LREAL,
+    STRING,
+    WSTRING,
+    // Reference types
+    DataTypeIDRef(String), // uniqueIDRef
+    // We don't fully support VariableRef structure yet in public API, using placeholder
+    VariableRef,
+}
+
+impl Default for ParameterDataType {
+    fn default() -> Self {
+        ParameterDataType::BOOL
+    }
+}
+
+/// Represents a `<parameter>` or `<parameterTemplate>`.
+#[derive(Debug, Default, PartialEq)]
+pub struct Parameter {
+    /// `@uniqueID`
+    pub unique_id: String,
+    /// `@access`
+    pub access: Option<ParameterAccess>,
+    /// `@support`
+    pub support: Option<ParameterSupport>,
+    /// `@persistent`
+    pub persistent: bool,
+    /// `@offset`
+    pub offset: Option<String>,
+    /// `@multiplier`
+    pub multiplier: Option<String>,
+    /// `@templateIDRef`
+    pub template_id_ref: Option<String>,
+    
+    /// The data type of the parameter.
+    pub data_type: ParameterDataType,
+
+    /// Descriptive label.
+    pub label: Option<String>,
+    /// Descriptive text.
+    pub description: Option<String>,
+
+    /// `<actualValue>`
+    pub actual_value: Option<Value>,
+    /// `<defaultValue>`
+    pub default_value: Option<Value>,
+    /// `<allowedValues>`
+    pub allowed_values: Option<AllowedValues>,
+}
+
+/// Represents a `<functionType>` (EPSG 311, 7.4.7.4).
 #[derive(Debug, Default, PartialEq)]
 pub struct FunctionType {
     pub name: String,
@@ -678,7 +760,7 @@ pub struct FunctionType {
     pub interface: InterfaceList,
 }
 
-/// Represents a `<versionInfo>` element.
+/// Represents a `<versionInfo>` element (EPSG 311, 7.4.7.4.2).
 #[derive(Debug, Default, PartialEq)]
 pub struct VersionInfo {
     pub organization: String,
@@ -689,7 +771,7 @@ pub struct VersionInfo {
     pub description: Option<String>,
 }
 
-/// Represents an `<interfaceList>` for a function type.
+/// Represents an `<interfaceList>` for a function type (EPSG 311, 7.4.7.4.3).
 #[derive(Debug, Default, PartialEq)]
 pub struct InterfaceList {
     pub inputs: Vec<VarDeclaration>,
@@ -709,7 +791,7 @@ pub struct VarDeclaration {
     pub description: Option<String>,
 }
 
-/// Represents a `<functionInstance>`.
+/// Represents a `<functionInstance>` (EPSG 311, 7.4.7.5.2).
 #[derive(Debug, Default, PartialEq)]
 pub struct FunctionInstance {
     pub name: String,

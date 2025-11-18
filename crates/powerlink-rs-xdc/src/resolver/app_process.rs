@@ -5,18 +5,10 @@
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_process::{AppDataTypeChoice, ParameterGroupItem};
-// Removed unused import: use crate::model::common::{Glabels, LabelChoice};
-// Removed unused import: use crate::parser::parse_hex_u8;
 use crate::resolver::utils; // Import the utils module
 use crate::types;
 use alloc::string::String;
 use alloc::vec::Vec;
-// Removed unused import: use crate::types::ParameterRef;
-
-// --- Label Helpers ---
-
-// REMOVED: `extract_label` - Now in `utils.rs`
-// REMOVED: `extract_description` - Now in `utils.rs`
 
 /// Helper to extract the name of a `ParameterDataType` enum.
 fn get_data_type_name(data_type: &model::app_process::ParameterDataType) -> String {
@@ -42,7 +34,38 @@ fn get_data_type_name(data_type: &model::app_process::ParameterDataType) -> Stri
         STRING => "STRING".into(),
         WSTRING => "WSTRING".into(),
         DataTypeIDRef(r) => r.unique_id_ref.clone(),
-        VariableRef(_) => "variableRef".into(), // This case is complex, placeholder
+        VariableRef(_) => "variableRef".into(),
+    }
+}
+
+/// Maps the model's ParameterDataType to the public types::ParameterDataType.
+fn resolve_parameter_data_type(
+    model: &model::app_process::ParameterDataType,
+) -> types::ParameterDataType {
+    use model::app_process::ParameterDataType as M;
+    use types::ParameterDataType as T;
+    match model {
+        M::BOOL => T::BOOL,
+        M::BITSTRING => T::BITSTRING,
+        M::BYTE => T::BYTE,
+        M::CHAR => T::CHAR,
+        M::WORD => T::WORD,
+        M::DWORD => T::DWORD,
+        M::LWORD => T::LWORD,
+        M::SINT => T::SINT,
+        M::INT => T::INT,
+        M::DINT => T::DINT,
+        M::LINT => T::LINT,
+        M::USINT => T::USINT,
+        M::UINT => T::UINT,
+        M::UDINT => T::UDINT,
+        M::ULINT => T::ULINT,
+        M::REAL => T::REAL,
+        M::LREAL => T::LREAL,
+        M::STRING => T::STRING,
+        M::WSTRING => T::WSTRING,
+        M::DataTypeIDRef(r) => T::DataTypeIDRef(r.unique_id_ref.clone()),
+        M::VariableRef(_) => T::VariableRef,
     }
 }
 
@@ -72,12 +95,80 @@ pub(super) fn resolve_application_process(
         .as_ref()
         .map_or(Ok(Vec::new()), resolve_function_instance_list)?;
 
+    let parameters = resolve_parameter_list(&model.parameter_list)?;
+
+    let templates = model.template_list.as_ref().map_or(Ok(Vec::new()), resolve_template_list)?;
+
     Ok(types::ApplicationProcess {
         data_types,
+        templates,
+        parameters,
         parameter_groups,
         function_types,
         function_instances,
     })
+}
+
+/// Helper to resolve a `model::app_process::Value` to `types::Value`.
+fn resolve_value(model: &model::app_process::Value) -> types::Value {
+    types::Value {
+        value: model.value.clone(),
+        label: model.labels.as_ref().and_then(|glabels| utils::extract_label(&glabels.items)),
+        offset: model.offset.clone(),
+        multiplier: model.multiplier.clone(),
+    }
+}
+
+/// Helper to resolve `model::app_process::AllowedValues` to `types::AllowedValues`.
+fn resolve_allowed_values(model: &model::app_process::AllowedValues) -> types::AllowedValues {
+    types::AllowedValues {
+        template_id_ref: model.template_id_ref.clone(),
+        values: model.value.iter().map(resolve_value).collect(),
+        ranges: model
+            .range
+            .iter()
+            .map(|r| types::ValueRange {
+                min_value: r.min_value.value.clone(),
+                max_value: r.max_value.value.clone(),
+                step: r.step.as_ref().map(|s| s.value.clone()),
+            })
+            .collect(),
+    }
+}
+
+/// Helper to resolve a single `model::app_process::Parameter` into `types::Parameter`.
+fn resolve_parameter(model: &model::app_process::Parameter) -> Result<types::Parameter, XdcError> {
+    Ok(types::Parameter {
+        unique_id: model.unique_id.clone(),
+        access: model.access.map(utils::map_param_access),
+        support: model.support.map(utils::map_param_support),
+        persistent: model.persistent,
+        offset: model.offset.clone(),
+        multiplier: model.multiplier.clone(),
+        template_id_ref: model.template_id_ref.clone(),
+        data_type: resolve_parameter_data_type(&model.data_type),
+        // `labels` is Glabels (not Option) here (from model/app_process.rs)
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
+        actual_value: model.actual_value.as_ref().map(resolve_value),
+        default_value: model.default_value.as_ref().map(resolve_value),
+        allowed_values: model.allowed_values.as_ref().map(resolve_allowed_values),
+    })
+}
+
+/// Helper to resolve the `<parameterList>`.
+fn resolve_parameter_list(
+    list: &model::app_process::ParameterList,
+) -> Result<Vec<types::Parameter>, XdcError> {
+    list.parameter.iter().map(resolve_parameter).collect()
+}
+
+/// Helper to resolve the `<templateList>`.
+fn resolve_template_list(
+    list: &model::app_process::TemplateList,
+) -> Result<Vec<types::Parameter>, XdcError> {
+    // parameterTemplate is identical to parameter in structure
+    list.parameter_template.iter().map(resolve_parameter).collect()
 }
 
 /// Helper to resolve the `<dataTypeList>`.
@@ -101,14 +192,14 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
         .var_declaration
         .iter()
         .map(|var| {
-            // This is the fix: construct a types::StructMember directly
             Ok(types::StructMember {
                 name: var.name.clone(),
                 unique_id: var.unique_id.clone(),
                 data_type: get_data_type_name(&var.data_type),
                 size: var.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
-                label: utils::extract_label(&var.labels.items), // FIX: Pass .items
-                description: utils::extract_description(&var.labels.items), // FIX: Pass .items
+                // `labels` is Glabels
+                label: utils::extract_label(&var.labels.items),
+                description: utils::extract_description(&var.labels.items),
             })
         })
         .collect::<Result<Vec<_>, XdcError>>()?;
@@ -116,16 +207,15 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
     Ok(types::AppStruct {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
-        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
+        // `labels` is Glabels
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
         members,
     })
 }
 
 /// Helper to resolve an `<array>`.
 fn resolve_array(model: &model::app_process::AppArray) -> Result<types::AppArray, XdcError> {
-    // XDC spec (7.4.7.2.3) implies single dimension for OD-style arrays,
-    // but schema allows multiple. We'll take the first <subrange>.
     let subrange = model.subrange.first().ok_or(XdcError::MissingElement {
         element: "subrange",
     })?;
@@ -133,8 +223,9 @@ fn resolve_array(model: &model::app_process::AppArray) -> Result<types::AppArray
     Ok(types::AppArray {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
-        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
+        // `labels` is Glabels
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
         lower_limit: subrange.lower_limit.parse().unwrap_or(0),
         upper_limit: subrange.upper_limit.parse().unwrap_or(0),
         data_type: get_data_type_name(&model.data_type),
@@ -147,18 +238,20 @@ fn resolve_enum(model: &model::app_process::AppEnum) -> Result<types::AppEnum, X
         .enum_value
         .iter()
         .map(|val| types::EnumValue {
-            name: utils::extract_label(&val.labels.items).unwrap_or_default(), // Name comes from <label>
+            // `labels` is Glabels
+            name: utils::extract_label(&val.labels.items).unwrap_or_default(),
             value: val.value.clone().unwrap_or_default(),
-            label: utils::extract_label(&val.labels.items), // FIX: Pass .items
-            description: utils::extract_description(&val.labels.items), // FIX: Pass .items
+            label: utils::extract_label(&val.labels.items),
+            description: utils::extract_description(&val.labels.items),
         })
         .collect();
 
     Ok(types::AppEnum {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
-        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
+        // `labels` is Glabels
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
         data_type: model
             .data_type
             .as_ref()
@@ -180,8 +273,9 @@ fn resolve_derived(model: &model::app_process::AppDerived) -> Result<types::AppD
     Ok(types::AppDerived {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
-        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
+        // `labels` is Glabels
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
         data_type: get_data_type_name(&model.data_type),
         count,
     })
@@ -221,8 +315,9 @@ fn resolve_parameter_group(
 
     Ok(types::ParameterGroup {
         unique_id: model.unique_id.clone(),
-        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
-        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
+        // `labels` is Glabels
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
         items,
     })
 }
@@ -249,22 +344,21 @@ fn resolve_function_type(
             version: v.version.clone(),
             author: v.author.clone(),
             date: v.date.clone(),
-            label: utils::extract_label(&v.labels.items), // FIX: Pass .items
-            description: utils::extract_description(&v.labels.items), // FIX: Pass .items
+            // `labels` is Glabels
+            label: utils::extract_label(&v.labels.items),
+            description: utils::extract_description(&v.labels.items),
         })
         .collect();
 
     let interface = resolve_interface_list(&model.interface_list)?;
 
-    // Note: We are not resolving the nested `functionInstanceList` inside a
-    // `functionType` yet, as it's less critical for OD mapping.
-
     Ok(types::FunctionType {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
         package: model.package.clone(),
-        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
-        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
+        // `labels` is Glabels
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
         version_info,
         interface,
     })
@@ -312,8 +406,9 @@ fn resolve_var_declaration(
         data_type: get_data_type_name(&model.data_type),
         size: model.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
         initial_value: model.initial_value.clone(),
-        label: utils::extract_label(&model.labels.items), // FIX: Pass .items
-        description: utils::extract_description(&model.labels.items), // FIX: Pass .items
+        // `labels` is Glabels
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
     })
 }
 
@@ -328,12 +423,12 @@ fn resolve_function_instance_list(
                 name: inst.name.clone(),
                 unique_id: inst.unique_id.clone(),
                 type_id_ref: inst.type_id_ref.clone(),
-                label: utils::extract_label(&inst.labels.items), // FIX: Pass .items
-                description: utils::extract_description(&inst.labels.items), // FIX: Pass .items
+                // `labels` is Glabels
+                label: utils::extract_label(&inst.labels.items),
+                description: utils::extract_description(&inst.labels.items),
             })
         })
         .collect()
-    // Note: We are not resolving <connection> elements yet.
 }
 
 #[cfg(test)]
