@@ -2,8 +2,85 @@
 
 //! Contains builder functions to convert `types::NetworkManagement` into `model::NetworkManagement`.
 
+use crate::model::common::{Description, Glabels, Label, LabelChoice};
 use crate::{model, types};
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+
+/// Helper to create a `Glabels` struct.
+fn build_glabels(label: Option<&String>, description: Option<&String>) -> Option<Glabels> {
+    let mut items = Vec::new();
+    if let Some(l) = label {
+        items.push(LabelChoice::Label(Label {
+            lang: "en".to_string(),
+            value: l.clone(),
+        }));
+    }
+    if let Some(d) = description {
+        items.push(LabelChoice::Description(Description {
+            lang: "en".to_string(),
+            value: d.clone(),
+            ..Default::default()
+        }));
+    }
+    if items.is_empty() {
+        None
+    } else {
+        Some(Glabels { items })
+    }
+}
+
+/// Builds `model::net_mgmt::AddInfo`.
+fn build_model_add_info(public: &types::AddInfo) -> model::net_mgmt::AddInfo {
+    model::net_mgmt::AddInfo {
+        name: public.name.clone(),
+        bit_offset: public.bit_offset.to_string(),
+        len: public.len.to_string(),
+        labels: build_glabels(None, public.description.as_ref()),
+        value: Vec::new(), // TODO: AddInfoValue support in types if needed
+    }
+}
+
+/// Builds `model::net_mgmt::Error`.
+fn build_model_error(public: &types::ErrorDefinition) -> model::net_mgmt::Error {
+    model::net_mgmt::Error {
+        name: public.name.clone(),
+        value: public.value.clone(),
+        labels: None, // ErrorDefinition in types doesn't have label/desc yet
+        add_info: public.add_info.iter().map(build_model_add_info).collect(),
+    }
+}
+
+/// Builds `model::net_mgmt::ErrorBit`.
+fn build_model_error_bit(public: &types::StaticErrorBit) -> model::net_mgmt::ErrorBit {
+    model::net_mgmt::ErrorBit {
+        name: public.name.clone(),
+        offset: public.offset.to_string(),
+        labels: build_glabels(public.label.as_ref(), public.description.as_ref()),
+    }
+}
+
+/// Builds `model::net_mgmt::Diagnostic`.
+fn build_model_diagnostic(public: &types::Diagnostic) -> model::net_mgmt::Diagnostic {
+    let error_list = if public.errors.is_empty() {
+        None
+    } else {
+        Some(model::net_mgmt::ErrorList {
+            error: public.errors.iter().map(build_model_error).collect(),
+        })
+    };
+
+    let static_error_bit_field = public.static_error_bit_field.as_ref().map(|bits| {
+        model::net_mgmt::StaticErrorBitField {
+            error_bit: bits.iter().map(build_model_error_bit).collect(),
+        }
+    });
+
+    model::net_mgmt::Diagnostic {
+        error_list,
+        static_error_bit_field,
+    }
+}
 
 /// Converts a public `types::NetworkManagement` into a `model::NetworkManagement`.
 pub(super) fn build_model_network_management(
@@ -46,11 +123,8 @@ pub(super) fn build_model_network_management(
             dll_mn_feature_multiplex: mnf.dll_mn_feature_multiplex,
             dll_mn_pres_chaining: mnf.dll_mn_pres_chaining,
             nmt_simple_boot: mnf.nmt_simple_boot,
-
-            // --- NEW Fields ---
             nmt_service_udp_ip: mnf.nmt_service_udp_ip,
             nmt_mn_basic_ethernet: mnf.nmt_mn_basic_ethernet,
-
             ..Default::default()
         }
     });
@@ -75,8 +149,7 @@ pub(super) fn build_model_network_management(
             ..Default::default()
         });
 
-    // TODO: Implement Diagnostic builder
-    let diagnostic = None;
+    let diagnostic = public.diagnostic.as_ref().map(build_model_diagnostic);
 
     model::net_mgmt::NetworkManagement {
         general_features,
@@ -89,6 +162,8 @@ pub(super) fn build_model_network_management(
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
     use crate::types;
 
@@ -119,7 +194,14 @@ mod tests {
                 nmt_cn_dna: Some(types::NmtCnDna::ClearOnNmtResetNode),
                 ..Default::default()
             }),
-            diagnostic: None, // Not tested yet
+            diagnostic: Some(types::Diagnostic {
+                errors: vec![types::ErrorDefinition {
+                    name: "TestError".to_string(),
+                    value: "0x1000".to_string(),
+                    add_info: vec![],
+                }],
+                static_error_bit_field: None,
+            }),
         };
 
         // 2. Call the builder
