@@ -22,8 +22,102 @@ use powerlink_rs::od::{
     PdoMapping,
     ValueRange,
 };
+use powerlink_rs::nmt::flags::FeatureFlags; // Import core FeatureFlags
+
 // Import DataTypeName for strong typing in map_data_to_value
 use crate::model::app_layers::DataTypeName;
+
+/// Configuration settings for the NMT state machine, extracted from the XDC profile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NmtSettings {
+    /// The calculated FeatureFlags (mapping to OD 0x1F82).
+    pub feature_flags: FeatureFlags,
+    /// The boot time not active duration in microseconds (mapping to NMTBootTimeNotActive).
+    pub boot_time_not_active: u32,
+    /// The minimum cycle time in microseconds.
+    pub cycle_time_min: u32,
+    /// The maximum cycle time in microseconds.
+    pub cycle_time_max: u32,
+}
+
+/// Extracts NMT configuration settings from the `NetworkManagement` block of an XDC file.
+///
+/// This function performs the logic usually done by configuration tools: it aggregates
+/// boolean attributes from `GeneralFeatures`, `CNFeatures`, and `MNFeatures` into
+/// the single `FeatureFlags` bitmask used by the POWERLINK stack.
+pub fn extract_nmt_settings(xdc_file: &XdcFile) -> Result<NmtSettings, XdcError> {
+    let nm = xdc_file.network_management.as_ref().ok_or(XdcError::ValidationError(
+        "XDC file missing required <NetworkManagement> block",
+    ))?;
+
+    let gf = &nm.general_features;
+
+    let mut flags = FeatureFlags::empty();
+
+    // --- Map GeneralFeatures ---
+    if gf.nmt_isochronous.unwrap_or(true) { // Default true per spec/schema
+        flags.insert(FeatureFlags::ISOCHRONOUS);
+    }
+    if gf.sdo_support_udp_ip.unwrap_or(false) {
+        flags.insert(FeatureFlags::SDO_UDP);
+    }
+    if gf.sdo_support_asnd.unwrap_or(false) {
+        flags.insert(FeatureFlags::SDO_ASND);
+    }
+    if gf.sdo_support_pdo.unwrap_or(false) {
+        flags.insert(FeatureFlags::SDO_PDO);
+    }
+    if gf.nmt_ext_nmt_cmds.unwrap_or(false) {
+        flags.insert(FeatureFlags::EXTENDED_NMT_CMDS);
+    }
+    if gf.pdo_dynamic_mapping.unwrap_or(true) {
+         flags.insert(FeatureFlags::DYNAMIC_PDO_MAPPING);
+    }
+    if gf.cfm_config_manager.unwrap_or(false) {
+        flags.insert(FeatureFlags::CONFIG_MANAGER);
+    }
+    if gf.nmt_node_id_by_sw.unwrap_or(false) {
+        flags.insert(FeatureFlags::NODE_ID_BY_SW);
+    }
+    if gf.sdo_cmd_read_all_by_index.unwrap_or(false) || gf.sdo_cmd_write_all_by_index.unwrap_or(false) {
+        flags.insert(FeatureFlags::SDO_RW_ALL_BY_INDEX);
+    }
+    if gf.sdo_cmd_read_mult_param.unwrap_or(false) || gf.sdo_cmd_write_mult_param.unwrap_or(false) {
+        flags.insert(FeatureFlags::SDO_RW_MULTIPLE_BY_INDEX);
+    }
+
+    // --- Map MNFeatures ---
+    if let Some(mnf) = &nm.mn_features {
+        if mnf.nmt_service_udp_ip.unwrap_or(false) {
+            flags.insert(FeatureFlags::NMT_SERVICE_UDP);
+        }
+        if mnf.dll_mn_feature_multiplex.unwrap_or(true) {
+             flags.insert(FeatureFlags::MULTIPLEXED_ACCESS);
+        }
+        if mnf.nmt_mn_basic_ethernet.unwrap_or(false) {
+            flags.insert(FeatureFlags::MN_BASIC_ETHERNET);
+        }
+        // NMT Info Services bit is often implied by the device class or specific attributes,
+        // but for now we can map it if any NMT Publish features are active in GeneralFeatures.
+        if gf.nmt_publish_active_nodes.unwrap_or(false) || gf.nmt_publish_config_nodes.unwrap_or(false) {
+            flags.insert(FeatureFlags::NMT_INFO_SERVICES);
+        }
+    }
+
+    // --- Map CNFeatures ---
+    if let Some(cnf) = &nm.cn_features {
+         if cnf.dll_cn_feature_multiplex.unwrap_or(false) {
+             flags.insert(FeatureFlags::MULTIPLEXED_ACCESS);
+         }
+    }
+
+    Ok(NmtSettings {
+        feature_flags: flags,
+        boot_time_not_active: gf.nmt_boot_time_not_active,
+        cycle_time_min: gf.nmt_cycle_time_min,
+        cycle_time_max: gf.nmt_cycle_time_max,
+    })
+}
 
 /// Converts a parsed `XdcFile` into the `ObjectDictionary` format required
 /// by the `powerlink-rs` core crate.
@@ -277,7 +371,6 @@ fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
     trait FromStrRadix: Sized {
         fn from_str_radix(src: &str, radix: u32) -> Result<Self, core::num::ParseIntError>;
     }
-    // Implementations omitted for brevity, same as previous file...
     impl FromStrRadix for i8 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i8::from_str_radix(s, r) } }
     impl FromStrRadix for i16 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i16::from_str_radix(s, r) } }
     impl FromStrRadix for i32 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i32::from_str_radix(s, r) } }
@@ -367,7 +460,10 @@ fn resolve_value_range(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::SubObject; // Use the public types
+    use crate::types::{
+        GeneralFeatures, MnFeatures, NetworkManagement, XdcFile, SubObject
+    };
+    use powerlink_rs::nmt::flags::FeatureFlags;
     use alloc::string::ToString;
     use alloc::vec;
     use powerlink_rs::od::{AccessType, Category, Object, ObjectValue, PdoMapping}; // Import the core OD Object enum
@@ -769,5 +865,46 @@ mod tests {
             map.get(&(0x2000, 1)),
             Some(&ObjectValue::Unsigned16(0x2211))
         );
+    }
+
+    #[test]
+    fn test_extract_nmt_settings() {
+        let xdc_file = XdcFile {
+            network_management: Some(NetworkManagement {
+                general_features: GeneralFeatures {
+                    dll_feature_mn: true, // MN
+                    nmt_isochronous: Some(true), // ISOCHRONOUS
+                    sdo_support_asnd: Some(true), // SDO_ASND
+                    nmt_boot_time_not_active: 50000,
+                    nmt_cycle_time_min: 100,
+                    nmt_cycle_time_max: 50000,
+                    ..Default::default()
+                },
+                mn_features: Some(MnFeatures {
+                     nmt_service_udp_ip: Some(true), // NMT_SERVICE_UDP
+                     ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let settings = extract_nmt_settings(&xdc_file).unwrap();
+
+        assert!(settings.feature_flags.contains(FeatureFlags::ISOCHRONOUS));
+        assert!(settings.feature_flags.contains(FeatureFlags::SDO_ASND));
+        assert!(settings.feature_flags.contains(FeatureFlags::NMT_SERVICE_UDP));
+        assert!(!settings.feature_flags.contains(FeatureFlags::SDO_UDP)); // Should be false
+
+        assert_eq!(settings.boot_time_not_active, 50000);
+        assert_eq!(settings.cycle_time_min, 100);
+        assert_eq!(settings.cycle_time_max, 50000);
+    }
+
+    #[test]
+    fn test_extract_nmt_settings_missing_block() {
+        let xdc_file = XdcFile::default(); // No network_management
+        let result = extract_nmt_settings(&xdc_file);
+        assert!(result.is_err());
     }
 }

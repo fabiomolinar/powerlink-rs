@@ -27,7 +27,9 @@ mod types;
 
 // Functions
 pub use builder::save_xdc_to_string;
-pub use converter::{to_core_od, xdc_to_storage_map}; // Export the new converter functions
+pub use converter::{
+    extract_nmt_settings, to_core_od, xdc_to_storage_map, NmtSettings,
+}; // Export the new converter functions and types
 pub use error::XdcError;
 pub use parser::{load_xdc_from_str, load_xdd_defaults_from_str};
 

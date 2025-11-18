@@ -6,15 +6,12 @@ use crate::model;
 use crate::resolver::utils;
 use crate::types;
 use alloc::string::String;
-use alloc::vec::Vec; // Import the utils module
+use alloc::vec::Vec;
 
 /// Helper to parse a string attribute as a u32.
 fn parse_u32_attr(s: Option<String>) -> u32 {
     s.and_then(|val| val.parse().ok()).unwrap_or(0)
 }
-
-// REMOVED: `extract_label` - Now in `utils.rs`
-// REMOVED: `extract_description` - Now in `utils.rs`
 
 /// Parses a `model::NetworkManagement` into a `types::NetworkManagement`.
 pub(super) fn resolve_network_management(
@@ -39,6 +36,19 @@ pub(super) fn resolve_network_management(
         sdo_server: model.general_features.sdo_server,
         sdo_support_asnd: model.general_features.sdo_support_asnd,
         sdo_support_udp_ip: model.general_features.sdo_support_udp_ip,
+
+        // --- NEW Fields ---
+        nmt_isochronous: model.general_features.nmt_isochronous,
+        sdo_support_pdo: model.general_features.sdo_support_pdo,
+        nmt_ext_nmt_cmds: model.general_features.nmt_ext_nmt_cmds,
+        cfm_config_manager: model.general_features.cfm_config_manager,
+        nmt_node_id_by_sw: model.general_features.nmt_node_id_by_sw,
+        sdo_cmd_read_all_by_index: model.general_features.sdo_cmd_read_all_by_index,
+        sdo_cmd_write_all_by_index: model.general_features.sdo_cmd_write_all_by_index,
+        sdo_cmd_read_mult_param: model.general_features.sdo_cmd_read_mult_param,
+        sdo_cmd_write_mult_param: model.general_features.sdo_cmd_write_mult_param,
+        nmt_publish_active_nodes: model.general_features.nmt_publish_active_nodes,
+        nmt_publish_config_nodes: model.general_features.nmt_publish_config_nodes,
     };
 
     // --- MN Features ---
@@ -46,6 +56,10 @@ pub(super) fn resolve_network_management(
         dll_mn_feature_multiplex: mn.dll_mn_feature_multiplex,
         dll_mn_pres_chaining: mn.dll_mn_pres_chaining,
         nmt_simple_boot: mn.nmt_simple_boot,
+
+        // --- NEW Fields ---
+        nmt_service_udp_ip: mn.nmt_service_udp_ip,
+        nmt_mn_basic_ethernet: mn.nmt_mn_basic_ethernet,
     });
 
     // --- CN Features ---
@@ -89,8 +103,8 @@ fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diag
         list.error
             .iter()
             .map(|e| types::ErrorDefinition {
-                name: e.name.clone(),   // Use unwrap_or_default for robustness
-                value: e.value.clone(), // Use unwrap_or_default for robustness
+                name: e.name.clone(),
+                value: e.value.clone(),
                 add_info: e
                     .add_info
                     .iter()
@@ -101,7 +115,7 @@ fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diag
                         description: ai
                             .labels
                             .as_ref()
-                            .and_then(|l| utils::extract_description(&l.items)), // FIX: Pass .items
+                            .and_then(|l| utils::extract_description(&l.items)),
                     })
                     .collect(),
             })
@@ -120,11 +134,11 @@ fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diag
                     label: bit
                         .labels
                         .as_ref()
-                        .and_then(|l| utils::extract_label(&l.items)), // FIX: Pass .items
+                        .and_then(|l| utils::extract_label(&l.items)),
                     description: bit
                         .labels
                         .as_ref()
-                        .and_then(|l| utils::extract_description(&l.items)), // FIX: Pass .items
+                        .and_then(|l| utils::extract_description(&l.items)),
                 }
             })
             .collect()

@@ -8,9 +8,6 @@ use alloc::vec::Vec;
 // --- Root XDC Structure ---
 
 /// Represents a fully parsed and resolved XDC/XDD file.
-///
-/// This is the main public struct, providing ergonomic access to all
-/// data contained within the XML file.
 #[derive(Debug, Default, PartialEq)]
 pub struct XdcFile {
     /// Metadata from the `<ProfileHeader>` block.
@@ -20,14 +17,12 @@ pub struct XdcFile {
     pub identity: Identity,
 
     /// Information from the `<DeviceFunction>` block.
-    /// This is a Vec because the schema allows 1..unbounded.
     pub device_function: Vec<DeviceFunction>,
 
     /// Information from the `<DeviceManager>` block.
     pub device_manager: Option<DeviceManager>,
 
     /// Information from the `<NetworkManagement>` block.
-    /// This is `None` if the file is a standard Device Profile (XDD).
     pub network_management: Option<NetworkManagement>,
 
     /// Information from the `<ApplicationProcess>` block.
@@ -37,7 +32,6 @@ pub struct XdcFile {
     pub object_dictionary: ObjectDictionary,
 
     /// Information from the `<moduleManagement>` block in the *Communication Profile*.
-    /// This defines the OD index ranges for modular devices.
     pub module_management_comm: Option<ModuleManagementComm>,
 }
 
@@ -61,7 +55,6 @@ pub struct ProfileHeader {
 // --- Device Identity ---
 
 /// Represents the `<DeviceIdentity>` block.
-/// (Updated for Task 3)
 #[derive(Debug, Default, PartialEq)]
 pub struct Identity {
     /// `<vendorName>` (Mandatory)
@@ -97,7 +90,7 @@ pub struct Identity {
 }
 
 /// Represents a `<version>` element.
-#[derive(Debug, Default, Clone, PartialEq)] // Added PartialEq
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Version {
     /// `@versionType`
     pub version_type: String,
@@ -105,7 +98,7 @@ pub struct Version {
     pub value: String,
 }
 
-// --- Device Function (New) ---
+// --- Device Function ---
 
 /// Represents the `<DeviceFunction>` block (EPSG DS 311, 7.4.6).
 #[derive(Debug, Default, PartialEq)]
@@ -381,7 +374,6 @@ pub struct NetworkManagement {
     pub mn_features: Option<MnFeatures>,
     pub cn_features: Option<CnFeatures>,
     pub diagnostic: Option<Diagnostic>,
-    // Add deviceCommissioning later if needed
 }
 
 /// Represents `<GeneralFeatures>`.
@@ -409,6 +401,30 @@ pub struct GeneralFeatures {
     pub sdo_support_asnd: Option<bool>,
     /// `@SDOSupportUdpIp`
     pub sdo_support_udp_ip: Option<bool>,
+
+    // --- NEW Fields ---
+    /// `@NMTIsochronous`
+    pub nmt_isochronous: Option<bool>,
+    /// `@SDOSupportPDO`
+    pub sdo_support_pdo: Option<bool>,
+    /// `@NMTExtNmtCmds`
+    pub nmt_ext_nmt_cmds: Option<bool>,
+    /// `@CFMConfigManager`
+    pub cfm_config_manager: Option<bool>,
+    /// `@NMTNodeIDBySW`
+    pub nmt_node_id_by_sw: Option<bool>,
+    /// `@SDOCmdReadAllByIndex`
+    pub sdo_cmd_read_all_by_index: Option<bool>,
+    /// `@SDOCmdWriteAllByIndex`
+    pub sdo_cmd_write_all_by_index: Option<bool>,
+    /// `@SDOCmdReadMultParam`
+    pub sdo_cmd_read_mult_param: Option<bool>,
+    /// `@SDOCmdWriteMultParam`
+    pub sdo_cmd_write_mult_param: Option<bool>,
+    /// `@NMTPublishActiveNodes`
+    pub nmt_publish_active_nodes: Option<bool>,
+    /// `@NMTPublishConfigNodes`
+    pub nmt_publish_config_nodes: Option<bool>,
 }
 
 /// Represents `<MNFeatures>`.
@@ -420,6 +436,12 @@ pub struct MnFeatures {
     pub dll_mn_pres_chaining: Option<bool>,
     /// `@NMTSimpleBoot`
     pub nmt_simple_boot: bool,
+
+    // --- NEW Fields ---
+    /// `@NMTServiceUdpIp`
+    pub nmt_service_udp_ip: Option<bool>,
+    /// `@NMTMNBasicEthernet`
+    pub nmt_mn_basic_ethernet: Option<bool>,
 }
 
 /// Public representation of the `@NMTCNDNA` attribute (Dynamic Node Addressing).
@@ -445,7 +467,7 @@ pub struct CnFeatures {
     /// `@NMTCNSoC2PReq` (in nanoseconds)
     pub nmt_cn_soc_2_preq: u32,
     /// `@NMTCNDNA`
-    pub nmt_cn_dna: Option<NmtCnDna>, // Changed from Option<bool>
+    pub nmt_cn_dna: Option<NmtCnDna>,
 }
 
 /// Represents `<Diagnostic>` capabilities.
@@ -485,7 +507,7 @@ pub struct StaticErrorBit {
 
 // --- Application Process ---
 
-/// Represents `<allowedValues>` from `<parameter>` (EPSG 311, 7.4.7.7.2.7).
+/// Represents `<allowedValues>` from `<parameter>`.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AllowedValues {
     /// A list of enumerated allowed values.
@@ -514,8 +536,7 @@ pub struct ValueRange {
     pub step: Option<String>,
 }
 
-/// Represents the `<ApplicationProcess>` block, containing user-defined
-/// data types, parameters, and groupings.
+/// Represents the `<ApplicationProcess>` block.
 #[derive(Debug, Default, PartialEq)]
 pub struct ApplicationProcess {
     /// List of user-defined data types.
@@ -552,10 +573,9 @@ pub struct AppStruct {
 pub struct StructMember {
     pub name: String,
     pub unique_id: String,
-    /// The data type of this member (e.g., "UINT", "BOOL", or a `uniqueIDRef`
-    /// to another type in the `dataTypeList`).
+    /// The data type of this member.
     pub data_type: String,
-    /// Size in bits, if applicable (e.g., for `BITSTRING`).
+    /// Size in bits, if applicable.
     pub size: Option<u32>,
     pub label: Option<String>,
     pub description: Option<String>,
@@ -570,7 +590,7 @@ pub struct AppArray {
     pub description: Option<String>,
     pub lower_limit: u32,
     pub upper_limit: u32,
-    /// The data type of the array elements (e.g., "UINT", "BOOL", or a `uniqueIDRef`).
+    /// The data type of the array elements.
     pub data_type: String,
 }
 
@@ -581,7 +601,7 @@ pub struct AppEnum {
     pub unique_id: String,
     pub label: Option<String>,
     pub description: Option<String>,
-    /// The base data type for the enum (e.g., "USINT", "UINT").
+    /// The base data type for the enum.
     pub data_type: String,
     pub size_in_bits: Option<u32>,
     pub values: Vec<EnumValue>,
@@ -603,7 +623,7 @@ pub struct AppDerived {
     pub unique_id: String,
     pub label: Option<String>,
     pub description: Option<String>,
-    /// The base data type this is derived from (e.g., "UINT", "BOOL", or a `uniqueIDRef`).
+    /// The base data type this is derived from.
     pub data_type: String,
     pub count: Option<Count>,
 }
@@ -646,7 +666,7 @@ pub struct ParameterRef {
     pub bit_offset: Option<u32>,
 }
 
-/// Represents a `<functionType>` (EPSG 311, 7.4.7.4).
+/// Represents a `<functionType>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct FunctionType {
     pub name: String,
@@ -658,7 +678,7 @@ pub struct FunctionType {
     pub interface: InterfaceList,
 }
 
-/// Represents a `<versionInfo>` element (EPSG 311, 7.4.7.4.2).
+/// Represents a `<versionInfo>` element.
 #[derive(Debug, Default, PartialEq)]
 pub struct VersionInfo {
     pub organization: String,
@@ -669,7 +689,7 @@ pub struct VersionInfo {
     pub description: Option<String>,
 }
 
-/// Represents an `<interfaceList>` for a function type (EPSG 311, 7.4.7.4.3).
+/// Represents an `<interfaceList>` for a function type.
 #[derive(Debug, Default, PartialEq)]
 pub struct InterfaceList {
     pub inputs: Vec<VarDeclaration>,
@@ -689,7 +709,7 @@ pub struct VarDeclaration {
     pub description: Option<String>,
 }
 
-/// Represents a `<functionInstance>` (EPSG 311, 7.4.7.5.2).
+/// Represents a `<functionInstance>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct FunctionInstance {
     pub name: String,
@@ -698,46 +718,31 @@ pub struct FunctionInstance {
     pub type_id_ref: String,
     pub label: Option<String>,
     pub description: Option<String>,
-    // Connections are not resolved onto the instance, they are app-level
 }
 
 // --- Object Dictionary ---
 
-/// Access types for an Object Dictionary entry, resolved from either
-/// `<Object @accessType>` or `<parameter @access>`.
-/// (Based on XSD `t_parameter` access attribute, EPSG DS 311, Table 40)
+/// Access types for an Object Dictionary entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParameterAccess {
-    /// `const`
     Constant,
-    /// `read`
     ReadOnly,
-    /// `write`
     WriteOnly,
-    /// `readWrite`
     ReadWrite,
-    /// `readWriteInput`
     ReadWriteInput,
-    /// `readWriteOutput`
     ReadWriteOutput,
-    /// `noAccess`
     NoAccess,
 }
 
-/// Support level for an Object Dictionary entry, resolved from
-/// `<parameter @support>`.
-/// (Based on XSD `t_parameter` support attribute, EPSG DS 311, Table 40)
+/// Support level for an Object Dictionary entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParameterSupport {
-    /// `mandatory`
     Mandatory,
-    /// `optional`
     Optional,
-    /// `conditional`
     Conditional,
 }
 
-/// PDO mapping capabilities for an Object Dictionary entry.
+/// PDO mapping capabilities.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectPdoMapping {
     No,
@@ -762,30 +767,29 @@ pub struct Object {
     // --- Metadata ---
     /// `@name`
     pub name: String,
-    /// `@objectType` (e.g., "7" for VAR, "9" for RECORD)
+    /// `@objectType`
     pub object_type: String,
-    /// `@dataType` (as a hex string, e.g., "0006")
+    /// `@dataType`
     pub data_type: Option<String>,
     /// `@lowLimit`
     pub low_limit: Option<String>,
     /// `@highLimit`
     pub high_limit: Option<String>,
-    /// Resolved access type from `<Object @accessType>` or `<parameter @access>`.
+    /// Resolved access type.
     pub access_type: Option<ParameterAccess>,
     /// `@PDOmapping`
     pub pdo_mapping: Option<ObjectPdoMapping>,
     /// `@objFlags`
     pub obj_flags: Option<String>,
-    /// Resolved support level from `<parameter @support>`.
+    /// Resolved support level.
     pub support: Option<ParameterSupport>,
-    /// Resolved `persistent` flag from `<parameter @persistent>`.
+    /// Resolved `persistent` flag.
     pub persistent: bool,
-    /// Resolved `<allowedValues>` from `<parameter>`.
+    /// Resolved `<allowedValues>`.
     pub allowed_values: Option<AllowedValues>,
 
     // --- Value ---
-    /// The resolved data for this object, from `actualValue` or `defaultValue`.
-    /// This is `None` for RECORD types (where data is in sub-objects).
+    /// The resolved data for this object.
     pub data: Option<Vec<u8>>,
 
     // --- Children ---
@@ -802,28 +806,28 @@ pub struct SubObject {
     // --- Metadata ---
     /// `@name`
     pub name: String,
-    /// `@objectType` (e.Data, "7" for VAR)
+    /// `@objectType`
     pub object_type: String,
-    /// `@dataType` (as a hex string, e.g., "0006")
+    /// `@dataType`
     pub data_type: Option<String>,
     /// `@lowLimit`
     pub low_limit: Option<String>,
     /// `@highLimit`
     pub high_limit: Option<String>,
-    /// Resolved access type from `<SubObject @accessType>` or `<parameter @access>`.
+    /// Resolved access type.
     pub access_type: Option<ParameterAccess>,
     /// `@PDOmapping`
     pub pdo_mapping: Option<ObjectPdoMapping>,
     /// `@objFlags`
     pub obj_flags: Option<String>,
-    /// Resolved support level from `<parameter @support>`.
+    /// Resolved support level.
     pub support: Option<ParameterSupport>,
-    /// Resolved `persistent` flag from `<parameter @persistent>`.
+    /// Resolved `persistent` flag.
     pub persistent: bool,
-    /// Resolved `<allowedValues>` from `<parameter>`.
+    /// Resolved `<allowedValues>`.
     pub allowed_values: Option<AllowedValues>,
 
     // --- Value ---
-    /// The resolved data for this sub-object, from `actualValue` or `defaultValue`.
+    /// The resolved data for this sub-object.
     pub data: Option<Vec<u8>>,
 }

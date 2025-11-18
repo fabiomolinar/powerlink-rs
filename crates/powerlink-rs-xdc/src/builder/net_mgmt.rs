@@ -24,7 +24,21 @@ pub(super) fn build_model_network_management(
         sdo_server: public.general_features.sdo_server,
         sdo_support_asnd: public.general_features.sdo_support_asnd,
         sdo_support_udp_ip: public.general_features.sdo_support_udp_ip,
-        ..Default::default() // Fills in other attributes as default
+
+        // --- NEW Fields ---
+        nmt_isochronous: public.general_features.nmt_isochronous,
+        sdo_support_pdo: public.general_features.sdo_support_pdo,
+        nmt_ext_nmt_cmds: public.general_features.nmt_ext_nmt_cmds,
+        cfm_config_manager: public.general_features.cfm_config_manager,
+        nmt_node_id_by_sw: public.general_features.nmt_node_id_by_sw,
+        sdo_cmd_read_all_by_index: public.general_features.sdo_cmd_read_all_by_index,
+        sdo_cmd_write_all_by_index: public.general_features.sdo_cmd_write_all_by_index,
+        sdo_cmd_read_mult_param: public.general_features.sdo_cmd_read_mult_param,
+        sdo_cmd_write_mult_param: public.general_features.sdo_cmd_write_mult_param,
+        nmt_publish_active_nodes: public.general_features.nmt_publish_active_nodes,
+        nmt_publish_config_nodes: public.general_features.nmt_publish_config_nodes,
+
+        ..Default::default()
     };
 
     let mn_features = public.mn_features.as_ref().map(|mnf| {
@@ -32,7 +46,12 @@ pub(super) fn build_model_network_management(
             dll_mn_feature_multiplex: mnf.dll_mn_feature_multiplex,
             dll_mn_pres_chaining: mnf.dll_mn_pres_chaining,
             nmt_simple_boot: mnf.nmt_simple_boot,
-            ..Default::default() // Fills in required string fields as empty
+
+            // --- NEW Fields ---
+            nmt_service_udp_ip: mnf.nmt_service_udp_ip,
+            nmt_mn_basic_ethernet: mnf.nmt_mn_basic_ethernet,
+
+            ..Default::default()
         }
     });
 
@@ -64,7 +83,7 @@ pub(super) fn build_model_network_management(
         mn_features,
         cn_features,
         diagnostic,
-        device_commissioning: None, // Never serialize this, it's XDC-only
+        device_commissioning: None,
     }
 }
 
@@ -92,6 +111,7 @@ mod tests {
                 dll_mn_feature_multiplex: Some(true),
                 dll_mn_pres_chaining: Some(false),
                 nmt_simple_boot: true,
+                ..Default::default()
             }),
             cn_features: Some(types::CnFeatures {
                 dll_cn_feature_multiplex: Some(false),
