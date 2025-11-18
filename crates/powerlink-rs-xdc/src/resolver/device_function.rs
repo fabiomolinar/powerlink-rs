@@ -229,7 +229,6 @@ mod tests {
     use super::*;
     use crate::model::common::{Description, Glabels, Label, LabelChoice};
     use crate::model::device_function as model_df;
-    use crate::types;
     use alloc::string::ToString;
     use alloc::vec;
 

@@ -9,9 +9,7 @@ use crate::types;
 use crate::types::XdcFile;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use alloc::string::String;
 use alloc::vec::Vec;
-use log::warn;
 use powerlink_rs::nmt::flags::FeatureFlags;
 use powerlink_rs::od::{
     AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping,
@@ -467,7 +465,7 @@ fn resolve_value_range(
 mod tests {
     use super::*;
     use crate::types::{GeneralFeatures, MnFeatures, NetworkManagement, SubObject, XdcFile};
-    use alloc::string::ToString;
+    use alloc::string::{String, ToString};
     use alloc::vec;
     use powerlink_rs::nmt::flags::FeatureFlags;
     use powerlink_rs::od::{AccessType, Category, Object, ObjectValue, PdoMapping}; // Import the core OD Object enum

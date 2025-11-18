@@ -127,7 +127,7 @@ pub(super) fn map_param_support(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::app_layers::{DataTypeName, ObjectAccessType, ObjectPdoMapping};
+    use crate::model::app_layers::{ObjectAccessType, ObjectPdoMapping};
     use crate::model::app_process::{
         ParameterAccess as ParamAccessModel, ParameterSupport as ParamSupportModel,
     };
@@ -135,19 +135,6 @@ mod tests {
         ObjectPdoMapping as PdoPublic, ParameterAccess as ParamAccessPublic,
         ParameterSupport as ParamSupportPublic,
     };
-    use alloc::collections::BTreeMap;
-    use alloc::string::ToString;
-    use alloc::vec;
-
-    /// Helper to create a BTreeMap simulating a parsed <DataTypeList>
-    fn get_test_type_map() -> BTreeMap<String, DataTypeName> {
-        let mut map = BTreeMap::new();
-        map.insert("0005".to_string(), DataTypeName::Unsigned8);
-        map.insert("0006".to_string(), DataTypeName::Unsigned16);
-        map.insert("0007".to_string(), DataTypeName::Unsigned32);
-        map.insert("001B".to_string(), DataTypeName::Unsigned64);
-        map
-    }
 
     #[test]
     fn test_map_access_type() {

@@ -685,10 +685,9 @@ mod tests {
         );
 
         // --- Assertions ---
-        // The *last* object (0x6000) should cause a parse error now
-        // TODO: verify why the assertions below aren't failing.
-        // assert!(od_result.is_err(), "Expected validation error due to bad data type: {:?}", od_result);
-        // assert!(matches!(od_result.err().unwrap(), XdcError::InvalidAttributeFormat {..}));
+        // The *last* object (0x6000) should cause a parse error now        
+        assert!(od_result.is_err(), "Expected validation error due to bad data type: {:?}", od_result);
+        assert!(matches!(od_result.err().unwrap(), XdcError::InvalidAttributeFormat {..}));
 
         // --- Rerun with a corrected object list ---
         let mut app_layers_good = app_layers;
