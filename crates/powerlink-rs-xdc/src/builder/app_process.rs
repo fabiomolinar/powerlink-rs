@@ -3,15 +3,12 @@
 //! Contains builder functions to convert `types::ApplicationProcess` into `model::ApplicationProcess`.
 
 use crate::model::app_process::{
-    AllowedValues, AllowedValuesTemplate, AppArray, AppDataTypeChoice, AppDataTypeList, AppDerived,
-    AppEnum, AppStruct, Count, EnumValue, FunctionInstance, FunctionInstanceList, FunctionType,
-    FunctionTypeList, InterfaceList, Parameter, ParameterDataType, ParameterGroup,
-    ParameterGroupItem, ParameterList, ParameterRef, Subrange, TemplateList, Value, VarDeclaration,
-    VarList, VersionInfo,
+    AllowedValues, AppArray, AppDataTypeChoice, AppDataTypeList, AppDerived, AppEnum, AppStruct,
+    Count, EnumValue, FunctionInstance, FunctionInstanceList, FunctionType, FunctionTypeList,
+    InterfaceList, Parameter, ParameterDataType, ParameterGroup, ParameterGroupItem, ParameterList,
+    ParameterRef, Subrange, TemplateList, Value, VarDeclaration, VarList, VersionInfo,
 };
-use crate::model::common::{
-    DataTypeIDRef, Description, Glabels, Label, LabelChoice, bool_false, bool_true,
-};
+use crate::model::common::{DataTypeIDRef, Description, Glabels, Label, LabelChoice};
 use crate::{model, types};
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -38,24 +35,24 @@ fn build_glabels(label: Option<&String>, description: Option<&String>) -> Glabel
 }
 
 /// Maps `types::ParameterAccess` to `model::app_process::ParameterAccess`.
-fn build_param_access(
-    access: types::ParameterAccess,
-) -> model::app_process::ParameterAccess {
+fn build_param_access(access: types::ParameterAccess) -> model::app_process::ParameterAccess {
     match access {
         types::ParameterAccess::Constant => model::app_process::ParameterAccess::Const,
         types::ParameterAccess::ReadOnly => model::app_process::ParameterAccess::Read,
         types::ParameterAccess::WriteOnly => model::app_process::ParameterAccess::Write,
         types::ParameterAccess::ReadWrite => model::app_process::ParameterAccess::ReadWrite,
-        types::ParameterAccess::ReadWriteInput => model::app_process::ParameterAccess::ReadWriteInput,
-        types::ParameterAccess::ReadWriteOutput => model::app_process::ParameterAccess::ReadWriteOutput,
+        types::ParameterAccess::ReadWriteInput => {
+            model::app_process::ParameterAccess::ReadWriteInput
+        }
+        types::ParameterAccess::ReadWriteOutput => {
+            model::app_process::ParameterAccess::ReadWriteOutput
+        }
         types::ParameterAccess::NoAccess => model::app_process::ParameterAccess::NoAccess,
     }
 }
 
 /// Maps `types::ParameterSupport` to `model::app_process::ParameterSupport`.
-fn build_param_support(
-    support: types::ParameterSupport,
-) -> model::app_process::ParameterSupport {
+fn build_param_support(support: types::ParameterSupport) -> model::app_process::ParameterSupport {
     match support {
         types::ParameterSupport::Mandatory => model::app_process::ParameterSupport::Mandatory,
         types::ParameterSupport::Optional => model::app_process::ParameterSupport::Optional,
@@ -64,9 +61,7 @@ fn build_param_support(
 }
 
 /// Maps `types::ParameterDataType` to `model::app_process::ParameterDataType`.
-fn build_param_data_type(
-    dt: &types::ParameterDataType,
-) -> model::app_process::ParameterDataType {
+fn build_param_data_type(dt: &types::ParameterDataType) -> model::app_process::ParameterDataType {
     use model::app_process::ParameterDataType as M;
     use types::ParameterDataType as T;
     match dt {

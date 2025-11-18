@@ -1,10 +1,10 @@
 // crates/powerlink-rs-xdc/src/resolver/od.rs
 
+use super::{ValueMode, utils};
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_layers::DataTypeName;
 use crate::parser::{parse_hex_u8, parse_hex_u16};
-use super::{ValueMode, utils}; 
 use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -103,8 +103,8 @@ fn resolve_object_attributes<'a>(
         let value_str_opt = get_value_str_for_object(model_obj, mode, param_map, template_map);
         let data_type_id = model_obj.data_type.as_deref();
 
-        resolved.data = value_str_opt
-            .and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
+        resolved.data =
+            value_str_opt.and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
 
         if let (Some(data), Some(dtype)) = (resolved.data.as_ref(), data_type_id) {
             utils::validate_type(index, sub_index, data, dtype, type_map)?;
@@ -151,8 +151,8 @@ fn resolve_sub_objects<'a>(
         );
         let data_type_id = model_sub.data_type.as_deref();
 
-        resolved.data = value_str_opt
-            .and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
+        resolved.data =
+            value_str_opt.and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
 
         if let (Some(data), Some(dtype)) = (resolved.data.as_ref(), data_type_id) {
             utils::validate_type(parent_index, sub_index, data, dtype, type_map)?;
@@ -196,7 +196,7 @@ fn apply_parameter_attributes(
         resolved.persistent = param.persistent;
 
         if let Some(av) = &param.allowed_values {
-             resolved.allowed_values = Some(resolve_allowed_values(av)?);
+            resolved.allowed_values = Some(resolve_allowed_values(av)?);
         }
     }
     Ok(())
@@ -231,11 +231,11 @@ fn resolve_allowed_values(
         })
         .collect();
 
-    Ok(types::AllowedValues { 
+    Ok(types::AllowedValues {
         // Fix: Added missing field `template_id_ref`
         template_id_ref: model.template_id_ref.clone(),
-        values, 
-        ranges 
+        values,
+        ranges,
     })
 }
 
@@ -377,10 +377,42 @@ fn parse_value_to_bytes(
     let is_hex = s.starts_with("0x");
 
     match size_opt {
-        Some(1) => if is_hex { u8::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(Into::into) } else { parse_dec_le!(u8) },
-        Some(2) => if is_hex { u16::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(Into::into) } else { parse_dec_le!(u16) },
-        Some(4) => if is_hex { u32::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(Into::into) } else { parse_dec_le!(u32) },
-        Some(8) => if is_hex { u64::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(Into::into) } else { parse_dec_le!(u64) },
+        Some(1) => {
+            if is_hex {
+                u8::from_str_radix(s_no_prefix, 16)
+                    .map(|v| v.to_le_bytes().to_vec())
+                    .map_err(Into::into)
+            } else {
+                parse_dec_le!(u8)
+            }
+        }
+        Some(2) => {
+            if is_hex {
+                u16::from_str_radix(s_no_prefix, 16)
+                    .map(|v| v.to_le_bytes().to_vec())
+                    .map_err(Into::into)
+            } else {
+                parse_dec_le!(u16)
+            }
+        }
+        Some(4) => {
+            if is_hex {
+                u32::from_str_radix(s_no_prefix, 16)
+                    .map(|v| v.to_le_bytes().to_vec())
+                    .map_err(Into::into)
+            } else {
+                parse_dec_le!(u32)
+            }
+        }
+        Some(8) => {
+            if is_hex {
+                u64::from_str_radix(s_no_prefix, 16)
+                    .map(|v| v.to_le_bytes().to_vec())
+                    .map_err(Into::into)
+            } else {
+                parse_dec_le!(u64)
+            }
+        }
         // Non-standard sizes (e.g. Integer24) only supported in hex for simplicity here
         Some(3) => {
             let val = u32::from_str_radix(s_no_prefix, 16).map_err(XdcError::from)?;

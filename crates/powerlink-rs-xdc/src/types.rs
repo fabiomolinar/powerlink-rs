@@ -731,7 +731,7 @@ pub struct Parameter {
     pub multiplier: Option<String>,
     /// `@templateIDRef`
     pub template_id_ref: Option<String>,
-    
+
     /// The data type of the parameter.
     pub data_type: ParameterDataType,
 

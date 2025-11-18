@@ -4,25 +4,19 @@
 //! internal `od::ObjectDictionary` representation.
 
 use crate::error::XdcError;
+use crate::resolver::utils; // Import utils for type checking
 use crate::types;
 use crate::types::XdcFile;
-use crate::resolver::utils; // Import utils for type checking
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use log::warn;
+use powerlink_rs::nmt::flags::FeatureFlags;
 use powerlink_rs::od::{
-    AccessType,
-    Category,
-    Object,
-    ObjectDictionary,
-    ObjectEntry,
-    ObjectValue,
-    PdoMapping,
+    AccessType, Category, Object, ObjectDictionary, ObjectEntry, ObjectValue, PdoMapping,
     ValueRange,
-};
-use powerlink_rs::nmt::flags::FeatureFlags; // Import core FeatureFlags
+}; // Import core FeatureFlags
 
 // Import DataTypeName for strong typing in map_data_to_value
 use crate::model::app_layers::DataTypeName;
@@ -46,16 +40,20 @@ pub struct NmtSettings {
 /// boolean attributes from `GeneralFeatures`, `CNFeatures`, and `MNFeatures` into
 /// the single `FeatureFlags` bitmask used by the POWERLINK stack.
 pub fn extract_nmt_settings(xdc_file: &XdcFile) -> Result<NmtSettings, XdcError> {
-    let nm = xdc_file.network_management.as_ref().ok_or(XdcError::ValidationError(
-        "XDC file missing required <NetworkManagement> block",
-    ))?;
+    let nm = xdc_file
+        .network_management
+        .as_ref()
+        .ok_or(XdcError::ValidationError(
+            "XDC file missing required <NetworkManagement> block",
+        ))?;
 
     let gf = &nm.general_features;
 
     let mut flags = FeatureFlags::empty();
 
     // --- Map GeneralFeatures ---
-    if gf.nmt_isochronous.unwrap_or(true) { // Default true per spec/schema
+    if gf.nmt_isochronous.unwrap_or(true) {
+        // Default true per spec/schema
         flags.insert(FeatureFlags::ISOCHRONOUS);
     }
     if gf.sdo_support_udp_ip.unwrap_or(false) {
@@ -71,7 +69,7 @@ pub fn extract_nmt_settings(xdc_file: &XdcFile) -> Result<NmtSettings, XdcError>
         flags.insert(FeatureFlags::EXTENDED_NMT_CMDS);
     }
     if gf.pdo_dynamic_mapping.unwrap_or(true) {
-         flags.insert(FeatureFlags::DYNAMIC_PDO_MAPPING);
+        flags.insert(FeatureFlags::DYNAMIC_PDO_MAPPING);
     }
     if gf.cfm_config_manager.unwrap_or(false) {
         flags.insert(FeatureFlags::CONFIG_MANAGER);
@@ -79,7 +77,9 @@ pub fn extract_nmt_settings(xdc_file: &XdcFile) -> Result<NmtSettings, XdcError>
     if gf.nmt_node_id_by_sw.unwrap_or(false) {
         flags.insert(FeatureFlags::NODE_ID_BY_SW);
     }
-    if gf.sdo_cmd_read_all_by_index.unwrap_or(false) || gf.sdo_cmd_write_all_by_index.unwrap_or(false) {
+    if gf.sdo_cmd_read_all_by_index.unwrap_or(false)
+        || gf.sdo_cmd_write_all_by_index.unwrap_or(false)
+    {
         flags.insert(FeatureFlags::SDO_RW_ALL_BY_INDEX);
     }
     if gf.sdo_cmd_read_mult_param.unwrap_or(false) || gf.sdo_cmd_write_mult_param.unwrap_or(false) {
@@ -92,23 +92,25 @@ pub fn extract_nmt_settings(xdc_file: &XdcFile) -> Result<NmtSettings, XdcError>
             flags.insert(FeatureFlags::NMT_SERVICE_UDP);
         }
         if mnf.dll_mn_feature_multiplex.unwrap_or(true) {
-             flags.insert(FeatureFlags::MULTIPLEXED_ACCESS);
+            flags.insert(FeatureFlags::MULTIPLEXED_ACCESS);
         }
         if mnf.nmt_mn_basic_ethernet.unwrap_or(false) {
             flags.insert(FeatureFlags::MN_BASIC_ETHERNET);
         }
         // NMT Info Services bit is often implied by the device class or specific attributes,
         // but for now we can map it if any NMT Publish features are active in GeneralFeatures.
-        if gf.nmt_publish_active_nodes.unwrap_or(false) || gf.nmt_publish_config_nodes.unwrap_or(false) {
+        if gf.nmt_publish_active_nodes.unwrap_or(false)
+            || gf.nmt_publish_config_nodes.unwrap_or(false)
+        {
             flags.insert(FeatureFlags::NMT_INFO_SERVICES);
         }
     }
 
     // --- Map CNFeatures ---
     if let Some(cnf) = &nm.cn_features {
-         if cnf.dll_cn_feature_multiplex.unwrap_or(false) {
-             flags.insert(FeatureFlags::MULTIPLEXED_ACCESS);
-         }
+        if cnf.dll_cn_feature_multiplex.unwrap_or(false) {
+            flags.insert(FeatureFlags::MULTIPLEXED_ACCESS);
+        }
     }
 
     Ok(NmtSettings {
@@ -371,14 +373,46 @@ fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
     trait FromStrRadix: Sized {
         fn from_str_radix(src: &str, radix: u32) -> Result<Self, core::num::ParseIntError>;
     }
-    impl FromStrRadix for i8 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i8::from_str_radix(s, r) } }
-    impl FromStrRadix for i16 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i16::from_str_radix(s, r) } }
-    impl FromStrRadix for i32 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i32::from_str_radix(s, r) } }
-    impl FromStrRadix for i64 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i64::from_str_radix(s, r) } }
-    impl FromStrRadix for u8 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u8::from_str_radix(s, r) } }
-    impl FromStrRadix for u16 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u16::from_str_radix(s, r) } }
-    impl FromStrRadix for u32 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u32::from_str_radix(s, r) } }
-    impl FromStrRadix for u64 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u64::from_str_radix(s, r) } }
+    impl FromStrRadix for i8 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            i8::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for i16 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            i16::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for i32 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            i32::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for i64 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            i64::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for u8 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            u8::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for u16 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            u16::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for u32 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            u32::from_str_radix(s, r)
+        }
+    }
+    impl FromStrRadix for u64 {
+        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
+            u64::from_str_radix(s, r)
+        }
+    }
 
     let type_name = utils::get_standard_type_from_hex(data_type_id)?;
 
@@ -395,7 +429,10 @@ fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
         DataTypeName::Integer64 => parse_num::<i64>(s).map(ObjectValue::Integer64),
         DataTypeName::Unsigned64 => parse_num::<u64>(s).map(ObjectValue::Unsigned64),
         _ => {
-            warn!("ValueRange parsing not implemented for dataType {}", data_type_id);
+            warn!(
+                "ValueRange parsing not implemented for dataType {}",
+                data_type_id
+            );
             None
         }
     }
@@ -460,12 +497,10 @@ fn resolve_value_range(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{
-        GeneralFeatures, MnFeatures, NetworkManagement, XdcFile, SubObject
-    };
-    use powerlink_rs::nmt::flags::FeatureFlags;
+    use crate::types::{GeneralFeatures, MnFeatures, NetworkManagement, SubObject, XdcFile};
     use alloc::string::ToString;
     use alloc::vec;
+    use powerlink_rs::nmt::flags::FeatureFlags;
     use powerlink_rs::od::{AccessType, Category, Object, ObjectValue, PdoMapping}; // Import the core OD Object enum
 
     #[test]
@@ -872,8 +907,8 @@ mod tests {
         let xdc_file = XdcFile {
             network_management: Some(NetworkManagement {
                 general_features: GeneralFeatures {
-                    dll_feature_mn: true, // MN
-                    nmt_isochronous: Some(true), // ISOCHRONOUS
+                    dll_feature_mn: true,         // MN
+                    nmt_isochronous: Some(true),  // ISOCHRONOUS
                     sdo_support_asnd: Some(true), // SDO_ASND
                     nmt_boot_time_not_active: 50000,
                     nmt_cycle_time_min: 100,
@@ -881,8 +916,8 @@ mod tests {
                     ..Default::default()
                 },
                 mn_features: Some(MnFeatures {
-                     nmt_service_udp_ip: Some(true), // NMT_SERVICE_UDP
-                     ..Default::default()
+                    nmt_service_udp_ip: Some(true), // NMT_SERVICE_UDP
+                    ..Default::default()
                 }),
                 ..Default::default()
             }),
@@ -893,7 +928,11 @@ mod tests {
 
         assert!(settings.feature_flags.contains(FeatureFlags::ISOCHRONOUS));
         assert!(settings.feature_flags.contains(FeatureFlags::SDO_ASND));
-        assert!(settings.feature_flags.contains(FeatureFlags::NMT_SERVICE_UDP));
+        assert!(
+            settings
+                .feature_flags
+                .contains(FeatureFlags::NMT_SERVICE_UDP)
+        );
         assert!(!settings.feature_flags.contains(FeatureFlags::SDO_UDP)); // Should be false
 
         assert_eq!(settings.boot_time_not_active, 50000);

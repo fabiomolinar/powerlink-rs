@@ -127,19 +127,17 @@ fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diag
         field
             .error_bit
             .iter()
-            .map(|bit| {
-                types::StaticErrorBit {
-                    name: bit.name.clone(),
-                    offset: bit.offset.parse().unwrap_or(0),
-                    label: bit
-                        .labels
-                        .as_ref()
-                        .and_then(|l| utils::extract_label(&l.items)),
-                    description: bit
-                        .labels
-                        .as_ref()
-                        .and_then(|l| utils::extract_description(&l.items)),
-                }
+            .map(|bit| types::StaticErrorBit {
+                name: bit.name.clone(),
+                offset: bit.offset.parse().unwrap_or(0),
+                label: bit
+                    .labels
+                    .as_ref()
+                    .and_then(|l| utils::extract_label(&l.items)),
+                description: bit
+                    .labels
+                    .as_ref()
+                    .and_then(|l| utils::extract_description(&l.items)),
             })
             .collect()
     });

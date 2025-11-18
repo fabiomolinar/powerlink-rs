@@ -97,7 +97,10 @@ pub(super) fn resolve_application_process(
 
     let parameters = resolve_parameter_list(&model.parameter_list)?;
 
-    let templates = model.template_list.as_ref().map_or(Ok(Vec::new()), resolve_template_list)?;
+    let templates = model
+        .template_list
+        .as_ref()
+        .map_or(Ok(Vec::new()), resolve_template_list)?;
 
     Ok(types::ApplicationProcess {
         data_types,
@@ -113,7 +116,10 @@ pub(super) fn resolve_application_process(
 fn resolve_value(model: &model::app_process::Value) -> types::Value {
     types::Value {
         value: model.value.clone(),
-        label: model.labels.as_ref().and_then(|glabels| utils::extract_label(&glabels.items)),
+        label: model
+            .labels
+            .as_ref()
+            .and_then(|glabels| utils::extract_label(&glabels.items)),
         offset: model.offset.clone(),
         multiplier: model.multiplier.clone(),
     }
@@ -168,7 +174,10 @@ fn resolve_template_list(
     list: &model::app_process::TemplateList,
 ) -> Result<Vec<types::Parameter>, XdcError> {
     // parameterTemplate is identical to parameter in structure
-    list.parameter_template.iter().map(resolve_parameter).collect()
+    list.parameter_template
+        .iter()
+        .map(resolve_parameter)
+        .collect()
 }
 
 /// Helper to resolve the `<dataTypeList>`.
