@@ -2,17 +2,11 @@
 
 use crate::error::XdcError;
 use crate::model;
-use crate::model::common::{AttributedGlabels, Glabels};
+use crate::model::common::AttributedGlabels;
 use crate::parser::parse_hex_u32;
 use crate::resolver::utils;
 use crate::types;
 use alloc::string::String; // Import utils
-
-/// Helper to extract the first available `<label>` value from a `g_labels` group.
-#[allow(dead_code)]
-fn extract_label_from_glabels(labels: &Glabels) -> Option<String> {
-    utils::extract_label(&labels.items) // FIX: Pass .items
-}
 
 /// Helper to extract the first available `<label>` value from an `AttributedGlabels` struct.
 fn extract_label_from_attributed_glabels(attributed_labels: &AttributedGlabels) -> Option<String> {
@@ -105,6 +99,11 @@ mod tests {
     use alloc::format;
     use alloc::string::ToString;
     use alloc::vec;
+
+    /// Helper to extract the first available `<label>` value from a `g_labels` group.
+    fn extract_label_from_glabels(labels: &Glabels) -> Option<String> {
+        utils::extract_label(&labels.items) // FIX: Pass .items
+    }
 
     /// Creates a minimal, reusable XML string with a DeviceIdentity block.
     fn create_test_xml(device_identity: &str, app_layers: &str, app_process: &str) -> String {

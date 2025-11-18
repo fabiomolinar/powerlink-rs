@@ -70,11 +70,13 @@ fn build_model_diagnostic(public: &types::Diagnostic) -> model::net_mgmt::Diagno
         })
     };
 
-    let static_error_bit_field = public.static_error_bit_field.as_ref().map(|bits| {
-        model::net_mgmt::StaticErrorBitField {
-            error_bit: bits.iter().map(build_model_error_bit).collect(),
-        }
-    });
+    let static_error_bit_field =
+        public
+            .static_error_bit_field
+            .as_ref()
+            .map(|bits| model::net_mgmt::StaticErrorBitField {
+                error_bit: bits.iter().map(build_model_error_bit).collect(),
+            });
 
     model::net_mgmt::Diagnostic {
         error_list,
@@ -118,16 +120,17 @@ pub(super) fn build_model_network_management(
         ..Default::default()
     };
 
-    let mn_features = public.mn_features.as_ref().map(|mnf| {
-        model::net_mgmt::MnFeatures {
+    let mn_features = public
+        .mn_features
+        .as_ref()
+        .map(|mnf| model::net_mgmt::MnFeatures {
             dll_mn_feature_multiplex: mnf.dll_mn_feature_multiplex,
             dll_mn_pres_chaining: mnf.dll_mn_pres_chaining,
             nmt_simple_boot: mnf.nmt_simple_boot,
             nmt_service_udp_ip: mnf.nmt_service_udp_ip,
             nmt_mn_basic_ethernet: mnf.nmt_mn_basic_ethernet,
             ..Default::default()
-        }
-    });
+        });
 
     let cn_features = public
         .cn_features

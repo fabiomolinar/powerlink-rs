@@ -88,9 +88,56 @@ fn test_round_trip_static_xdd() {
     // 3. Load the *new* string, parsing `actualValue`
     let file2 = load_xdc_from_str(&xdc_string_new).expect("Failed to parse newly serialized XDC");
 
-    // 4. Compare
-    // This now compares the *entire* XdcFile struct, including DeviceFunction,
-    // NetworkManagement, etc., validating the builder and resolver logic for all fields.
+    // 4. Detailed Comparisons for Debugging
+    assert_eq!(file1.header, file2.header, "Header mismatch");
+    assert_eq!(file1.identity, file2.identity, "Identity mismatch");
+
+    // Check NetworkManagement specifically
+    if let (Some(nm1), Some(nm2)) = (&file1.network_management, &file2.network_management) {
+        assert_eq!(
+            nm1.general_features, nm2.general_features,
+            "GeneralFeatures mismatch"
+        );
+        assert_eq!(nm1.mn_features, nm2.mn_features, "MnFeatures mismatch");
+        assert_eq!(nm1.cn_features, nm2.cn_features, "CnFeatures mismatch");
+        assert_eq!(nm1.diagnostic, nm2.diagnostic, "Diagnostic mismatch");
+    } else {
+        assert_eq!(
+            file1.network_management.is_some(),
+            file2.network_management.is_some(),
+            "NetworkManagement presence mismatch"
+        );
+    }
+
+    assert_eq!(
+        file1.device_function, file2.device_function,
+        "DeviceFunction mismatch"
+    );
+    assert_eq!(
+        file1.device_manager, file2.device_manager,
+        "DeviceManager mismatch"
+    );
+    assert_eq!(
+        file1.application_process, file2.application_process,
+        "ApplicationProcess mismatch"
+    );
+
+    // Compare Object Dictionaries
+    assert_eq!(
+        file1.object_dictionary.objects.len(),
+        file2.object_dictionary.objects.len(),
+        "Object count mismatch"
+    );
+    for (obj1, obj2) in file1
+        .object_dictionary
+        .objects
+        .iter()
+        .zip(file2.object_dictionary.objects.iter())
+    {
+        assert_eq!(obj1, obj2, "Object mismatch at index {}", obj1.index);
+    }
+
+    // 5. Final Full Compare
     assert_eq!(file1, file2, "XdcFile structs mismatch after round-trip");
 }
 

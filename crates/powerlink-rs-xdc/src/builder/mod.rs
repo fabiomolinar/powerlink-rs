@@ -11,8 +11,6 @@ use crate::error::XdcError;
 use crate::model;
 use crate::types;
 use crate::types::XdcFile;
-use crate::resolver::utils::get_standard_type_from_hex;
-use crate::model::app_layers::DataTypeName;
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -101,80 +99,80 @@ fn build_device_profile(
         })
         .collect();
 
-    let device_identity = DeviceIdentity {
-        vendor_name: ReadOnlyString {
-            value: identity.vendor_name.clone(),
-            ..Default::default()
-        },
-        vendor_id: Some(ReadOnlyString {
-            value: format!("0x{:08X}", identity.vendor_id),
-            ..Default::default()
-        }),
-        product_name: ReadOnlyString {
-            value: identity.product_name.clone(),
-            ..Default::default()
-        },
-        product_id: Some(ReadOnlyString {
-            value: format!("0x{:X}", identity.product_id),
-            ..Default::default()
-        }),
-        version: versions,
-        vendor_text: identity
-            .vendor_text
-            .as_ref()
-            .map(|t| model::common::AttributedGlabels {
-                items: vec![model::common::LabelChoice::Label(model::common::Label {
-                    lang: "en".to_string(),
-                    value: t.clone(),
-                })],
+    let device_identity =
+        DeviceIdentity {
+            vendor_name: ReadOnlyString {
+                value: identity.vendor_name.clone(),
+                ..Default::default()
+            },
+            vendor_id: Some(ReadOnlyString {
+                value: format!("0x{:08X}", identity.vendor_id),
                 ..Default::default()
             }),
-        device_family: identity.device_family.as_ref().map(|t| {
-            model::common::AttributedGlabels {
-                items: vec![model::common::LabelChoice::Label(model::common::Label {
-                    lang: "en".to_string(),
-                    value: t.clone(),
-                })],
+            product_name: ReadOnlyString {
+                value: identity.product_name.clone(),
                 ..Default::default()
-            }
-        }),
-        product_family: identity.product_family.as_ref().map(|t| ReadOnlyString {
-            value: t.clone(),
-            ..Default::default()
-        }),
-        product_text: identity.product_text.as_ref().map(|t| {
-            model::common::AttributedGlabels {
-                items: vec![model::common::LabelChoice::Label(model::common::Label {
-                    lang: "en".to_string(),
-                    value: t.clone(),
-                })],
-                ..Default::default()
-            }
-        }),
-        order_number: identity
-            .order_number
-            .iter()
-            .map(|o| ReadOnlyString {
-                value: o.clone(),
-                ..Default::default()
-            })
-            .collect(),
-        build_date: identity.build_date.clone(),
-        specification_revision: identity
-            .specification_revision
-            .as_ref()
-            .map(|sr| ReadOnlyString {
-                value: sr.clone(),
+            },
+            product_id: Some(ReadOnlyString {
+                value: format!("0x{:X}", identity.product_id),
                 ..Default::default()
             }),
-        instance_name: identity
-            .instance_name
-            .as_ref()
-            .map(|i| model::common::InstanceName {
-                value: i.clone(),
+            version: versions,
+            vendor_text: identity
+                .vendor_text
+                .as_ref()
+                .map(|t| model::common::AttributedGlabels {
+                    items: vec![model::common::LabelChoice::Label(model::common::Label {
+                        lang: "en".to_string(),
+                        value: t.clone(),
+                    })],
+                    ..Default::default()
+                }),
+            device_family: identity.device_family.as_ref().map(|t| {
+                model::common::AttributedGlabels {
+                    items: vec![model::common::LabelChoice::Label(model::common::Label {
+                        lang: "en".to_string(),
+                        value: t.clone(),
+                    })],
+                    ..Default::default()
+                }
+            }),
+            product_family: identity.product_family.as_ref().map(|t| ReadOnlyString {
+                value: t.clone(),
                 ..Default::default()
             }),
-    };
+            product_text: identity.product_text.as_ref().map(|t| {
+                model::common::AttributedGlabels {
+                    items: vec![model::common::LabelChoice::Label(model::common::Label {
+                        lang: "en".to_string(),
+                        value: t.clone(),
+                    })],
+                    ..Default::default()
+                }
+            }),
+            order_number: identity
+                .order_number
+                .iter()
+                .map(|o| ReadOnlyString {
+                    value: o.clone(),
+                    ..Default::default()
+                })
+                .collect(),
+            build_date: identity.build_date.clone(),
+            specification_revision: identity.specification_revision.as_ref().map(|sr| {
+                ReadOnlyString {
+                    value: sr.clone(),
+                    ..Default::default()
+                }
+            }),
+            instance_name: identity
+                .instance_name
+                .as_ref()
+                .map(|i| model::common::InstanceName {
+                    value: i.clone(),
+                    ..Default::default()
+                }),
+        };
 
     let model_device_function = device_function::build_model_device_function(device_function);
     let model_device_manager = device_manager.map(device_manager::build_model_device_manager);
@@ -311,7 +309,6 @@ fn format_value_to_string(data: &[u8], _data_type_id: Option<&str>) -> Result<St
     // comes from `d.as_bytes()`, so it SHOULD be valid UTF-8.
     Err(XdcError::FmtError(core::fmt::Error))
 }
-
 
 fn map_access_type_to_model(public: types::ParameterAccess) -> ObjectAccessType {
     match public {

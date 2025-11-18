@@ -194,9 +194,11 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
         "8" => {
             // ARRAY
             let mut sub_values = Vec::new();
-            
+
             // Determine size: use sub-index 0 (Count) if available, otherwise max sub-index
-            let count_from_idx0 = obj.sub_objects.iter()
+            let count_from_idx0 = obj
+                .sub_objects
+                .iter()
                 .find(|s| s.sub_index == 0)
                 .and_then(|s| s.data.as_ref())
                 .and_then(|d| d.parse::<usize>().ok());
@@ -204,7 +206,11 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
             let size = if let Some(c) = count_from_idx0 {
                 c
             } else {
-                obj.sub_objects.iter().map(|s| s.sub_index).max().unwrap_or(0) as usize
+                obj.sub_objects
+                    .iter()
+                    .map(|s| s.sub_index)
+                    .max()
+                    .unwrap_or(0) as usize
             };
 
             sub_values.resize(size, ObjectValue::Unsigned8(0));
@@ -232,9 +238,11 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
         "9" => {
             // RECORD
             let mut sub_values = Vec::new();
-            
-             // Determine size: use sub-index 0 (Count) if available, otherwise max sub-index
-            let count_from_idx0 = obj.sub_objects.iter()
+
+            // Determine size: use sub-index 0 (Count) if available, otherwise max sub-index
+            let count_from_idx0 = obj
+                .sub_objects
+                .iter()
                 .find(|s| s.sub_index == 0)
                 .and_then(|s| s.data.as_ref())
                 .and_then(|d| d.parse::<usize>().ok());
@@ -242,13 +250,19 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
             let size = if let Some(c) = count_from_idx0 {
                 c
             } else {
-                obj.sub_objects.iter().map(|s| s.sub_index).max().unwrap_or(0) as usize
+                obj.sub_objects
+                    .iter()
+                    .map(|s| s.sub_index)
+                    .max()
+                    .unwrap_or(0) as usize
             };
 
             sub_values.resize(size, ObjectValue::Unsigned8(0));
 
             for sub_obj in &obj.sub_objects {
-                if sub_obj.sub_index == 0 { continue; }
+                if sub_obj.sub_index == 0 {
+                    continue;
+                }
                 let value = sub_obj
                     .data
                     .as_ref()
@@ -670,7 +684,7 @@ mod tests {
                         name: "NMT_CycleLen_U32".to_string(),
                         object_type: "7".to_string(),
                         data_type: Some("0007".to_string()), // U32
-                        data: Some(String::from("10000")), // UPDATED TEST DATA: decimal 10000
+                        data: Some(String::from("10000")),   // UPDATED TEST DATA: decimal 10000
                         ..Default::default()
                     },
                     // RECORD (Sub-indices 0, 1, 2)
@@ -723,7 +737,7 @@ mod tests {
                                 sub_index: 1,
                                 name: "Val1".to_string(),
                                 data_type: Some("0006".to_string()), // U16
-                                data: Some(String::from("0x2211")), // UPDATED TEST DATA: BE hex
+                                data: Some(String::from("0x2211")),  // UPDATED TEST DATA: BE hex
                                 ..Default::default()
                             },
                         ],
