@@ -6,9 +6,10 @@
 use crate::error::XdcError;
 use crate::types;
 use crate::types::XdcFile;
+use crate::resolver::utils; // Import utils for type checking
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap; // Added for storage map
-use alloc::string::String; // Correctly import String
+use alloc::collections::BTreeMap;
+use alloc::string::String;
 use alloc::vec::Vec;
 use log::warn;
 use powerlink_rs::od::{
@@ -19,49 +20,38 @@ use powerlink_rs::od::{
     ObjectEntry,
     ObjectValue,
     PdoMapping,
-    ValueRange, // Import ValueRange
-}; // Import warn
+    ValueRange,
+};
+// Import DataTypeName for strong typing in map_data_to_value
+use crate::model::app_layers::DataTypeName;
 
 /// Converts a parsed `XdcFile` into the `ObjectDictionary` format required
 /// by the `powerlink-rs` core crate.
-///
-/// This function is intended to be used with XDD files (loaded via
-/// `load_xdd_defaults_from_str`) to create the *factory default* OD.
-///
-/// This is the primary integration point between the XDC parser and the
-/// core POWERLINK stack.
 pub fn to_core_od(xdc_file: &XdcFile) -> Result<ObjectDictionary<'static>, XdcError> {
-    // Create a new, empty `ObjectDictionary` from the core crate.
-    // We pass `None` for storage, as the XDC file *is* the storage.
     let mut core_od = ObjectDictionary::new(None);
 
     for obj in &xdc_file.object_dictionary.objects {
-        // Convert the `types::Object` into a `powerlink_rs::od::Object`.
         let core_object = map_object(obj)?;
 
-        // --- MODIFIED: Resolve ValueRange ---
-        // This logic is now implemented.
         let value_range = resolve_value_range(
             obj.low_limit.as_deref(),
             obj.high_limit.as_deref(),
-            obj.allowed_values.as_ref(), // Pass in the new field
+            obj.allowed_values.as_ref(),
             obj.data_type.as_deref(),
         );
 
-        // Convert the metadata into a `powerlink_rs::od::ObjectEntry`.
         let core_entry = ObjectEntry {
             object: core_object,
-            name: Box::leak(obj.name.clone().into_boxed_str()), // Leak string to get 'static str
+            name: Box::leak(obj.name.clone().into_boxed_str()),
             category: map_support_to_category(obj.support),
             access: obj.access_type.map(map_access_type),
-            // The XDC file's data *is* the default value for the core.
             default_value: obj
                 .data
                 .as_ref()
                 .map(|d| map_data_to_value(d, obj.data_type.as_deref()))
                 .transpose()?
                 .flatten(),
-            value_range, // MODIFIED: Assign the resolved value range
+            value_range,
             pdo_mapping: obj.pdo_mapping.map(map_pdo_mapping),
         };
 
@@ -73,9 +63,6 @@ pub fn to_core_od(xdc_file: &XdcFile) -> Result<ObjectDictionary<'static>, XdcEr
 
 /// Converts a parsed `XdcFile` into a `BTreeMap` suitable for use with
 /// the `powerlink_rs::hal::ObjectDictionaryStorage` trait.
-///
-/// This function is intended to be used with XDC files (loaded via
-/// `load_xdc_from_str`) to extract the `actualValue` data.
 pub fn xdc_to_storage_map(
     xdc_file: &XdcFile,
 ) -> Result<BTreeMap<(u16, u8), ObjectValue>, XdcError> {
@@ -83,7 +70,6 @@ pub fn xdc_to_storage_map(
 
     for obj in &xdc_file.object_dictionary.objects {
         if obj.object_type == "7" {
-            // This is a VAR. Data is on the object itself (sub-index 0).
             if let (Some(data), Some(data_type_id)) = (obj.data.as_ref(), obj.data_type.as_deref())
             {
                 if let Some(value) = map_data_to_value(data, Some(data_type_id))? {
@@ -91,7 +77,6 @@ pub fn xdc_to_storage_map(
                 }
             }
         } else {
-            // This is a RECORD or ARRAY. Data is on the sub-objects.
             for sub_obj in &obj.sub_objects {
                 if let (Some(data), Some(data_type_id)) =
                     (sub_obj.data.as_ref(), sub_obj.data_type.as_deref())
@@ -126,7 +111,6 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
         "8" => {
             // ARRAY
             let mut sub_values = Vec::new();
-            // Sub-index 0 is "NumberOfEntries"
             let num_entries = obj
                 .sub_objects
                 .iter()
@@ -136,8 +120,7 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
                 .copied()
                 .unwrap_or(0);
 
-            // Pre-allocate based on sub-index 0
-            sub_values.resize(num_entries as usize, ObjectValue::Unsigned8(0)); // Fill with dummy data
+            sub_values.resize(num_entries as usize, ObjectValue::Unsigned8(0));
 
             for sub_obj in &obj.sub_objects {
                 if sub_obj.sub_index == 0 {
@@ -161,7 +144,6 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
         "9" => {
             // RECORD
             let mut sub_values = Vec::new();
-            // Sub-index 0 is "NumberOfEntries"
             let num_entries = obj
                 .sub_objects
                 .iter()
@@ -171,8 +153,7 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
                 .copied()
                 .unwrap_or(0);
 
-            // Pre-allocate based on sub-index 0
-            sub_values.resize(num_entries as usize, ObjectValue::Unsigned8(0)); // Fill with dummy data
+            sub_values.resize(num_entries as usize, ObjectValue::Unsigned8(0));
 
             for sub_obj in &obj.sub_objects {
                 if sub_obj.sub_index == 0 {
@@ -198,13 +179,21 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
 }
 
 /// Maps a raw byte slice and a data type ID string to the core `ObjectValue` enum.
+///
+/// Refactored to use `DataTypeName` enum matching for robustness.
 fn map_data_to_value(
     data: &[u8],
     data_type_id: Option<&str>,
 ) -> Result<Option<ObjectValue>, XdcError> {
-    let id = match data_type_id {
+    let id_str = match data_type_id {
         Some(id) => id,
-        None => return Ok(None), // Cannot map without a type
+        None => return Ok(None),
+    };
+
+    // Resolve the hex ID string to a strong Enum
+    let type_name = match utils::get_standard_type_from_hex(id_str) {
+        Some(t) => t,
+        None => return Ok(None), // Unknown or custom type, skip mapping
     };
 
     // Helper macro to deserialize LE bytes
@@ -218,71 +207,63 @@ fn map_data_to_value(
         };
     }
 
-    match id {
-        "0001" => from_le!(u8, ObjectValue::Boolean),
-        "0002" => from_le!(i8, ObjectValue::Integer8),
-        "0003" => from_le!(i16, ObjectValue::Integer16),
-        "0004" => from_le!(i32, ObjectValue::Integer32),
-        "0005" => from_le!(u8, ObjectValue::Unsigned8),
-        "0006" => from_le!(u16, ObjectValue::Unsigned16),
-        "0007" => from_le!(u32, ObjectValue::Unsigned32),
-        "0008" => from_le!(f32, ObjectValue::Real32),
-        "0009" => Ok(Some(ObjectValue::VisibleString(
+    // Match on the Enum instead of string literals
+    match type_name {
+        DataTypeName::Boolean => from_le!(u8, ObjectValue::Boolean),
+        DataTypeName::Integer8 => from_le!(i8, ObjectValue::Integer8),
+        DataTypeName::Integer16 => from_le!(i16, ObjectValue::Integer16),
+        DataTypeName::Integer32 => from_le!(i32, ObjectValue::Integer32),
+        DataTypeName::Unsigned8 => from_le!(u8, ObjectValue::Unsigned8),
+        DataTypeName::Unsigned16 => from_le!(u16, ObjectValue::Unsigned16),
+        DataTypeName::Unsigned32 => from_le!(u32, ObjectValue::Unsigned32),
+        DataTypeName::Real32 => from_le!(f32, ObjectValue::Real32),
+        DataTypeName::VisibleString => Ok(Some(ObjectValue::VisibleString(
             String::from_utf8(data.to_vec())
                 .map_err(|_| XdcError::ValidationError("Invalid UTF-8"))?,
         ))),
-        "000A" => Ok(Some(ObjectValue::OctetString(data.to_vec()))),
-        "000F" => Ok(Some(ObjectValue::Domain(data.to_vec()))),
-        "0011" => from_le!(f64, ObjectValue::Real64),
-        "0015" => from_le!(i64, ObjectValue::Integer64),
-        "001B" => from_le!(u64, ObjectValue::Unsigned64),
-        // Add more types as needed...
-        _ => Ok(None), // Type not recognized or mapped yet
+        DataTypeName::OctetString => Ok(Some(ObjectValue::OctetString(data.to_vec()))),
+        DataTypeName::Domain => Ok(Some(ObjectValue::Domain(data.to_vec()))),
+        DataTypeName::Real64 => from_le!(f64, ObjectValue::Real64),
+        DataTypeName::Integer64 => from_le!(i64, ObjectValue::Integer64),
+        DataTypeName::Unsigned64 => from_le!(u64, ObjectValue::Unsigned64),
+        // Add other mappings as needed...
+        _ => Ok(None),
     }
 }
 
-/// Maps the XDC parser's `ParameterAccess` to the core crate's `AccessType`.
 fn map_access_type(access: types::ParameterAccess) -> AccessType {
     match access {
         types::ParameterAccess::Constant => AccessType::Constant,
         types::ParameterAccess::ReadOnly => AccessType::ReadOnly,
         types::ParameterAccess::WriteOnly => AccessType::WriteOnly,
         types::ParameterAccess::ReadWrite => AccessType::ReadWrite,
-        // Map ReadWriteStore and WriteOnlyStore to their non-storing counterparts
-        // The `persistent` flag in `types::Object` will be used by the core
-        // crate's CFM logic to know *what* to save, but the OD's access
-        // type only cares about read/write permissions.
         types::ParameterAccess::ReadWriteInput => AccessType::ReadWrite,
         types::ParameterAccess::ReadWriteOutput => AccessType::ReadWrite,
-        types::ParameterAccess::NoAccess => AccessType::ReadOnly, // NoAccess is effectively RO
+        types::ParameterAccess::NoAccess => AccessType::ReadOnly,
     }
 }
 
-/// Maps the XDC parser's `ObjectPdoMapping` to the core crate's `PdoMapping`.
 fn map_pdo_mapping(mapping: types::ObjectPdoMapping) -> PdoMapping {
     match mapping {
         types::ObjectPdoMapping::No => PdoMapping::No,
         types::ObjectPdoMapping::Default => PdoMapping::Default,
         types::ObjectPdoMapping::Optional => PdoMapping::Optional,
-        // TPDO and RPDO are just special cases of "Optional" for the runtime
         types::ObjectPdoMapping::Tpdo => PdoMapping::Optional,
         types::ObjectPdoMapping::Rpdo => PdoMapping::Optional,
     }
 }
 
-/// Maps the XDC parser's `ParameterSupport` to the core crate's `Category`.
 fn map_support_to_category(support: Option<types::ParameterSupport>) -> Category {
     match support {
         Some(types::ParameterSupport::Mandatory) => Category::Mandatory,
         Some(types::ParameterSupport::Optional) => Category::Optional,
         Some(types::ParameterSupport::Conditional) => Category::Conditional,
-        None => Category::Optional, // Default to Optional if not specified
+        None => Category::Optional,
     }
 }
 
-/// --- NEW: Helper functions for ValueRange resolution ---
+// --- Helper functions for ValueRange resolution ---
 
-/// Parses a limit string (hex or decimal) into an `ObjectValue` based on type.
 fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
     // Helper to parse, supporting "0x" hex or decimal
     fn parse_num<T: FromStrRadix + core::str::FromStr>(s: &str) -> Option<T> {
@@ -293,89 +274,51 @@ fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
         }
     }
 
-    // Trait to unify from_str_radix and FromStr
     trait FromStrRadix: Sized {
         fn from_str_radix(src: &str, radix: u32) -> Result<Self, core::num::ParseIntError>;
     }
-    impl FromStrRadix for i8 {
-        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
-            i8::from_str_radix(s, r)
-        }
-    }
-    impl FromStrRadix for i16 {
-        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
-            i16::from_str_radix(s, r)
-        }
-    }
-    impl FromStrRadix for i32 {
-        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
-            i32::from_str_radix(s, r)
-        }
-    }
-    impl FromStrRadix for i64 {
-        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
-            i64::from_str_radix(s, r)
-        }
-    }
-    impl FromStrRadix for u8 {
-        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
-            u8::from_str_radix(s, r)
-        }
-    }
-    impl FromStrRadix for u16 {
-        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
-            u16::from_str_radix(s, r)
-        }
-    }
-    impl FromStrRadix for u32 {
-        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
-            u32::from_str_radix(s, r)
-        }
-    }
-    impl FromStrRadix for u64 {
-        fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> {
-            u64::from_str_radix(s, r)
-        }
-    }
+    // Implementations omitted for brevity, same as previous file...
+    impl FromStrRadix for i8 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i8::from_str_radix(s, r) } }
+    impl FromStrRadix for i16 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i16::from_str_radix(s, r) } }
+    impl FromStrRadix for i32 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i32::from_str_radix(s, r) } }
+    impl FromStrRadix for i64 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { i64::from_str_radix(s, r) } }
+    impl FromStrRadix for u8 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u8::from_str_radix(s, r) } }
+    impl FromStrRadix for u16 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u16::from_str_radix(s, r) } }
+    impl FromStrRadix for u32 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u32::from_str_radix(s, r) } }
+    impl FromStrRadix for u64 { fn from_str_radix(s: &str, r: u32) -> Result<Self, core::num::ParseIntError> { u64::from_str_radix(s, r) } }
 
-    match data_type_id {
-        "0001" => parse_num::<u8>(s).map(ObjectValue::Boolean),
-        "0002" => parse_num::<i8>(s).map(ObjectValue::Integer8),
-        "0003" => parse_num::<i16>(s).map(ObjectValue::Integer16),
-        "0004" => parse_num::<i32>(s).map(ObjectValue::Integer32),
-        "0005" => parse_num::<u8>(s).map(ObjectValue::Unsigned8),
-        "0006" => parse_num::<u16>(s).map(ObjectValue::Unsigned16),
-        "0007" => parse_num::<u32>(s).map(ObjectValue::Unsigned32),
-        "0008" => s.parse::<f32>().ok().map(ObjectValue::Real32),
-        // 0009 (VisibleString) and 000A (OctetString) don't typically have numeric ranges
-        "0011" => s.parse::<f64>().ok().map(ObjectValue::Real64),
-        "0015" => parse_num::<i64>(s).map(ObjectValue::Integer64),
-        "001B" => parse_num::<u64>(s).map(ObjectValue::Unsigned64),
-        // Other types (Integer24, Domain, etc.) are not handled for ranges yet
+    let type_name = utils::get_standard_type_from_hex(data_type_id)?;
+
+    match type_name {
+        DataTypeName::Boolean => parse_num::<u8>(s).map(ObjectValue::Boolean),
+        DataTypeName::Integer8 => parse_num::<i8>(s).map(ObjectValue::Integer8),
+        DataTypeName::Integer16 => parse_num::<i16>(s).map(ObjectValue::Integer16),
+        DataTypeName::Integer32 => parse_num::<i32>(s).map(ObjectValue::Integer32),
+        DataTypeName::Unsigned8 => parse_num::<u8>(s).map(ObjectValue::Unsigned8),
+        DataTypeName::Unsigned16 => parse_num::<u16>(s).map(ObjectValue::Unsigned16),
+        DataTypeName::Unsigned32 => parse_num::<u32>(s).map(ObjectValue::Unsigned32),
+        DataTypeName::Real32 => s.parse::<f32>().ok().map(ObjectValue::Real32),
+        DataTypeName::Real64 => s.parse::<f64>().ok().map(ObjectValue::Real64),
+        DataTypeName::Integer64 => parse_num::<i64>(s).map(ObjectValue::Integer64),
+        DataTypeName::Unsigned64 => parse_num::<u64>(s).map(ObjectValue::Unsigned64),
         _ => {
-            warn!(
-                "ValueRange parsing not implemented for dataType {}",
-                data_type_id
-            );
+            warn!("ValueRange parsing not implemented for dataType {}", data_type_id);
             None
         }
     }
 }
 
-/// Resolves the `ValueRange` for an object.
-/// This is a new helper function.
 fn resolve_value_range(
     low_limit_str: Option<&str>,
     high_limit_str: Option<&str>,
-    allowed_values: Option<&types::AllowedValues>, // MODIFIED: Added parameter
+    allowed_values: Option<&types::AllowedValues>,
     data_type_id: Option<&str>,
 ) -> Option<ValueRange> {
     let dt_id = match data_type_id {
         Some(id) => id,
-        None => return None, // Cannot parse range without a type
+        None => return None,
     };
 
-    // Priority 1: Direct lowLimit/highLimit attributes on the <Object> or <SubObject>.
     if let (Some(low_str), Some(high_str)) = (low_limit_str, high_limit_str) {
         match (
             parse_string_to_value(low_str, dt_id),
@@ -392,15 +335,11 @@ fn resolve_value_range(
                     "Failed to parse low/high limit strings ('{}', '{}') for dataType {}",
                     low_str, high_str, dt_id
                 );
-                // Fall through to check allowedValues
             }
         }
     }
 
-    // Priority 2: <allowedValues> from the resolved <parameter>.
     if let Some(av) = allowed_values {
-        // The core `ValueRange` struct only supports min/max, not enumerated values.
-        // We will use the *first* <range> element we find.
         if let Some(range) = av.ranges.first() {
             match (
                 parse_string_to_value(&range.min_value, dt_id),
@@ -420,11 +359,9 @@ fn resolve_value_range(
                 }
             }
         }
-        // TODO: The core `ValueRange` could be extended to support enumerated `allowedValues.values`.
-        // For now, we only support <range>.
     }
 
-    None // No range specified or found
+    None
 }
 
 #[cfg(test)]

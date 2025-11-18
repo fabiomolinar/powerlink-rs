@@ -3,14 +3,23 @@
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_layers::DataTypeName;
-use crate::parser::{parse_hex_u8, parse_hex_u16}; // Removed parse_hex_string
-use crate::resolver::{ValueMode, utils};
+use crate::parser::{parse_hex_u8, parse_hex_u16};
+// Use super:: to correctly access sibling modules and the ValueMode enum
+use super::{ValueMode, utils}; 
 use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
-// Import for new helper
-// Import for new helper
+
+/// Internal struct to hold resolved attributes for an object/subobject.
+/// This prevents passing 6+ separate arguments around.
+struct ResolvedAttributes {
+    access: Option<types::ParameterAccess>,
+    support: Option<types::ParameterSupport>,
+    persistent: bool,
+    allowed_values: Option<types::AllowedValues>,
+    data: Option<Vec<u8>>,
+}
 
 /// Iterates the `model::ObjectList` and resolves it into a rich, public `types::ObjectDictionary`.
 pub(super) fn resolve_object_dictionary<'a>(
@@ -25,115 +34,27 @@ pub(super) fn resolve_object_dictionary<'a>(
     for model_obj in &app_layers.object_list.object {
         let index = parse_hex_u16(&model_obj.index)?;
 
-        // --- Start: Resolve Object Attributes (Task 9) ---
-        // Set defaults from the <Object> tag itself
-        let mut resolved_access = model_obj.access_type.map(utils::map_access_type);
-        let mut resolved_support = None;
-        let mut resolved_persistent = false;
-        // MODIFIED: Add allowed_values
-        let mut resolved_allowed_values: Option<types::AllowedValues> = None;
-        let mut object_data: Option<Vec<u8>> = None;
-        let mut od_sub_objects: Vec<types::SubObject> = Vec::new();
+        // 1. Resolve attributes (access, support, data, etc.)
+        let attributes = resolve_object_attributes(
+            model_obj,
+            param_map,
+            template_map,
+            type_map,
+            mode,
+            index,
+            0, // SubIndex 0 for the object itself
+        )?;
 
-        // Check if a parameter reference overrides these attributes
-        if let Some(id_ref) = model_obj.unique_id_ref.as_ref() {
-            if let Some(param) = param_map.get(id_ref) {
-                // The parameter's attributes take precedence.
-                resolved_access = param.access.map(utils::map_param_access);
-                resolved_support = param.support.map(utils::map_param_support);
-                resolved_persistent = param.persistent;
-                // MODIFIED: Resolve allowedValues from the parameter
-                resolved_allowed_values = param
-                    .allowed_values
-                    .as_ref()
-                    .map(resolve_allowed_values)
-                    .transpose()?;
-            }
-        }
-        // --- End: Resolve Object Attributes ---
-
-        if model_obj.object_type == "7" {
-            // This is a VAR. Its value is on the <Object> element itself.
-            let value_str_opt = get_value_str_for_object(model_obj, mode, param_map, template_map);
-            let data_type_id = model_obj.data_type.as_deref();
-
-            // We only store data if it's valid.
-            object_data =
-                value_str_opt.and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
-
-            // Perform type validation if we have data
-            if let (Some(data), Some(data_type_id_str)) = (object_data.as_ref(), data_type_id) {
-                utils::validate_type(index, 0, data, data_type_id_str, type_map)?;
-            }
-        } else {
-            // This is a RECORD or ARRAY. Process its <SubObject> children.
-            for model_sub_obj in &model_obj.sub_object {
-                let sub_index = parse_hex_u8(&model_sub_obj.sub_index)?;
-
-                // --- Start: Resolve SubObject Attributes (Task 9) ---
-                // Set defaults from the <SubObject> tag itself
-                let mut sub_resolved_access = model_sub_obj.access_type.map(utils::map_access_type);
-                let mut sub_resolved_support = None;
-                let mut sub_resolved_persistent = false;
-                // MODIFIED: Add allowed_values
-                let mut sub_resolved_allowed_values: Option<types::AllowedValues> = None;
-
-                // Check if a parameter reference overrides these attributes
-                if let Some(id_ref) = model_sub_obj.unique_id_ref.as_ref() {
-                    if let Some(param) = param_map.get(id_ref) {
-                        // The parameter's attributes take precedence.
-                        sub_resolved_access = param.access.map(utils::map_param_access);
-                        sub_resolved_support = param.support.map(utils::map_param_support);
-                        sub_resolved_persistent = param.persistent;
-                        // MODIFIED: Resolve allowedValues from the parameter
-                        sub_resolved_allowed_values = param
-                            .allowed_values
-                            .as_ref()
-                            .map(resolve_allowed_values)
-                            .transpose()?;
-                    }
-                }
-                // --- End: Resolve SubObject Attributes ---
-
-                // Logic to find the correct value string
-                let value_str_opt = get_value_str_for_subobject(
-                    model_sub_obj,
-                    mode,
-                    param_map,
-                    template_map,
-                    model_obj.unique_id_ref.as_ref(),
-                    sub_index,
-                );
-                let data_type_id = model_sub_obj.data_type.as_deref();
-
-                // We only store data if it's valid.
-                let data = value_str_opt
-                    .and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
-
-                // Perform type validation if we have data
-                if let (Some(data), Some(data_type_id_str)) = (data.as_ref(), data_type_id) {
-                    utils::validate_type(index, sub_index, data, data_type_id_str, type_map)?;
-                }
-
-                let pdo_mapping = model_sub_obj.pdo_mapping.map(utils::map_pdo_mapping);
-
-                od_sub_objects.push(types::SubObject {
-                    sub_index,
-                    name: model_sub_obj.name.clone(),
-                    object_type: model_sub_obj.object_type.clone(),
-                    data_type: model_sub_obj.data_type.clone(),
-                    low_limit: model_sub_obj.low_limit.clone(),
-                    high_limit: model_sub_obj.high_limit.clone(),
-                    access_type: sub_resolved_access, // Use resolved value
-                    pdo_mapping,
-                    obj_flags: model_sub_obj.obj_flags.clone(),
-                    support: sub_resolved_support, // Use resolved value
-                    persistent: sub_resolved_persistent, // Use resolved value
-                    allowed_values: sub_resolved_allowed_values, // MODIFIED: Assign resolved values
-                    data,
-                });
-            }
-        }
+        // 2. Resolve SubObjects if present
+        let sub_objects = resolve_sub_objects(
+            &model_obj.sub_object,
+            model_obj.unique_id_ref.as_ref(),
+            param_map,
+            template_map,
+            type_map,
+            mode,
+            index,
+        )?;
 
         let pdo_mapping = model_obj.pdo_mapping.map(utils::map_pdo_mapping);
 
@@ -142,16 +63,16 @@ pub(super) fn resolve_object_dictionary<'a>(
             name: model_obj.name.clone(),
             object_type: model_obj.object_type.clone(),
             data_type: model_obj.data_type.clone(),
-            low_limit: model_obj.low_limit.clone(), // MODIFIED: Pass through low_limit
-            high_limit: model_obj.high_limit.clone(), // MODIFIED: Pass through high_limit
-            access_type: resolved_access,           // Use resolved value
+            low_limit: model_obj.low_limit.clone(),
+            high_limit: model_obj.high_limit.clone(),
+            access_type: attributes.access,
             pdo_mapping,
             obj_flags: model_obj.obj_flags.clone(),
-            support: resolved_support,               // Use resolved value
-            persistent: resolved_persistent,         // Use resolved value
-            allowed_values: resolved_allowed_values, // MODIFIED: Assign resolved values
-            data: object_data,
-            sub_objects: od_sub_objects,
+            support: attributes.support,
+            persistent: attributes.persistent,
+            allowed_values: attributes.allowed_values,
+            data: attributes.data,
+            sub_objects,
         });
     }
 
@@ -160,102 +81,140 @@ pub(super) fn resolve_object_dictionary<'a>(
     })
 }
 
-/// Parses a value string (e.g., "0x1234", "100") into a `Vec<u8>`
-/// using little-endian byte order, based on the `dataType`.
-fn parse_value_to_bytes(
-    s: &str,
-    data_type_id: Option<&str>,
+/// Resolves the attributes (access, support, data) for a main `<Object>`.
+fn resolve_object_attributes<'a>(
+    model_obj: &'a model::app_layers::Object,
+    param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
+    template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
     type_map: &BTreeMap<String, DataTypeName>,
-) -> Result<Vec<u8>, XdcError> {
-    let id = data_type_id.ok_or(XdcError::ValidationError(
-        "Cannot parse value string to bytes without dataType",
-    ))?;
+    mode: ValueMode,
+    index: u16,
+    sub_index: u8,
+) -> Result<ResolvedAttributes, XdcError> {
+    // Defaults from the <Object> tag
+    let mut resolved = ResolvedAttributes {
+        access: model_obj.access_type.map(utils::map_access_type),
+        support: None,
+        persistent: false,
+        allowed_values: None,
+        data: None,
+    };
 
-    // Helper to parse a decimal string to a type and get LE bytes
-    macro_rules! parse_dec_le {
-        ($typ:ty) => {
-            s.parse::<$typ>()
-                .map(|v| v.to_le_bytes().to_vec())
-                .map_err(|_| XdcError::InvalidAttributeFormat {
-                    attribute: "defaultValue or actualValue (decimal)",
-                })
-        };
+    // Override from Parameter if uniqueIDRef exists
+    if let Some(id_ref) = model_obj.unique_id_ref.as_ref() {
+        apply_parameter_attributes(id_ref, param_map, &mut resolved)?;
     }
 
-    // Helper to parse a hex string (with or without 0x) to a type and get LE bytes
-    macro_rules! parse_hex_le {
-        ($typ:ty) => {
-            <$typ>::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16)
-                .map(|v| v.to_le_bytes().to_vec())
-                .map_err(|e| e.into())
-        };
-    }
+    // Resolve Data (Value) if this is a VAR (object_type "7")
+    if model_obj.object_type == "7" {
+        let value_str_opt = get_value_str_for_object(model_obj, mode, param_map, template_map);
+        let data_type_id = model_obj.data_type.as_deref();
 
-    // First, check if it's a string-like type.
-    // These are *not* parsed as numbers.
-    match id {
-        "0009" | "000B" => return Ok(s.as_bytes().to_vec()), // VisibleString, UnicodeString
-        "000A" | "000F" => return crate::parser::parse_hex_string(s).map_err(|e| e.into()), // OctetString, Domain
-        _ => {} // Not a string type, continue
-    }
+        resolved.data = value_str_opt
+            .and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
 
-    // It's a numeric type. Get its expected size.
-    let size_opt = utils::get_data_type_size(id, type_map);
-
-    if !s.starts_with("0x") {
-        // Decimal string: parse as number, encode as LE
-        match size_opt {
-            Some(1) => parse_dec_le!(u8),
-            Some(2) => parse_dec_le!(u16),
-            Some(4) => parse_dec_le!(u32),
-            Some(8) => parse_dec_le!(u64),
-            // Add other sizes as needed
-            _ => Err(XdcError::ValidationError(
-                "Unknown numeric type size for decimal value",
-            )),
-        }
-    } else {
-        // Hex string: parse as number, encode as LE
-        let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
-        match size_opt {
-            Some(1) => u8::from_str_radix(s_no_prefix, 16)
-                .map(|v| v.to_le_bytes().to_vec())
-                .map_err(|e| e.into()),
-            Some(2) => u16::from_str_radix(s_no_prefix, 16)
-                .map(|v| v.to_le_bytes().to_vec())
-                .map_err(|e| e.into()),
-            Some(4) => u32::from_str_radix(s_no_prefix, 16)
-                .map(|v| v.to_le_bytes().to_vec())
-                .map_err(|e| e.into()),
-            Some(8) => u64::from_str_radix(s_no_prefix, 16)
-                .map(|v| v.to_le_bytes().to_vec())
-                .map_err(|e| e.into()),
-            // Handle non-standard sizes by parsing as a large int and slicing
-            Some(3) => {
-                let val = u32::from_str_radix(s_no_prefix, 16)?;
-                Ok(val.to_le_bytes()[..3].to_vec())
-            }
-            Some(5) => {
-                let val = u64::from_str_radix(s_no_prefix, 16)?;
-                Ok(val.to_le_bytes()[..5].to_vec())
-            }
-            Some(6) => {
-                let val = u64::from_str_radix(s_no_prefix, 16)?;
-                Ok(val.to_le_bytes()[..6].to_vec())
-            }
-            Some(7) => {
-                let val = u64::from_str_radix(s_no_prefix, 16)?;
-                Ok(val.to_le_bytes()[..7].to_vec())
-            }
-            _ => Err(XdcError::ValidationError(
-                "Unknown numeric type size for hex value",
-            )),
+        // Validate data if present
+        if let (Some(data), Some(dtype)) = (resolved.data.as_ref(), data_type_id) {
+            utils::validate_type(index, sub_index, data, dtype, type_map)?;
         }
     }
+
+    Ok(resolved)
+}
+
+/// Resolves a list of `<SubObject>` elements.
+fn resolve_sub_objects<'a>(
+    model_subs: &'a [model::app_layers::SubObject],
+    parent_unique_id_ref: Option<&'a String>,
+    param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
+    template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
+    type_map: &BTreeMap<String, DataTypeName>,
+    mode: ValueMode,
+    parent_index: u16,
+) -> Result<Vec<types::SubObject>, XdcError> {
+    let mut result = Vec::new();
+
+    for model_sub in model_subs {
+        let sub_index = parse_hex_u8(&model_sub.sub_index)?;
+
+        // Defaults from <SubObject> tag
+        let mut resolved = ResolvedAttributes {
+            access: model_sub.access_type.map(utils::map_access_type),
+            support: None,
+            persistent: false,
+            allowed_values: None,
+            data: None,
+        };
+
+        // Override from Parameter
+        if let Some(id_ref) = model_sub.unique_id_ref.as_ref() {
+            apply_parameter_attributes(id_ref, param_map, &mut resolved)?;
+        }
+
+        // Resolve Data (Value)
+        let value_str_opt = get_value_str_for_subobject(
+            model_sub,
+            mode,
+            param_map,
+            template_map,
+            parent_unique_id_ref,
+            sub_index,
+        );
+        let data_type_id = model_sub.data_type.as_deref();
+
+        resolved.data = value_str_opt
+            .and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
+
+        // Validate data
+        if let (Some(data), Some(dtype)) = (resolved.data.as_ref(), data_type_id) {
+            utils::validate_type(parent_index, sub_index, data, dtype, type_map)?;
+        }
+
+        let pdo_mapping = model_sub.pdo_mapping.map(utils::map_pdo_mapping);
+
+        result.push(types::SubObject {
+            sub_index,
+            name: model_sub.name.clone(),
+            object_type: model_sub.object_type.clone(),
+            data_type: model_sub.data_type.clone(),
+            low_limit: model_sub.low_limit.clone(),
+            high_limit: model_sub.high_limit.clone(),
+            access_type: resolved.access,
+            pdo_mapping,
+            obj_flags: model_sub.obj_flags.clone(),
+            support: resolved.support,
+            persistent: resolved.persistent,
+            allowed_values: resolved.allowed_values,
+            data: resolved.data,
+        });
+    }
+
+    Ok(result)
+}
+
+/// Applies attributes from a referenced Parameter to the resolved attributes.
+fn apply_parameter_attributes(
+    id_ref: &String,
+    param_map: &BTreeMap<&String, &model::app_process::Parameter>,
+    resolved: &mut ResolvedAttributes,
+) -> Result<(), XdcError> {
+    if let Some(param) = param_map.get(id_ref) {
+        if let Some(acc) = param.access {
+            resolved.access = Some(utils::map_param_access(acc));
+        }
+        if let Some(supp) = param.support {
+            resolved.support = Some(utils::map_param_support(supp));
+        }
+        resolved.persistent = param.persistent;
+
+        if let Some(av) = &param.allowed_values {
+             resolved.allowed_values = Some(resolve_allowed_values(av)?);
+        }
+    }
+    Ok(())
 }
 
 // --- NEW Helper to resolve allowedValues ---
-/// Resolves a `model::app_process::AllowedValues` into a `types::AllowedValues`.
 fn resolve_allowed_values(
     model: &model::app_process::AllowedValues,
 ) -> Result<types::AllowedValues, XdcError> {
@@ -284,8 +243,8 @@ fn resolve_allowed_values(
     Ok(types::AllowedValues { values, ranges })
 }
 
-/// Resolves the value string for an Object or Parameter.
-/// (Helper for get_value_str_... functions)
+// --- Helper functions for Value String Resolution ---
+
 fn resolve_value_from_param<'a>(
     param: &'a model::app_process::Parameter,
     mode: ValueMode,
@@ -307,7 +266,6 @@ fn resolve_value_from_param<'a>(
     })
 }
 
-/// Helper to get the raw value string for a VAR object.
 fn get_value_str_for_object<'a>(
     model_obj: &'a model::app_layers::Object,
     mode: ValueMode,
@@ -336,7 +294,6 @@ fn get_value_str_for_object<'a>(
     })
 }
 
-/// Helper to get the raw value string for a SubObject.
 fn get_value_str_for_subobject<'a>(
     model_sub_obj: &'a model::app_layers::SubObject,
     mode: ValueMode,
@@ -378,13 +335,86 @@ fn get_value_str_for_subobject<'a>(
         })
 }
 
+/// Parses a value string into a `Vec<u8>` using little-endian byte order.
+/// Uses `utils::get_data_type_size` to determine target size.
+fn parse_value_to_bytes(
+    s: &str,
+    data_type_id: Option<&str>,
+    type_map: &BTreeMap<String, DataTypeName>,
+) -> Result<Vec<u8>, XdcError> {
+    let id = data_type_id.ok_or(XdcError::ValidationError(
+        "Cannot parse value string to bytes without dataType",
+    ))?;
+
+    // Helper to parse a decimal string to a type and get LE bytes
+    macro_rules! parse_dec_le {
+        ($typ:ty) => {
+            s.parse::<$typ>()
+                .map(|v| v.to_le_bytes().to_vec())
+                .map_err(|_| XdcError::InvalidAttributeFormat {
+                    attribute: "defaultValue or actualValue (decimal)",
+                })
+        };
+    }
+
+    // First, check if it's a string-like type.
+    // We use the utils helper to check against standard string types.
+    // If get_data_type_size returns None, it's likely a variable type.
+    let size_opt = utils::get_data_type_size(id, type_map);
+
+    if size_opt.is_none() {
+        // Check specifically for known string types using the new enum helper
+        if let Some(dt) = utils::get_standard_type_from_hex(id) {
+            match dt {
+                DataTypeName::VisibleString | DataTypeName::UnicodeString => {
+                    return Ok(s.as_bytes().to_vec());
+                }
+                DataTypeName::OctetString | DataTypeName::Domain => {
+                    return crate::parser::parse_hex_string(s).map_err(|e| e.into());
+                }
+                _ => {} // Continue to error or numeric fallback
+            }
+        }
+    }
+
+    let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
+    let is_hex = s.starts_with("0x");
+
+    match size_opt {
+        Some(1) => if is_hex { u8::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(Into::into) } else { parse_dec_le!(u8) },
+        Some(2) => if is_hex { u16::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(Into::into) } else { parse_dec_le!(u16) },
+        Some(4) => if is_hex { u32::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(Into::into) } else { parse_dec_le!(u32) },
+        Some(8) => if is_hex { u64::from_str_radix(s_no_prefix, 16).map(|v| v.to_le_bytes().to_vec()).map_err(Into::into) } else { parse_dec_le!(u64) },
+        // Non-standard sizes (e.g. Integer24) only supported in hex for simplicity here
+        Some(3) => {
+            let val = u32::from_str_radix(s_no_prefix, 16).map_err(XdcError::from)?;
+            Ok(val.to_le_bytes()[..3].to_vec())
+        }
+        Some(5) => {
+            let val = u64::from_str_radix(s_no_prefix, 16).map_err(XdcError::from)?;
+            Ok(val.to_le_bytes()[..5].to_vec())
+        }
+        Some(6) => {
+            let val = u64::from_str_radix(s_no_prefix, 16).map_err(XdcError::from)?;
+            Ok(val.to_le_bytes()[..6].to_vec())
+        }
+        Some(7) => {
+            let val = u64::from_str_radix(s_no_prefix, 16).map_err(XdcError::from)?;
+            Ok(val.to_le_bytes()[..7].to_vec())
+        }
+        _ => Err(XdcError::ValidationError(
+            "Unknown numeric type size or format for value parsing",
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model;
     use crate::model::app_layers::{Object, SubObject};
     use crate::model::app_process::{
-        AllowedValues as ModelAllowedValues, Parameter, Range as ModelRange, Value as ModelValue,
+        AllowedValues as ModelAllowedValues, Range as ModelRange, Value as ModelValue,
     };
     use crate::model::common::{Glabels, Label, LabelChoice};
     use crate::types;

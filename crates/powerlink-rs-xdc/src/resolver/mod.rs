@@ -23,7 +23,7 @@ mod identity;
 pub mod modular;
 mod net_mgmt;
 mod od;
-mod utils; // Added new module
+pub mod utils; // Added new module
 
 /// Defines which value to prioritize when resolving the Object Dictionary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

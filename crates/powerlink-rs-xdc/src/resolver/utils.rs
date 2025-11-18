@@ -54,17 +54,64 @@ pub(super) fn validate_type(
     Ok(())
 }
 
-/// Maps a POWERLINK dataType ID (from EPSG 311, Table 56) to its expected byte size.
-/// It first attempts to resolve the ID using the file-provided `type_map`.
-/// If not found, it falls back to a hard-coded map.
+/// Maps a POWERLINK hex string ID (from EPSG 311, Table 56) to the `DataTypeName` enum.
+///
+/// This centralizes the parsing of "0005" -> `Unsigned8`, etc.
+pub(crate) fn get_standard_type_from_hex(type_id: &str) -> Option<DataTypeName> {
+    // Strip optional "0x" prefix for robustness, though standard IDs usually don't have it in the attr.
+    let id = type_id.strip_prefix("0x").unwrap_or(type_id);
+
+    match id {
+        "0001" => Some(DataTypeName::Boolean),
+        "0002" => Some(DataTypeName::Integer8),
+        "0003" => Some(DataTypeName::Integer16),
+        "0004" => Some(DataTypeName::Integer32),
+        "0005" => Some(DataTypeName::Unsigned8),
+        "0006" => Some(DataTypeName::Unsigned16),
+        "0007" => Some(DataTypeName::Unsigned32),
+        "0008" => Some(DataTypeName::Real32),
+        "0009" => Some(DataTypeName::VisibleString),
+        "0010" => Some(DataTypeName::Integer24),
+        "0011" => Some(DataTypeName::Real64),
+        "0012" => Some(DataTypeName::Integer40),
+        "0013" => Some(DataTypeName::Integer48),
+        "0014" => Some(DataTypeName::Integer56),
+        "0015" => Some(DataTypeName::Integer64),
+        "000A" => Some(DataTypeName::OctetString),
+        "000B" => Some(DataTypeName::UnicodeString),
+        "000C" => Some(DataTypeName::TimeOfDay),
+        "000D" => Some(DataTypeName::TimeDiff),
+        "000F" => Some(DataTypeName::Domain),
+        "0016" => Some(DataTypeName::Unsigned24),
+        "0018" => Some(DataTypeName::Unsigned40),
+        "0019" => Some(DataTypeName::Unsigned48),
+        "001A" => Some(DataTypeName::Unsigned56),
+        "001B" => Some(DataTypeName::Unsigned64),
+        "0401" => Some(DataTypeName::MacAddress),
+        "0402" => Some(DataTypeName::IpAddress),
+        "0403" => Some(DataTypeName::NETTIME),
+        _ => None,
+    }
+}
+
+/// Maps a POWERLINK dataType ID to its expected byte size.
+///
+/// It first attempts to resolve the ID using the file-provided `type_map` (user defined types).
+/// If not found, it falls back to the standard EPSG 311 hex IDs.
 /// Returns `None` for variable-sized types (like strings) or unknown types.
 pub(super) fn get_data_type_size(
     type_id: &str,
     type_map: &BTreeMap<String, DataTypeName>,
 ) -> Option<usize> {
-    if let Some(type_name) = type_map.get(type_id) {
-        // --- Logic: Use the map from the XDD file's <DataTypeList> ---
-        match type_name {
+    // 1. Try to find in the user-provided type map (e.g. Structs, Arrays)
+    // or 2. Fallback to standard types
+    let type_name = type_map
+        .get(type_id)
+        .copied()
+        .or_else(|| get_standard_type_from_hex(type_id));
+
+    if let Some(name) = type_name {
+        match name {
             DataTypeName::Boolean => Some(1),
             DataTypeName::Integer8 => Some(1),
             DataTypeName::Unsigned8 => Some(1),
@@ -96,43 +143,7 @@ pub(super) fn get_data_type_size(
             | DataTypeName::Domain => None,
         }
     } else {
-        // --- Fallback Logic: Use hard-coded hex IDs per EPSG 311, Table 56 ---
-        // This block is now corrected.
-        match type_id {
-            "0001" => Some(1), // Boolean
-            "0002" => Some(1), // Integer8
-            "0003" => Some(2), // Integer16
-            "0004" => Some(4), // Integer32
-            "0005" => Some(1), // Unsigned8
-            "0006" => Some(2), // Integer16
-            "0007" => Some(4), // Unsigned32
-            "0008" => Some(4), // Real32
-            "0010" => Some(3), // Integer24
-            "0011" => Some(8), // Real64
-            "0012" => Some(5), // Integer40
-            "0013" => Some(6), // Integer48 - Corrected
-            "0014" => Some(7), // Integer56
-            "0015" => Some(8), // Integer64
-            "0016" => Some(3), // Unsigned24
-            "0018" => Some(5), // Unsigned40 - Corrected
-            "0019" => Some(6), // Unsigned48 - Corrected
-            "001A" => Some(7), // Unsigned56 - Corrected
-            "001B" => Some(8), // Unsigned64
-            "0401" => Some(6), // MAC_ADDRESS
-            "0402" => Some(4), // IP_ADDRESS
-            "0403" => Some(8), // NETTIME
-            // Variable-sized types (return None):
-            "0009" // Visible_String
-            | "000A" // Octet_String
-            | "000B" // Unicode_String
-            | "000C" // Time_of_Day
-            | "000D" // Time_Diff
-            | "000F" // Domain
-            // | "001A" // BITSTRING - This is listed as Unsigned56 in Table 56
-            => None,
-            // Unknown types:
-            _ => None,
-        }
+        None
     }
 }
 
