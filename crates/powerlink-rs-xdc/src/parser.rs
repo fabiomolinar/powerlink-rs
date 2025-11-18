@@ -153,7 +153,7 @@ mod tests {
         // FIX: The value "0x1234" (U16) is parsed as LE, so it becomes [0x34, 0x12].
         assert_eq!(
             xdc_file.object_dictionary.objects[0].data.as_deref(),
-            Some(&[0x34u8, 0x12u8] as &[u8])
+            Some("0x1234")
         );
     }
 
@@ -167,7 +167,7 @@ mod tests {
         // FIX: The value "0x1234" (U16) is parsed as LE, so it becomes [0x34, 0x12].
         assert_eq!(
             xdd_file.object_dictionary.objects[0].data.as_deref(),
-            Some(&[0x34u8, 0x12u8] as &[u8])
+            Some("0x1234")
         );
     }
 

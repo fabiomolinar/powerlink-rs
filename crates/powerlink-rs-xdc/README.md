@@ -22,6 +22,18 @@ This crate is part of the `powerlink-rs` project. It is designed to parse, valid
   - `NetworkManagement` (including `GeneralFeatures`, `MNFeatures`, `CNFeatures`, `Diagnostic`)
   - **Modular Device Profiles** (XDDM) for both Head and Child nodes.
 
+## Data Representation & Endianness
+
+**Important Design Decision:**
+
+While the POWERLINK protocol transmits data in **Little Endian** byte order, this crate treats all data within XDC/XDD files as **human-readable strings**.
+
+- **Storage:** Values in `types.rs` (e.g., `Object::data`, `Parameter::actual_value`) are stored as `String` (e.g., `"0x1234"`, `"500"`).
+- **Parsing:** The parser does *not* convert these strings into byte vectors or native integers during the initial load. This ensures full fidelity to the XML source (preserving hex vs decimal formatting).
+- **Conversion:** Conversion to native Rust types (and subsequently to Little Endian bytes for the network) occurs exclusively in the `converter.rs` module when transforming the data for the `powerlink-rs` core crate.
+
+This approach simplifies round-trip serialization (ensuring `save_xdc_to_string` produces XML that matches the input style) and decouples XML formatting from protocol-specific byte ordering.
+
 ## Architecture & Module Responsibilities
 
 The crate is designed around a three-stage pipeline: **Parse -> Resolve -> Expose**, with additional modules for serialization and conversion.
@@ -38,12 +50,12 @@ The crate is designed around a three-stage pipeline: **Parse -> Resolve -> Expos
   - **Details:** These structs are considered an implementation detail and are not exposed publicly. They are heavily annotated with `#[serde(...)]` attributes to guide `quick-xml`. Their goal is to capture the XML data as-is, including `String` representations of enums, hex values, etc.
 - **`src/resolver/` (Business Logic)**
   - **Responsibility:** The "brains" of the crate. It converts the "dumb" `model` structs into the "smart" public `types` structs.
-  - **Details:** This module contains all the business logic for parsing string values into enums, converting hex strings into `Vec<u8>`, validating data, and resolving data types (e.g., handling `uniqueIDRef` lookups between `ObjectList` and `ApplicationProcess`).
+  - **Details:** This module contains all the business logic for parsing string values into enums, resolving data types (e.g., handling `uniqueIDRef` lookups between `ObjectList` and `ApplicationProcess`), and passing value strings through.
 - **`src/types.rs` (Public API)**
   - **Responsibility:** Defines the public, ergonomic data structures that consumers of this crate will interact with.
-  - **Details:** These structs are clean, well-documented, and use rich types (e.g., enums, `u16`) instead of strings.
+  - **Details:** These structs are clean, well-documented, and use rich types (e.g., enums) instead of strings where applicable, while keeping data values as human-readable strings.
 - **`src/converter.rs` (Core Integration)**
-  - **Responsibility:** Translates the public `types::ObjectDictionary` into the `powerlink_rs::od::ObjectDictionary` used by the core `powerlink-rs` crate.
+  - **Responsibility:** Translates the public `types::ObjectDictionary` into the `powerlink_rs::od::ObjectDictionary` used by the core `powerlink-rs` crate. This is where string-to-numeric parsing occurs.
 - **`src/builder/` (Serialization)**
   - **Responsibility:** Provides a `save_xdc_to_string` function for serializing a `types::XdcFile` struct back into XML.
   - **Details:** This module converts the public `types` structs back into the internal `model` structs for serialization by `quick-xml`.

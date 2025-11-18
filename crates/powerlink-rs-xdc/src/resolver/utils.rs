@@ -2,12 +2,10 @@
 
 //! Utility functions for the resolver.
 
-use crate::error::XdcError;
 use crate::model;
 use crate::model::app_layers::DataTypeName;
 use crate::types;
-use alloc::collections::BTreeMap;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 
 /// Helper to extract the first available `<label>` value from a `g_labels` group.
 pub(super) fn extract_label(items: &[model::common::LabelChoice]) -> Option<String> {
@@ -31,34 +29,11 @@ pub(super) fn extract_description(items: &[model::common::LabelChoice]) -> Optio
     })
 }
 
-/// Validates that the length of the parsed data matches the expected
-/// size of the given `dataType` ID.
-pub(super) fn validate_type(
-    index: u16,
-    sub_index: u8,
-    data: &[u8],
-    data_type_id_str: &str,
-    type_map: &BTreeMap<String, DataTypeName>,
-) -> Result<(), XdcError> {
-    if let Some(expected_len) = get_data_type_size(data_type_id_str, type_map) {
-        if data.len() != expected_len {
-            return Err(XdcError::TypeValidationError {
-                index,
-                sub_index,
-                data_type: data_type_id_str.to_string(),
-                expected_bytes: expected_len,
-                actual_bytes: data.len(),
-            });
-        }
-    }
-    Ok(())
-}
-
 /// Maps a POWERLINK hex string ID (from EPSG 311, Table 56) to the `DataTypeName` enum.
 ///
 /// This centralizes the parsing of "0005" -> `Unsigned8`, etc.
 pub(crate) fn get_standard_type_from_hex(type_id: &str) -> Option<DataTypeName> {
-    // Strip optional "0x" prefix for robustness, though standard IDs usually don't have it in the attr.
+    // Strip optional "0x" prefix for robustness
     let id = type_id.strip_prefix("0x").unwrap_or(type_id);
 
     match id {
@@ -91,59 +66,6 @@ pub(crate) fn get_standard_type_from_hex(type_id: &str) -> Option<DataTypeName> 
         "0402" => Some(DataTypeName::IpAddress),
         "0403" => Some(DataTypeName::NETTIME),
         _ => None,
-    }
-}
-
-/// Maps a POWERLINK dataType ID to its expected byte size.
-///
-/// It first attempts to resolve the ID using the file-provided `type_map` (user defined types).
-/// If not found, it falls back to the standard EPSG 311 hex IDs.
-/// Returns `None` for variable-sized types (like strings) or unknown types.
-pub(super) fn get_data_type_size(
-    type_id: &str,
-    type_map: &BTreeMap<String, DataTypeName>,
-) -> Option<usize> {
-    // 1. Try to find in the user-provided type map (e.g. Structs, Arrays)
-    // or 2. Fallback to standard types
-    let type_name = type_map
-        .get(type_id)
-        .copied()
-        .or_else(|| get_standard_type_from_hex(type_id));
-
-    if let Some(name) = type_name {
-        match name {
-            DataTypeName::Boolean => Some(1),
-            DataTypeName::Integer8 => Some(1),
-            DataTypeName::Unsigned8 => Some(1),
-            DataTypeName::Integer16 => Some(2),
-            DataTypeName::Unsigned16 => Some(2),
-            DataTypeName::Integer24 => Some(3),
-            DataTypeName::Unsigned24 => Some(3),
-            DataTypeName::Integer32 => Some(4),
-            DataTypeName::Unsigned32 => Some(4),
-            DataTypeName::Real32 => Some(4),
-            DataTypeName::Integer40 => Some(5),
-            DataTypeName::Unsigned40 => Some(5),
-            DataTypeName::Integer48 => Some(6),
-            DataTypeName::Unsigned48 => Some(6),
-            DataTypeName::Integer56 => Some(7),
-            DataTypeName::Unsigned56 => Some(7),
-            DataTypeName::Integer64 => Some(8),
-            DataTypeName::Unsigned64 => Some(8),
-            DataTypeName::Real64 => Some(8),
-            DataTypeName::MacAddress => Some(6),
-            DataTypeName::IpAddress => Some(4),
-            DataTypeName::NETTIME => Some(8),
-            // Variable-sized types:
-            DataTypeName::VisibleString
-            | DataTypeName::OctetString
-            | DataTypeName::UnicodeString
-            | DataTypeName::TimeOfDay
-            | DataTypeName::TimeDiff
-            | DataTypeName::Domain => None,
-        }
-    } else {
-        None
     }
 }
 
@@ -225,61 +147,6 @@ mod tests {
         map.insert("0007".to_string(), DataTypeName::Unsigned32);
         map.insert("001B".to_string(), DataTypeName::Unsigned64);
         map
-    }
-
-    #[test]
-    fn test_get_data_type_size_from_type_map() {
-        let type_map = get_test_type_map();
-        // Test types present in the map
-        assert_eq!(get_data_type_size("0005", &type_map), Some(1));
-        assert_eq!(get_data_type_size("0007", &type_map), Some(4));
-        assert_eq!(get_data_type_size("0401", &type_map), Some(6));
-        // Test variable-sized type
-        assert_eq!(get_data_type_size("0009", &type_map), None);
-    }
-
-    #[test]
-    fn test_get_data_type_size_from_fallback() {
-        let empty_map = BTreeMap::new();
-        // Test types not in the map but in the fallback
-        assert_eq!(get_data_type_size("0003", &empty_map), Some(2)); // Integer16
-        assert_eq!(get_data_type_size("0010", &empty_map), Some(3)); // Integer24
-        assert_eq!(get_data_type_size("001B", &empty_map), Some(8)); // Unsigned64
-        assert_eq!(get_data_type_size("0403", &empty_map), Some(8)); // NETTIME
-
-        // Test variable-sized type
-        assert_eq!(get_data_type_size("000A", &empty_map), None); // Octet_String
-        // Test unknown type
-        assert_eq!(get_data_type_size("FFFF", &empty_map), None);
-    }
-
-    #[test]
-    fn test_validate_type() {
-        let type_map = get_test_type_map();
-
-        // 1. Success case
-        let data_ok = vec![0x12, 0x34, 0x56, 0x78];
-        let result_ok = validate_type(0x1000, 1, &data_ok, "0007", &type_map);
-        assert!(result_ok.is_ok());
-
-        // 2. Failure case (length mismatch)
-        let data_fail = vec![0x12, 0x34]; // 2 bytes
-        let result_fail = validate_type(0x1000, 1, &data_fail, "0007", &type_map); // Expects 4 bytes
-        assert!(matches!(
-            result_fail,
-            Err(XdcError::TypeValidationError {
-                index: 0x1000,
-                sub_index: 1,
-                data_type: _,
-                expected_bytes: 4,
-                actual_bytes: 2,
-            })
-        ));
-
-        // 3. Success on variable-sized type (should always pass)
-        let data_var = vec![0x48, 0x69];
-        let result_var = validate_type(0x1008, 0, &data_var, "0009", &type_map);
-        assert!(result_var.is_ok());
     }
 
     #[test]

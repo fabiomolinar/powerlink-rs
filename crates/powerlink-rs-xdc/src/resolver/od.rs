@@ -7,24 +7,23 @@ use crate::model::app_layers::DataTypeName;
 use crate::parser::{parse_hex_u8, parse_hex_u16};
 use crate::types;
 use alloc::collections::BTreeMap;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-/// Internal struct to hold resolved attributes for an object/subobject.
 struct ResolvedAttributes {
     access: Option<types::ParameterAccess>,
     support: Option<types::ParameterSupport>,
     persistent: bool,
     allowed_values: Option<types::AllowedValues>,
-    data: Option<Vec<u8>>,
+    data: Option<String>, // Changed to String
+    data_type: Option<String>,
 }
 
-/// Iterates the `model::ObjectList` and resolves it into a rich, public `types::ObjectDictionary`.
 pub(super) fn resolve_object_dictionary<'a>(
     app_layers: &'a model::app_layers::ApplicationLayers,
     param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
     template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
-    type_map: &BTreeMap<String, DataTypeName>,
+    _type_map: &BTreeMap<String, DataTypeName>, // Unused now that we don't validate types
     mode: ValueMode,
 ) -> Result<types::ObjectDictionary, XdcError> {
     let mut od_objects = Vec::new();
@@ -32,24 +31,14 @@ pub(super) fn resolve_object_dictionary<'a>(
     for model_obj in &app_layers.object_list.object {
         let index = parse_hex_u16(&model_obj.index)?;
 
-        let attributes = resolve_object_attributes(
-            model_obj,
-            param_map,
-            template_map,
-            type_map,
-            mode,
-            index,
-            0,
-        )?;
+        let attributes = resolve_object_attributes(model_obj, param_map, template_map, mode)?;
 
         let sub_objects = resolve_sub_objects(
             &model_obj.sub_object,
             model_obj.unique_id_ref.as_ref(),
             param_map,
             template_map,
-            type_map,
             mode,
-            index,
         )?;
 
         let pdo_mapping = model_obj.pdo_mapping.map(utils::map_pdo_mapping);
@@ -58,7 +47,7 @@ pub(super) fn resolve_object_dictionary<'a>(
             index,
             name: model_obj.name.clone(),
             object_type: model_obj.object_type.clone(),
-            data_type: model_obj.data_type.clone(),
+            data_type: attributes.data_type,
             low_limit: model_obj.low_limit.clone(),
             high_limit: model_obj.high_limit.clone(),
             access_type: attributes.access,
@@ -67,7 +56,7 @@ pub(super) fn resolve_object_dictionary<'a>(
             support: attributes.support,
             persistent: attributes.persistent,
             allowed_values: attributes.allowed_values,
-            data: attributes.data,
+            data: attributes.data, // String
             sub_objects,
         });
     }
@@ -77,15 +66,11 @@ pub(super) fn resolve_object_dictionary<'a>(
     })
 }
 
-/// Resolves the attributes (access, support, data) for a main `<Object>`.
 fn resolve_object_attributes<'a>(
     model_obj: &'a model::app_layers::Object,
     param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
     template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
-    type_map: &BTreeMap<String, DataTypeName>,
     mode: ValueMode,
-    index: u16,
-    sub_index: u8,
 ) -> Result<ResolvedAttributes, XdcError> {
     let mut resolved = ResolvedAttributes {
         access: model_obj.access_type.map(utils::map_access_type),
@@ -93,36 +78,33 @@ fn resolve_object_attributes<'a>(
         persistent: false,
         allowed_values: None,
         data: None,
+        data_type: model_obj.data_type.clone(),
     };
 
     if let Some(id_ref) = model_obj.unique_id_ref.as_ref() {
-        apply_parameter_attributes(id_ref, param_map, &mut resolved)?;
+        if let Some(param) = param_map.get(id_ref) {
+            apply_parameter_attributes(param, &mut resolved)?;
+            if resolved.data_type.is_none() {
+                resolved.data_type = map_param_type_to_hex(&param.data_type);
+            }
+        }
     }
 
     if model_obj.object_type == "7" {
         let value_str_opt = get_value_str_for_object(model_obj, mode, param_map, template_map);
-        let data_type_id = model_obj.data_type.as_deref();
-
-        resolved.data =
-            value_str_opt.and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
-
-        if let (Some(data), Some(dtype)) = (resolved.data.as_ref(), data_type_id) {
-            utils::validate_type(index, sub_index, data, dtype, type_map)?;
-        }
+        // Just clone the string, no parsing
+        resolved.data = value_str_opt.cloned();
     }
 
     Ok(resolved)
 }
 
-/// Resolves a list of `<SubObject>` elements.
 fn resolve_sub_objects<'a>(
     model_subs: &'a [model::app_layers::SubObject],
     parent_unique_id_ref: Option<&'a String>,
     param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
     template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
-    type_map: &BTreeMap<String, DataTypeName>,
     mode: ValueMode,
-    parent_index: u16,
 ) -> Result<Vec<types::SubObject>, XdcError> {
     let mut result = Vec::new();
 
@@ -135,12 +117,19 @@ fn resolve_sub_objects<'a>(
             persistent: false,
             allowed_values: None,
             data: None,
+            data_type: model_sub.data_type.clone(),
         };
 
         if let Some(id_ref) = model_sub.unique_id_ref.as_ref() {
-            apply_parameter_attributes(id_ref, param_map, &mut resolved)?;
+            if let Some(param) = param_map.get(id_ref) {
+                apply_parameter_attributes(param, &mut resolved)?;
+                if resolved.data_type.is_none() {
+                    resolved.data_type = map_param_type_to_hex(&param.data_type);
+                }
+            }
         }
 
+        // Check parent if needed (logic preserved but simplified)
         let value_str_opt = get_value_str_for_subobject(
             model_sub,
             mode,
@@ -149,14 +138,8 @@ fn resolve_sub_objects<'a>(
             parent_unique_id_ref,
             sub_index,
         );
-        let data_type_id = model_sub.data_type.as_deref();
 
-        resolved.data =
-            value_str_opt.and_then(|s| parse_value_to_bytes(s, data_type_id, type_map).ok());
-
-        if let (Some(data), Some(dtype)) = (resolved.data.as_ref(), data_type_id) {
-            utils::validate_type(parent_index, sub_index, data, dtype, type_map)?;
-        }
+        resolved.data = value_str_opt.cloned();
 
         let pdo_mapping = model_sub.pdo_mapping.map(utils::map_pdo_mapping);
 
@@ -164,7 +147,7 @@ fn resolve_sub_objects<'a>(
             sub_index,
             name: model_sub.name.clone(),
             object_type: model_sub.object_type.clone(),
-            data_type: model_sub.data_type.clone(),
+            data_type: resolved.data_type,
             low_limit: model_sub.low_limit.clone(),
             high_limit: model_sub.high_limit.clone(),
             access_type: resolved.access,
@@ -180,29 +163,44 @@ fn resolve_sub_objects<'a>(
     Ok(result)
 }
 
-/// Applies attributes from a referenced Parameter to the resolved attributes.
 fn apply_parameter_attributes(
-    id_ref: &String,
-    param_map: &BTreeMap<&String, &model::app_process::Parameter>,
+    param: &model::app_process::Parameter,
     resolved: &mut ResolvedAttributes,
 ) -> Result<(), XdcError> {
-    if let Some(param) = param_map.get(id_ref) {
-        if let Some(acc) = param.access {
-            resolved.access = Some(utils::map_param_access(acc));
-        }
-        if let Some(supp) = param.support {
-            resolved.support = Some(utils::map_param_support(supp));
-        }
-        resolved.persistent = param.persistent;
+    if let Some(acc) = param.access {
+        resolved.access = Some(utils::map_param_access(acc));
+    }
+    if let Some(supp) = param.support {
+        resolved.support = Some(utils::map_param_support(supp));
+    }
+    resolved.persistent = param.persistent;
 
-        if let Some(av) = &param.allowed_values {
-            resolved.allowed_values = Some(resolve_allowed_values(av)?);
-        }
+    if let Some(av) = &param.allowed_values {
+        resolved.allowed_values = Some(resolve_allowed_values(av)?);
     }
     Ok(())
 }
 
-// --- NEW Helper to resolve allowedValues ---
+fn map_param_type_to_hex(dt: &model::app_process::ParameterDataType) -> Option<String> {
+    use model::app_process::ParameterDataType as PDT;
+    match dt {
+        PDT::BOOL => Some("0001".to_string()),
+        PDT::SINT => Some("0002".to_string()),
+        PDT::INT => Some("0003".to_string()),
+        PDT::DINT => Some("0004".to_string()),
+        PDT::USINT | PDT::BYTE => Some("0005".to_string()),
+        PDT::UINT | PDT::WORD => Some("0006".to_string()),
+        PDT::UDINT | PDT::DWORD => Some("0007".to_string()),
+        PDT::REAL => Some("0008".to_string()),
+        PDT::STRING => Some("0009".to_string()),
+        PDT::LINT => Some("0015".to_string()),
+        PDT::ULINT | PDT::LWORD => Some("001B".to_string()),
+        PDT::LREAL => Some("0011".to_string()),
+        PDT::WSTRING => Some("000B".to_string()),
+        _ => None,
+    }
+}
+
 fn resolve_allowed_values(
     model: &model::app_process::AllowedValues,
 ) -> Result<types::AllowedValues, XdcError> {
@@ -215,7 +213,6 @@ fn resolve_allowed_values(
                 .labels
                 .as_ref()
                 .and_then(|glabels| utils::extract_label(&glabels.items)),
-            // Fix: Added missing fields `offset` and `multiplier`
             offset: v.offset.clone(),
             multiplier: v.multiplier.clone(),
         })
@@ -232,28 +229,23 @@ fn resolve_allowed_values(
         .collect();
 
     Ok(types::AllowedValues {
-        // Fix: Added missing field `template_id_ref`
         template_id_ref: model.template_id_ref.clone(),
         values,
         ranges,
     })
 }
 
-// --- Helper functions for Value String Resolution ---
-
 fn resolve_value_from_param<'a>(
     param: &'a model::app_process::Parameter,
     mode: ValueMode,
     template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
 ) -> Option<&'a String> {
-    // 1. Check for a direct value on the parameter
     let direct_value = match mode {
         ValueMode::Actual => param.actual_value.as_ref().or(param.default_value.as_ref()),
         ValueMode::Default => param.default_value.as_ref().or(param.actual_value.as_ref()),
     };
 
     direct_value.map(|v| &v.value).or_else(|| {
-        // 2. If no direct value, check for a template reference
         param
             .template_id_ref
             .as_ref()
@@ -268,7 +260,6 @@ fn get_value_str_for_object<'a>(
     param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
     template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
 ) -> Option<&'a String> {
-    // 1. Check for direct value on the <Object> tag
     let direct_value = match mode {
         ValueMode::Actual => model_obj
             .actual_value
@@ -281,7 +272,6 @@ fn get_value_str_for_object<'a>(
     };
 
     direct_value.or_else(|| {
-        // 2. If no direct value, resolve via uniqueIDRef
         model_obj
             .unique_id_ref
             .as_ref()
@@ -298,7 +288,6 @@ fn get_value_str_for_subobject<'a>(
     parent_unique_id_ref: Option<&'a String>,
     sub_index: u8,
 ) -> Option<&'a String> {
-    // 1. Check for direct value on the <SubObject> tag
     let direct_value = match mode {
         ValueMode::Actual => model_sub_obj
             .actual_value
@@ -312,7 +301,6 @@ fn get_value_str_for_subobject<'a>(
 
     direct_value
         .or_else(|| {
-            // 2. If no direct value, resolve via SubObject's uniqueIDRef
             model_sub_obj
                 .unique_id_ref
                 .as_ref()
@@ -320,7 +308,6 @@ fn get_value_str_for_subobject<'a>(
                 .and_then(|param| resolve_value_from_param(param, mode, template_map))
         })
         .or_else(|| {
-            // 3. If still None, and we are sub-index 0, check the parent Object's uniqueIDRef
             if sub_index == 0 {
                 parent_unique_id_ref
                     .and_then(|id_ref| param_map.get(id_ref))
@@ -329,111 +316,6 @@ fn get_value_str_for_subobject<'a>(
                 None
             }
         })
-}
-
-/// Parses a value string into a `Vec<u8>` using little-endian byte order.
-/// Uses `utils::get_data_type_size` to determine target size.
-fn parse_value_to_bytes(
-    s: &str,
-    data_type_id: Option<&str>,
-    type_map: &BTreeMap<String, DataTypeName>,
-) -> Result<Vec<u8>, XdcError> {
-    let id = data_type_id.ok_or(XdcError::ValidationError(
-        "Cannot parse value string to bytes without dataType",
-    ))?;
-
-    // Helper to parse a decimal string to a type and get LE bytes
-    macro_rules! parse_dec_le {
-        ($typ:ty) => {
-            s.parse::<$typ>()
-                .map(|v| v.to_le_bytes().to_vec())
-                .map_err(|_| XdcError::InvalidAttributeFormat {
-                    attribute: "defaultValue or actualValue (decimal)",
-                })
-        };
-    }
-
-    // First, check if it's a string-like type.
-    // We use the utils helper to check against standard string types.
-    // If get_data_type_size returns None, it's likely a variable type.
-    let size_opt = utils::get_data_type_size(id, type_map);
-
-    if size_opt.is_none() {
-        // Check specifically for known string types using the new enum helper
-        if let Some(dt) = utils::get_standard_type_from_hex(id) {
-            match dt {
-                DataTypeName::VisibleString | DataTypeName::UnicodeString => {
-                    return Ok(s.as_bytes().to_vec());
-                }
-                DataTypeName::OctetString | DataTypeName::Domain => {
-                    return crate::parser::parse_hex_string(s).map_err(|e| e.into());
-                }
-                _ => {} // Continue to error or numeric fallback
-            }
-        }
-    }
-
-    let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
-    let is_hex = s.starts_with("0x");
-
-    match size_opt {
-        Some(1) => {
-            if is_hex {
-                u8::from_str_radix(s_no_prefix, 16)
-                    .map(|v| v.to_le_bytes().to_vec())
-                    .map_err(Into::into)
-            } else {
-                parse_dec_le!(u8)
-            }
-        }
-        Some(2) => {
-            if is_hex {
-                u16::from_str_radix(s_no_prefix, 16)
-                    .map(|v| v.to_le_bytes().to_vec())
-                    .map_err(Into::into)
-            } else {
-                parse_dec_le!(u16)
-            }
-        }
-        Some(4) => {
-            if is_hex {
-                u32::from_str_radix(s_no_prefix, 16)
-                    .map(|v| v.to_le_bytes().to_vec())
-                    .map_err(Into::into)
-            } else {
-                parse_dec_le!(u32)
-            }
-        }
-        Some(8) => {
-            if is_hex {
-                u64::from_str_radix(s_no_prefix, 16)
-                    .map(|v| v.to_le_bytes().to_vec())
-                    .map_err(Into::into)
-            } else {
-                parse_dec_le!(u64)
-            }
-        }
-        // Non-standard sizes (e.g. Integer24) only supported in hex for simplicity here
-        Some(3) => {
-            let val = u32::from_str_radix(s_no_prefix, 16).map_err(XdcError::from)?;
-            Ok(val.to_le_bytes()[..3].to_vec())
-        }
-        Some(5) => {
-            let val = u64::from_str_radix(s_no_prefix, 16).map_err(XdcError::from)?;
-            Ok(val.to_le_bytes()[..5].to_vec())
-        }
-        Some(6) => {
-            let val = u64::from_str_radix(s_no_prefix, 16).map_err(XdcError::from)?;
-            Ok(val.to_le_bytes()[..6].to_vec())
-        }
-        Some(7) => {
-            let val = u64::from_str_radix(s_no_prefix, 16).map_err(XdcError::from)?;
-            Ok(val.to_le_bytes()[..7].to_vec())
-        }
-        _ => Err(XdcError::ValidationError(
-            "Unknown numeric type size or format for value parsing",
-        )),
-    }
 }
 
 #[cfg(test)]
@@ -826,10 +708,7 @@ mod tests {
         let obj_1000 = od.objects.iter().find(|o| o.index == 0x1000).unwrap();
         assert_eq!(obj_1000.name, "DeviceType");
         // "0x1234" (U32) -> parse as 0x1234_u32 -> LE bytes -> [0x34, 0x12, 0x00, 0x00]
-        assert_eq!(
-            obj_1000.data.as_deref(),
-            Some(&[0x34u8, 0x12, 0x00, 0x00] as &[u8])
-        );
+        assert_eq!(obj_1000.data.as_deref(), Some("0x1234"));
         assert_eq!(obj_1000.access_type, None); // No param ref
         assert_eq!(obj_1000.support, None);
         assert_eq!(obj_1000.persistent, false);
@@ -837,7 +716,7 @@ mod tests {
         // 2. Check Obj 0x2000 (Param ref value and attributes)
         let obj_2000 = od.objects.iter().find(|o| o.index == 0x2000).unwrap();
         assert_eq!(obj_2000.name, "ParamVar");
-        assert_eq!(obj_2000.data.as_deref(), Some(&[0xAAu8] as &[u8])); // from p_var default "0xAA"
+        assert_eq!(obj_2000.data.as_deref(), Some("0xAA")); // from p_var default "0xAA"
         assert_eq!(
             obj_2000.access_type,
             Some(types::ParameterAccess::ReadWrite)
@@ -854,13 +733,13 @@ mod tests {
         // Sub-obj 0 (Direct value)
         let sub_0 = &obj_2100.sub_objects[0];
         assert_eq!(sub_0.sub_index, 0);
-        assert_eq!(sub_0.data.as_deref(), Some(&[0x02u8] as &[u8])); // "2" (decimal)
+        assert_eq!(sub_0.data.as_deref(), Some("0x02")); // "2" (decimal)
         assert_eq!(sub_0.access_type, None); // No param ref
 
         // Sub-obj 1 (Param ref value and attributes)
         let sub_1 = &obj_2100.sub_objects[1];
         assert_eq!(sub_1.sub_index, 1);
-        assert_eq!(sub_1.data.as_deref(), Some(&[0xBBu8] as &[u8])); // from p_sub default "0xBB"
+        assert_eq!(sub_1.data.as_deref(), Some("0xBB")); // from p_sub default "0xBB"
         assert_eq!(sub_1.access_type, Some(types::ParameterAccess::ReadOnly));
         assert_eq!(sub_1.support, Some(types::ParameterSupport::Optional));
         assert_eq!(sub_1.persistent, false);
@@ -874,7 +753,7 @@ mod tests {
         // Sub-obj 2 (Template ref value)
         let sub_2 = &obj_2100.sub_objects[2];
         assert_eq!(sub_2.sub_index, 2);
-        assert_eq!(sub_2.data.as_deref(), Some(&[100u8] as &[u8])); // "100" (decimal)
+        assert_eq!(sub_2.data.as_deref(), Some("100")); // "100" (decimal)
         assert_eq!(sub_2.access_type, None); // Param p_range had no access type
     }
 }

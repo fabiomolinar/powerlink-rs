@@ -505,7 +505,7 @@ pub struct StaticErrorBit {
 
 // --- Application Process ---
 
-/// Represents `<allowedValues>` from `<parameter>` (EPSG 311, 7.4.7.7.2.7).
+/// Represents `<allowedValues>` from `<parameter>`.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AllowedValues {
     /// An optional reference to a template allowedValues.
@@ -540,8 +540,7 @@ pub struct ValueRange {
     pub step: Option<String>,
 }
 
-/// Represents the `<ApplicationProcess>` block, containing user-defined
-/// data types, parameters, and groupings.
+/// Represents the `<ApplicationProcess>` block.
 #[derive(Debug, Default, PartialEq)]
 pub struct ApplicationProcess {
     /// List of user-defined data types.
@@ -582,10 +581,9 @@ pub struct AppStruct {
 pub struct StructMember {
     pub name: String,
     pub unique_id: String,
-    /// The data type of this member (e.g., "UINT", "BOOL", or a `uniqueIDRef`
-    /// to another type in the `dataTypeList`).
+    /// The data type of this member.
     pub data_type: String,
-    /// Size in bits, if applicable (e.g., for `BITSTRING`).
+    /// Size in bits, if applicable.
     pub size: Option<u32>,
     pub label: Option<String>,
     pub description: Option<String>,
@@ -600,7 +598,7 @@ pub struct AppArray {
     pub description: Option<String>,
     pub lower_limit: u32,
     pub upper_limit: u32,
-    /// The data type of the array elements (e.g., "UINT", "BOOL", or a `uniqueIDRef`).
+    /// The data type of the array elements.
     pub data_type: String,
 }
 
@@ -611,7 +609,7 @@ pub struct AppEnum {
     pub unique_id: String,
     pub label: Option<String>,
     pub description: Option<String>,
-    /// The base data type for the enum (e.g., "USINT", "UINT").
+    /// The base data type for the enum.
     pub data_type: String,
     pub size_in_bits: Option<u32>,
     pub values: Vec<EnumValue>,
@@ -633,7 +631,7 @@ pub struct AppDerived {
     pub unique_id: String,
     pub label: Option<String>,
     pub description: Option<String>,
-    /// The base data type this is derived from (e.g., "UINT", "BOOL", or a `uniqueIDRef`).
+    /// The base data type this is derived from.
     pub data_type: String,
     pub count: Option<Count>,
 }
@@ -678,8 +676,7 @@ pub struct ParameterRef {
 
 // --- Parameter ---
 
-/// The data type of a parameter, which can be a simple type (like "UINT"),
-/// a reference to a complex type (`DataTypeIDRef`), or a reference to a variable (`VariableRef`).
+/// The data type of a parameter.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParameterDataType {
     // Simple types
@@ -703,8 +700,7 @@ pub enum ParameterDataType {
     STRING,
     WSTRING,
     // Reference types
-    DataTypeIDRef(String), // uniqueIDRef
-    // We don't fully support VariableRef structure yet in public API, using placeholder
+    DataTypeIDRef(String),
     VariableRef,
 }
 
@@ -748,7 +744,7 @@ pub struct Parameter {
     pub allowed_values: Option<AllowedValues>,
 }
 
-/// Represents a `<functionType>` (EPSG 311, 7.4.7.4).
+/// Represents a `<functionType>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct FunctionType {
     pub name: String,
@@ -760,7 +756,7 @@ pub struct FunctionType {
     pub interface: InterfaceList,
 }
 
-/// Represents a `<versionInfo>` element (EPSG 311, 7.4.7.4.2).
+/// Represents a `<versionInfo>` element.
 #[derive(Debug, Default, PartialEq)]
 pub struct VersionInfo {
     pub organization: String,
@@ -771,7 +767,7 @@ pub struct VersionInfo {
     pub description: Option<String>,
 }
 
-/// Represents an `<interfaceList>` for a function type (EPSG 311, 7.4.7.4.3).
+/// Represents an `<interfaceList>` for a function type.
 #[derive(Debug, Default, PartialEq)]
 pub struct InterfaceList {
     pub inputs: Vec<VarDeclaration>,
@@ -791,7 +787,7 @@ pub struct VarDeclaration {
     pub description: Option<String>,
 }
 
-/// Represents a `<functionInstance>` (EPSG 311, 7.4.7.5.2).
+/// Represents a `<functionInstance>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct FunctionInstance {
     pub name: String,
@@ -871,8 +867,9 @@ pub struct Object {
     pub allowed_values: Option<AllowedValues>,
 
     // --- Value ---
-    /// The resolved data for this object.
-    pub data: Option<Vec<u8>>,
+    /// The resolved data for this object (human-readable string).
+    /// For RECORD types, this is None.
+    pub data: Option<String>,
 
     // --- Children ---
     /// All `<SubObject>` children.
@@ -910,6 +907,6 @@ pub struct SubObject {
     pub allowed_values: Option<AllowedValues>,
 
     // --- Value ---
-    /// The resolved data for this sub-object.
-    pub data: Option<Vec<u8>>,
+    /// The resolved data for this sub-object (human-readable string).
+    pub data: Option<String>,
 }

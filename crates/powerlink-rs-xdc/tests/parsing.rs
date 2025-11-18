@@ -43,10 +43,11 @@ fn test_resolve_extended_app_process() {
         "Access type was not resolved from <parameter>"
     );
     // Assert that the `defaultValue` ("15") was correctly parsed and resolved
-    // from the <parameter> (as USINT, "0005"), which is 0x0F.
+    // from the <parameter> (as USINT, "0005").
+    // UPDATED: We now expect the string "15" directly from the XML.
     assert_eq!(
         obj_2100.data.as_deref(),
-        Some(&[0x0F_u8] as &[u8]),
+        Some("15"),
         "defaultValue was not resolved from <parameter>"
     );
 
@@ -114,10 +115,7 @@ fn test_load_dynamic_xdd() {
         .expect("Object 0x1F82 not found");
 
     assert_eq!(flags_obj.name, "NMT_FeatureFlags_U32");
-    // `defaultValue="0x00000045"` (U32, "0007") -> [0x45, 0x00, 0x00, 0x00]
-    // Fix: Explicitly type the first element as u8 to hint the array type.
-    assert_eq!(
-        flags_obj.data.as_deref(),
-        Some(&[0x45u8, 0x00, 0x00, 0x00] as &[u8])
-    );
+    // `defaultValue="0x00000045"`
+    // UPDATED: We now expect the string "0x00000045" directly from the XML.
+    assert_eq!(flags_obj.data.as_deref(), Some("0x00000045"));
 }
