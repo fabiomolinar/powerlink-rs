@@ -1,13 +1,17 @@
-// crates/powerlink-rs-xdc/src/builder/net_mgmt.rs
-
 //! Contains builder functions to convert `types::NetworkManagement` into `model::NetworkManagement`.
+//!
+//! This module maps the user-facing Network Management configuration (features, diagnostic definitions)
+//! back into the schema-compliant internal model for serialization.
 
 use crate::model::common::{Description, Glabels, Label, LabelChoice};
 use crate::{model, types};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-/// Helper to create a `Glabels` struct.
+/// Helper to create a `Glabels` struct from optional label and description strings.
+///
+/// XDC uses `g_labels` to support multilingual text. This builder currently defaults
+/// to creating "en" (English) entries for the provided strings.
 fn build_glabels(label: Option<&String>, description: Option<&String>) -> Option<Glabels> {
     let mut items = Vec::new();
     if let Some(l) = label {
@@ -30,28 +34,28 @@ fn build_glabels(label: Option<&String>, description: Option<&String>) -> Option
     }
 }
 
-/// Builds `model::net_mgmt::AddInfo`.
+/// Builds `model::net_mgmt::AddInfo` from the public type.
 fn build_model_add_info(public: &types::AddInfo) -> model::net_mgmt::AddInfo {
     model::net_mgmt::AddInfo {
         name: public.name.clone(),
         bit_offset: public.bit_offset.to_string(),
         len: public.len.to_string(),
         labels: build_glabels(None, public.description.as_ref()),
-        value: Vec::new(), // TODO: AddInfoValue support in types if needed
+        value: Vec::new(), // AddInfoValue support is not yet exposed in public types
     }
 }
 
-/// Builds `model::net_mgmt::Error`.
+/// Builds `model::net_mgmt::Error` from the public `ErrorDefinition`.
 fn build_model_error(public: &types::ErrorDefinition) -> model::net_mgmt::Error {
     model::net_mgmt::Error {
         name: public.name.clone(),
         value: public.value.clone(),
-        labels: None, // ErrorDefinition in types doesn't have label/desc yet
+        labels: None, // ErrorDefinition in types doesn't currently support labels/desc
         add_info: public.add_info.iter().map(build_model_add_info).collect(),
     }
 }
 
-/// Builds `model::net_mgmt::ErrorBit`.
+/// Builds `model::net_mgmt::ErrorBit` from the public `StaticErrorBit`.
 fn build_model_error_bit(public: &types::StaticErrorBit) -> model::net_mgmt::ErrorBit {
     model::net_mgmt::ErrorBit {
         name: public.name.clone(),
@@ -60,7 +64,7 @@ fn build_model_error_bit(public: &types::StaticErrorBit) -> model::net_mgmt::Err
     }
 }
 
-/// Builds `model::net_mgmt::Diagnostic`.
+/// Builds the `model::net_mgmt::Diagnostic` block.
 fn build_model_diagnostic(public: &types::Diagnostic) -> model::net_mgmt::Diagnostic {
     let error_list = if public.errors.is_empty() {
         None
@@ -85,6 +89,8 @@ fn build_model_diagnostic(public: &types::Diagnostic) -> model::net_mgmt::Diagno
 }
 
 /// Converts a public `types::NetworkManagement` into a `model::NetworkManagement`.
+///
+/// This function aggregates General, MN, and CN features into the internal model format.
 pub(super) fn build_model_network_management(
     public: &types::NetworkManagement,
 ) -> model::net_mgmt::NetworkManagement {
@@ -104,7 +110,7 @@ pub(super) fn build_model_network_management(
         sdo_support_asnd: public.general_features.sdo_support_asnd,
         sdo_support_udp_ip: public.general_features.sdo_support_udp_ip,
 
-        // --- NEW Fields ---
+        // --- Detailed Feature Flags ---
         nmt_isochronous: public.general_features.nmt_isochronous,
         sdo_support_pdo: public.general_features.sdo_support_pdo,
         nmt_ext_nmt_cmds: public.general_features.nmt_ext_nmt_cmds,
@@ -159,7 +165,7 @@ pub(super) fn build_model_network_management(
         mn_features,
         cn_features,
         diagnostic,
-        device_commissioning: None,
+        device_commissioning: None, // DeviceCommissioning is typically not round-tripped this way
     }
 }
 

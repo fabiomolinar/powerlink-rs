@@ -1,6 +1,7 @@
-// crates/powerlink-rs-xdc/src/builder/device_manager.rs
-
 //! Contains builder functions to convert `types::DeviceManager` into `model::DeviceManager`.
+//!
+//! This module handles the serialization of Indicators (LEDs), states, and
+//! module management configurations in the Device Profile.
 
 use crate::model::common::{Description, Glabels, Label, LabelChoice};
 use crate::{model, types};
@@ -12,11 +13,11 @@ fn build_model_led_state(public: &types::LEDstate) -> model::device_manager::LED
         labels: Glabels {
             items: vec![
                 LabelChoice::Label(Label {
-                    lang: "en".to_string(), // Default lang
+                    lang: "en".to_string(), // Default to English
                     value: public.label.clone().unwrap_or_default(),
                 }),
                 LabelChoice::Description(Description {
-                    lang: "en".to_string(), // Default lang
+                    lang: "en".to_string(),
                     value: public.description.clone().unwrap_or_default(),
                     ..Default::default()
                 }),
@@ -27,14 +28,15 @@ fn build_model_led_state(public: &types::LEDstate) -> model::device_manager::LED
             "on" => model::device_manager::LEDstateEnum::On,
             "off" => model::device_manager::LEDstateEnum::Off,
             "flashing" => model::device_manager::LEDstateEnum::Flashing,
-            _ => model::device_manager::LEDstateEnum::Off, // Default
+            _ => model::device_manager::LEDstateEnum::Off, // Default fallback
         },
         led_color: match public.color.as_str() {
             "green" => model::device_manager::LEDcolor::Green,
             "amber" => model::device_manager::LEDcolor::Amber,
             "red" => model::device_manager::LEDcolor::Red,
-            _ => model::device_manager::LEDcolor::Green, // Default
+            _ => model::device_manager::LEDcolor::Green, // Default fallback
         },
+        // Flashing period and impulse width are not currently in public types, so defaults are used.
         ..Default::default()
     }
 }
@@ -64,7 +66,7 @@ fn build_model_led(public: &types::LED) -> model::device_manager::LED {
             "IO" => model::device_manager::LEDtype::Io,
             "device" => model::device_manager::LEDtype::Device,
             "communication" => model::device_manager::LEDtype::Communication,
-            _ => model::device_manager::LEDtype::Device, // Default
+            _ => model::device_manager::LEDtype::Device,
         }),
         led_state: public.states.iter().map(build_model_led_state).collect(),
     }

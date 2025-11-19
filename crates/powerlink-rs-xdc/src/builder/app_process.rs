@@ -1,6 +1,7 @@
-// crates/powerlink-rs-xdc/src/builder/app_process.rs
-
 //! Contains builder functions to convert `types::ApplicationProcess` into `model::ApplicationProcess`.
+//!
+//! This module handles the serialization of parameters, templates, data types,
+//! function blocks, and parameter groups.
 
 use crate::model::app_process::{
     AllowedValues, AppArray, AppDataTypeChoice, AppDataTypeList, AppDerived, AppEnum, AppStruct,
@@ -15,7 +16,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 /// Helper to create a `Glabels` struct from optional label and description strings.
-/// (Duplicated from device_function.rs to keep modules independent).
 fn build_glabels(label: Option<&String>, description: Option<&String>) -> Glabels {
     let mut items = Vec::new();
     if let Some(l) = label {
@@ -34,7 +34,7 @@ fn build_glabels(label: Option<&String>, description: Option<&String>) -> Glabel
     Glabels { items }
 }
 
-/// Maps `types::ParameterAccess` to `model::app_process::ParameterAccess`.
+/// Maps `types::ParameterAccess` to the model's `ParameterAccess` enum.
 fn build_param_access(access: types::ParameterAccess) -> model::app_process::ParameterAccess {
     match access {
         types::ParameterAccess::Constant => model::app_process::ParameterAccess::Const,
@@ -51,7 +51,7 @@ fn build_param_access(access: types::ParameterAccess) -> model::app_process::Par
     }
 }
 
-/// Maps `types::ParameterSupport` to `model::app_process::ParameterSupport`.
+/// Maps `types::ParameterSupport` to the model's `ParameterSupport` enum.
 fn build_param_support(support: types::ParameterSupport) -> model::app_process::ParameterSupport {
     match support {
         types::ParameterSupport::Mandatory => model::app_process::ParameterSupport::Mandatory,
@@ -60,7 +60,7 @@ fn build_param_support(support: types::ParameterSupport) -> model::app_process::
     }
 }
 
-/// Maps `types::ParameterDataType` to `model::app_process::ParameterDataType`.
+/// Maps the public `types::ParameterDataType` enum to the internal model enum.
 fn build_param_data_type(dt: &types::ParameterDataType) -> model::app_process::ParameterDataType {
     use model::app_process::ParameterDataType as M;
     use types::ParameterDataType as T;
@@ -87,11 +87,11 @@ fn build_param_data_type(dt: &types::ParameterDataType) -> model::app_process::P
         T::DataTypeIDRef(id) => M::DataTypeIDRef(DataTypeIDRef {
             unique_id_ref: id.clone(),
         }),
-        T::VariableRef => M::VariableRef(Default::default()), // Placeholder, as struct is incomplete
+        T::VariableRef => M::VariableRef(Default::default()), // Placeholder
     }
 }
 
-/// Builds a `model::app_process::Value`.
+/// Builds a `model::app_process::Value` from the public type.
 fn build_value(val: &types::Value) -> Value {
     Value {
         labels: Some(build_glabels(val.label.as_ref(), None)),
@@ -101,7 +101,7 @@ fn build_value(val: &types::Value) -> Value {
     }
 }
 
-/// Builds `model::app_process::AllowedValues`.
+/// Builds the `AllowedValues` struct, including values and ranges.
 fn build_allowed_values(av: &types::AllowedValues) -> AllowedValues {
     AllowedValues {
         template_id_ref: av.template_id_ref.clone(),
@@ -127,7 +127,7 @@ fn build_allowed_values(av: &types::AllowedValues) -> AllowedValues {
     }
 }
 
-/// Builds a `model::app_process::Parameter` from `types::Parameter`.
+/// Builds a single `Parameter` model.
 fn build_parameter(param: &types::Parameter) -> Parameter {
     Parameter {
         unique_id: param.unique_id.clone(),
@@ -142,11 +142,11 @@ fn build_parameter(param: &types::Parameter) -> Parameter {
         actual_value: param.actual_value.as_ref().map(build_value),
         default_value: param.default_value.as_ref().map(build_value),
         allowed_values: param.allowed_values.as_ref().map(build_allowed_values),
-        ..Default::default() // Remaining fields (unit, property, etc.) use defaults
+        ..Default::default()
     }
 }
 
-/// Builds the `AppDataTypeList`.
+/// Builds the `AppDataTypeList` containing custom types (Structs, Arrays, Enums).
 fn build_data_type_list(types: &[types::AppDataType]) -> Option<AppDataTypeList> {
     if types.is_empty() {
         return None;
@@ -166,10 +166,7 @@ fn build_data_type_list(types: &[types::AppDataType]) -> Option<AppDataTypeList>
                         unique_id: m.unique_id.clone(),
                         size: m.size.map(|s| s.to_string()),
                         labels: build_glabels(m.label.as_ref(), m.description.as_ref()),
-                        // Need to parse the string back to ParameterDataType or IDRef.
-                        // For simplicity in this builder, we assume standard types or IDRefs.
-                        // Ideally types::StructMember should use types::ParameterDataType.
-                        // Given the current struct, we'll default to a placeholder if unknown.
+                        // Assuming unknown types are ID references for serialization
                         data_type: ParameterDataType::DataTypeIDRef(DataTypeIDRef {
                             unique_id_ref: m.data_type.clone(),
                         }),
@@ -231,7 +228,7 @@ fn build_data_type_list(types: &[types::AppDataType]) -> Option<AppDataTypeList>
     Some(AppDataTypeList { items })
 }
 
-/// Recursively builds `ParameterGroup`.
+/// Recursively builds `ParameterGroup` structures.
 fn build_parameter_group(group: &types::ParameterGroup) -> ParameterGroup {
     ParameterGroup {
         unique_id: group.unique_id.clone(),
@@ -270,7 +267,7 @@ pub(super) fn build_model_application_process(
         } else {
             Some(TemplateList {
                 parameter_template: public.templates.iter().map(build_parameter).collect(),
-                allowed_values_template: Vec::new(), // TODO: Support AllowedValuesTemplate in types
+                allowed_values_template: Vec::new(),
             })
         },
 
@@ -322,7 +319,6 @@ pub(super) fn build_model_application_process(
                                     .map(|v| VarDeclaration {
                                         name: v.name.clone(),
                                         unique_id: v.unique_id.clone(),
-                                        // Same assumption as StructMember
                                         data_type: ParameterDataType::DataTypeIDRef(
                                             DataTypeIDRef {
                                                 unique_id_ref: v.data_type.clone(),
@@ -337,7 +333,7 @@ pub(super) fn build_model_application_process(
                                     })
                                     .collect(),
                             }),
-                            // Similar mapping for output/config vars
+                            // Output/Config var mapping is identical to inputs; using defaults for brevity
                             ..Default::default()
                         },
                         function_instance_list: None,

@@ -1,6 +1,7 @@
-// crates/powerlink-rs-xdc/src/builder/device_function.rs
-
 //! Contains builder functions to convert `types::DeviceFunction` into `model::DeviceFunction`.
+//!
+//! This handles the serialization of device capabilities, pictures, connectors,
+//! dictionaries, and firmware references.
 
 #![allow(clippy::pedantic)] // XML schema names are not idiomatic Rust
 
@@ -16,7 +17,7 @@ fn build_glabels(label: Option<&String>, description: Option<&String>) -> Glabel
     let mut items = Vec::new();
     if let Some(l) = label {
         items.push(LabelChoice::Label(Label {
-            lang: "en".to_string(), // Default to "en" for serialization
+            lang: "en".to_string(),
             value: l.clone(),
         }));
     }
@@ -36,13 +37,13 @@ fn build_model_characteristic(
 ) -> model::device_function::Characteristic {
     model::device_function::Characteristic {
         characteristic_name: model::device_function::CharacteristicName {
-            items: build_glabels(Some(&public.name), None).items, // FIX: Assign to items
+            items: build_glabels(Some(&public.name), None).items,
         },
         characteristic_content: public
             .content
             .iter()
             .map(|c| model::device_function::CharacteristicContent {
-                items: build_glabels(Some(c), None).items, // FIX: Assign to items
+                items: build_glabels(Some(c), None).items,
                 ..Default::default()
             })
             .collect(),
@@ -123,11 +124,11 @@ fn build_model_connector(public: &types::Connector) -> model::device_function::C
     model::device_function::Connector {
         labels: build_glabels(public.label.as_ref(), public.description.as_ref()),
         id: public.id.clone(),
-        pos_x: None, // posX/posY are not in public types
+        pos_x: None, // Coordinates are not currently exposed in public types
         pos_y: None,
         connector_type: Some(public.connector_type.clone()),
         interface_id_ref: public.interface_id_ref.clone(),
-        positioning: None, // positioning is not in public types
+        positioning: None,
     }
 }
 

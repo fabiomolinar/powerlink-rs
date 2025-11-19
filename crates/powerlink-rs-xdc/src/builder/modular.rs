@@ -1,6 +1,7 @@
-// crates/powerlink-rs-xdc/src/builder/modular.rs
-
 //! Contains builder functions to convert modular `types` into modular `model` structs.
+//!
+//! This module handles the serialization logic for Modular Device Profiles (XDDM/XDCM),
+//! including Interface definitions for both Device and Communication profiles.
 
 use crate::{model, types};
 use alloc::format;
@@ -9,6 +10,9 @@ use alloc::string::ToString;
 // --- Device Profile Builders ---
 
 /// Converts a public `types::InterfaceDevice` into a `model::modular::InterfaceDevice`.
+///
+/// Maps the interface type, addressing mode, and file lists from the resolved format
+/// back to the schema format.
 fn build_model_interface_device(
     public: &types::InterfaceDevice,
 ) -> model::modular::InterfaceDevice {
@@ -16,7 +20,7 @@ fn build_model_interface_device(
         unique_id: public.unique_id.clone(),
         interface_type: public.interface_type.clone(),
         max_modules: public.max_modules.to_string(),
-        unused_slots: false, // TODO: This field is missing from `types::InterfaceDevice`
+        unused_slots: false, // This field is currently static/missing in types
         module_addressing: match public.module_addressing.as_str() {
             "manual" => model::modular::ModuleAddressingHead::Manual,
             "position" => model::modular::ModuleAddressingHead::Position,
@@ -57,7 +61,8 @@ fn build_model_module_interface(
             "next" => model::modular::ModuleAddressingChild::Next,
             _ => model::modular::ModuleAddressingChild::Position, // Default
         },
-        ..Default::default() // fileList, moduleTypeList, etc., are not serialized from types
+        // fileList and moduleTypeList are currently not serialized from public types
+        ..Default::default()
     }
 }
 
@@ -83,6 +88,8 @@ pub(super) fn build_model_module_management_device(
 // --- Communication Profile Builders ---
 
 /// Converts a public `types::Range` into a `model::modular::Range`.
+///
+/// Handles formatting of indices to hex strings (e.g., `04X`).
 fn build_model_range(public: &types::Range) -> model::modular::Range {
     model::modular::Range {
         name: public.name.clone(),
