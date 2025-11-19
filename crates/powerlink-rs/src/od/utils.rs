@@ -5,7 +5,7 @@ use super::{
     entry::ObjectEntry,
     {AccessType, Category, Object, ObjectValue, PdoMapping},
 };
-use crate::{nmt::flags::FeatureFlags, types::NodeId};
+use crate::{nmt::flags::FeatureFlags, types::NodeId, PowerlinkError};
 use alloc::vec;
 
 /// Creates a minimal, compliant Object Dictionary for a POWERLINK
@@ -13,7 +13,9 @@ use alloc::vec;
 ///
 /// This populates the OD with all mandatory objects required for a
 /// CN to be identified and brought to an operational state.
-pub fn new_cn_default(node_id: NodeId) -> ObjectDictionary<'static> {
+///
+/// Returns `Result` to allow for future fallible validation or allocation checks.
+pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, PowerlinkError> {
     let mut od = ObjectDictionary::new(None);
 
     // --- Mandatory Objects (DS 301, 7.2.2.1.1) ---
@@ -128,10 +130,9 @@ pub fn new_cn_default(node_id: NodeId) -> ObjectDictionary<'static> {
     );
 
     // --- Diagnostic Counters (DS 301, 8.1) ---
-    // (Included for monitor compatibility)
-    add_diagnostic_objects(&mut od);
+    add_diagnostic_objects(&mut od)?;
 
-    od
+    Ok(od)
 }
 
 /// Creates a minimal, compliant Object Dictionary for a POWERLINK
@@ -139,13 +140,14 @@ pub fn new_cn_default(node_id: NodeId) -> ObjectDictionary<'static> {
 ///
 /// This populates the OD with all mandatory objects required for an MN,
 /// including the node management lists (0x1F8x) and diagnostic counters.
-pub fn new_mn_default(node_id: NodeId) -> ObjectDictionary<'static> {
+pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, PowerlinkError> {
     // Start with a CN default OD
-    let mut od = new_cn_default(node_id);
+    let mut od = new_cn_default(node_id)?;
 
     // --- Modify/Add MN-Specific Objects ---
 
     // 0x1F82: NMT_FeatureFlags_U32 (Add MN flag)
+    // Note: This overwrites the entry created by new_cn_default
     let mn_flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND;
     od.insert(
         0x1F82,
@@ -261,11 +263,11 @@ pub fn new_mn_default(node_id: NodeId) -> ObjectDictionary<'static> {
         },
     );
 
-    od
+    Ok(od)
 }
 
 /// Helper to add standard diagnostic objects (0x1101, 0x1102) to an OD.
-fn add_diagnostic_objects(od: &mut ObjectDictionary<'static>) {
+fn add_diagnostic_objects(od: &mut ObjectDictionary<'static>) -> Result<(), PowerlinkError> {
     // 0x1101: DIA_NMTTelegrCount_REC (DS 301, 8.1.1)
     od.insert(
         0x1101,
@@ -304,4 +306,6 @@ fn add_diagnostic_objects(od: &mut ObjectDictionary<'static>) {
             pdo_mapping: Some(PdoMapping::No),
         },
     );
+
+    Ok(())
 }

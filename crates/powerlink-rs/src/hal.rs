@@ -1,7 +1,7 @@
 // crates/powerlink-rs/src/hal.rs
 use crate::od::ObjectValue;
 use crate::pdo::PayloadSizeError;
-use crate::pdo::PdoError; // Added import for PdoError
+use crate::pdo::PdoError;
 use crate::types::{InvalidMessageTypeError, NodeIdError};
 use alloc::collections::BTreeMap;
 use core::array::TryFromSliceError;
@@ -102,14 +102,12 @@ impl std::error::Error for PowerlinkError {}
 
 impl From<InvalidMessageTypeError> for PowerlinkError {
     fn from(_: InvalidMessageTypeError) -> Self {
-        PowerlinkError::InvalidEnumValue // Or InvalidMessageType if needed
+        PowerlinkError::InvalidEnumValue
     }
 }
 
 impl From<TryFromSliceError> for PowerlinkError {
     fn from(_: TryFromSliceError) -> Self {
-        // This often happens due to incorrect slice length passed to try_into
-        // Map it to SliceConversion or potentially BufferTooShort depending on context
         PowerlinkError::SliceConversion
     }
 }
@@ -130,15 +128,12 @@ impl From<PayloadSizeError> for PowerlinkError {
     }
 }
 
-/// Converts a PdoError into a PowerlinkError.
 impl From<PdoError> for PowerlinkError {
     fn from(err: PdoError) -> Self {
         match err {
             PdoError::ObjectNotFound { .. } => PowerlinkError::ObjectNotFound,
             PdoError::TypeMismatch { .. } => PowerlinkError::TypeMismatch,
             PdoError::PayloadTooSmall { .. } => PowerlinkError::BufferTooShort,
-            // Convert the String-based error to a static string.
-            // We lose the specific message, but gain the correct error type.
             PdoError::ConfigurationError(_) => {
                 PowerlinkError::ValidationError("PDO Configuration Error")
             }
@@ -148,7 +143,6 @@ impl From<PdoError> for PowerlinkError {
 
 impl From<&'static str> for PowerlinkError {
     fn from(s: &'static str) -> Self {
-        // Generic conversion from string slice, useful for internal errors
         PowerlinkError::InternalError(s)
     }
 }
@@ -160,8 +154,6 @@ impl From<&'static str> for PowerlinkError {
 /// platform-agnostic (no_std).
 pub trait NetworkInterface {
     /// Sends a raw Ethernet frame (including Ethernet header) over the network.
-    ///
-    /// `frame`: The byte slice containing the complete Ethernet frame.
     fn send_frame(&mut self, frame: &[u8]) -> Result<(), PowerlinkError>;
 
     /// Attempts to receive a single raw Ethernet frame into the provided buffer.
@@ -173,7 +165,7 @@ pub trait NetworkInterface {
     /// The buffer must be large enough to hold the maximum possible Ethernet frame (e'g', 1518 bytes).
     fn receive_frame(&mut self, buffer: &mut [u8]) -> Result<usize, PowerlinkError>;
 
-    /// Returns the Node ID assigned to this local device (Managing Node or Controlled Node).
+    /// Returns the Node ID assigned to this local device.
     fn local_node_id(&self) -> u8;
 
     /// Returns the local MAC address of the interface.
@@ -239,4 +231,69 @@ pub trait ObjectDictionaryStorage {
     /// Clears the persistent "Restore Defaults" flag. This should be called
     /// after the restore operation has been completed on boot.
     fn clear_restore_defaults_flag(&mut self) -> Result<(), PowerlinkError>;
+}
+
+// --- Configuration Management Abstraction ---
+
+/// Represents the expected identity of a node.
+/// This corresponds to the fields in the Identity Object (0x1018) and the
+/// MN's Expected Identification objects (0x1F8x).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Identity {
+    pub vendor_id: u32,
+    pub product_code: u32,
+    pub revision_no: u32,
+    pub serial_no: u32,
+    pub device_type: u32,
+}
+
+/// Interface for the Configuration Manager (CFM).
+///
+/// This trait allows the Managing Node to delegate the storage and retrieval of
+/// node configuration data to the application. This allows the application to
+/// store configurations in an optimized format (e.g., parsed XML/XDC) or external
+/// storage (Flash) without the Core having to manage those resources.
+///
+/// The Core acts as the **Execution Engine**: it pulls data from this interface
+/// and sends the actual SDO frames to the node.
+pub trait ConfigurationInterface {
+    /// Retrieves the expected identity for a given Node ID.
+    ///
+    /// The MN uses this to populate/verify the Object Dictionary entries (0x1F8x)
+    /// or to validate a node directly during `IdentResponse` processing.
+    /// If `None` is returned, the node is considered "Not Configured" or "Unknown".
+    fn get_expected_identity(&self, node_id: u8) -> Option<Identity>;
+
+    /// Retrieves the configuration data for a specific Node ID.
+    ///
+    /// The returned data MUST be in the **Concise Device Configuration (CDC)** format
+    /// as defined in EPSG 301, Table 102[cite: 1461].
+    ///
+    /// # Why a byte slice?
+    /// Returning a full `ObjectDictionary` struct for every node would consume excessive
+    /// memory on embedded Managing Nodes. The Concise DCF format is a compact binary
+    /// stream that can be stored in Flash/Filesystem and streamed directly to the SDO
+    /// Client logic.
+    ///
+    /// # Format (Little Endian):
+    /// - Number of Entries (U32)
+    /// - Entry 1: Index (U16), SubIndex (U8), Size (U32), Data (Size bytes)
+    /// - ...
+    fn get_configuration<'a>(&'a self, node_id: u8) -> Result<&'a [u8], PowerlinkError>;
+
+    /// Checks if a software update is required for the node.
+    ///
+    /// This corresponds to the `CHECK_SOFTWARE` step in the boot-up process[cite: 1550].
+    /// The application should compare the `current_version` (received from the CN's
+    /// `IdentResponse`) against its stored firmware repository.
+    ///
+    /// Note: The actual update mechanism (writing to 0x1F50) is considered an
+    /// application-specific task. If this returns true, the MN may pause boot-up
+    /// or signal the application to start the update via SDO.
+    fn is_software_update_required(
+        &self,
+        node_id: u8,
+        current_version_date: u32,
+        current_version_time: u32,
+    ) -> bool;
 }

@@ -129,6 +129,7 @@ impl PdoSdoCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_pdo_sequence_header_roundtrip() {
