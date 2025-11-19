@@ -230,8 +230,69 @@ impl SdoClientConnection {
                     }
                 }
             }
-            // (Upload logic omitted for brevity)
+            SdoClientConnectionState::UploadInit => {
+                // Response to initial "Read By Index"
+                match cmd.header.segmentation {
+                    Segmentation::Expedited => {
+                        // Data fits in one frame
+                        info!(
+                            "SDO Client: Read complete (Expedited, {} bytes).",
+                            cmd.payload.len()
+                        );
+                        self.data_buffer = cmd.payload.clone();
+                        self.state = SdoClientConnectionState::Closed;
+                    }
+                    Segmentation::Initiate => {
+                        // Server wants to send segmented data.
+                        if let Some(size) = cmd.data_size {
+                            self.total_size = size as usize;
+                            info!(
+                                "SDO Client: Starting segmented upload ({} bytes).",
+                                size
+                            );
+                        } else {
+                            info!("SDO Client: Starting segmented upload (unknown size).");
+                        }
+                        self.data_buffer.clear();
+                        // Move to UploadInProgress to request the first segment
+                        self.state = SdoClientConnectionState::UploadInProgress;
+                    }
+                    _ => {
+                        warn!("SDO Client: Invalid segmentation in UploadInit.");
+                        self.state = SdoClientConnectionState::Closed;
+                    }
+                }
+            }
+            SdoClientConnectionState::UploadInProgress => {
+                // Response to "Read Segment" (ReadByIndex + Segment)
+                match cmd.header.segmentation {
+                    Segmentation::Segment | Segmentation::Complete => {
+                        // Payload contains the data segment
+                        self.data_buffer.extend_from_slice(&cmd.payload);
+                        debug!(
+                            "SDO Client: Received segment ({} bytes, total {}).",
+                            cmd.payload.len(),
+                            self.data_buffer.len()
+                        );
+
+                        if cmd.header.segmentation == Segmentation::Complete {
+                            info!(
+                                "SDO Client: Segmented read complete ({} bytes).",
+                                self.data_buffer.len()
+                            );
+                            self.state = SdoClientConnectionState::Closed;
+                        } else {
+                            // Stay in UploadInProgress to request the next segment
+                        }
+                    }
+                    _ => {
+                        warn!("SDO Client: Invalid segmentation in UploadInProgress.");
+                        self.state = SdoClientConnectionState::Closed;
+                    }
+                }
+            }
             _ => {
+                // For other states or unexpected frames
                 self.state = SdoClientConnectionState::Closed;
             }
         }
@@ -415,6 +476,28 @@ impl SdoClientConnection {
                 };
                 (seq, cmd)
             }
+            SdoClientConnectionState::UploadInProgress => {
+                // Request next segment
+                // Use ReadByIndex with Segmentation::Segment
+                let cmd = SdoCommand {
+                    header: CommandLayerHeader {
+                        transaction_id: self.transaction_id,
+                        segmentation: Segmentation::Segment,
+                        command_id: CommandId::ReadByIndex,
+                        segment_size: 0,
+                        ..Default::default()
+                    },
+                    data_size: None,
+                    payload: Vec::new(), // Payload unused for segment request
+                };
+                let seq = SequenceLayerHeader {
+                    send_sequence_number: self.send_sequence_number,
+                    send_con: SendConnState::ConnectionValidAckRequest,
+                    receive_sequence_number: self.last_received_sequence_number,
+                    receive_con: ReceiveConnState::ConnectionValid,
+                };
+                (seq, cmd)
+            }
             _ => return None,
         };
 
@@ -526,6 +609,7 @@ impl SdoClientConnection {
         self.transaction_id = tid;
         self.send_sequence_number = 0;
         self.last_received_sequence_number = 63;
+        self.data_buffer.clear(); // Ensure buffer is empty for new read
 
         // Prepare Read Command
         let cmd = SdoCommand {
@@ -563,6 +647,7 @@ impl SdoClientConnection {
         self.transaction_id = tid;
         self.send_sequence_number = 0;
         self.last_received_sequence_number = 63;
+        self.data_buffer.clear(); // Ensure buffer is empty
 
         // Create payload for WriteByIndex [index(2), sub(1), reserved(1), data...]
         let mut full_payload = Vec::with_capacity(4 + data.len());
@@ -657,7 +742,12 @@ impl SdoClientManager {
         conn.start_write_job(index, sub_index, data, tid, time, od)
     }
 
-    pub fn handle_response(&mut self, source: NodeId, seq: SequenceLayerHeader, cmd: SdoCommand) {
+    pub fn handle_response(
+        &mut self,
+        source: NodeId,
+        seq: SequenceLayerHeader,
+        cmd: SdoCommand,
+    ) {
         if let Some(conn) = self.connections.get_mut(&source) {
             conn.handle_response(&seq, &cmd);
             if conn.is_closed() {

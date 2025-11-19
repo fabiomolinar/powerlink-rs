@@ -4,19 +4,24 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::convert::TryFrom;
 
-/// Represents the SDO command identifier.
-/// (Reference: EPSG DS 301, Section 6.3.2.1, Table 100)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// SDO Command ID (Byte 0 of SDO Command Layer).
+/// (Reference: EPSG DS 301, Table 48)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CommandId {
-    #[default]
+    /// No Operation (0x00)
     Nil = 0x00,
-    // SDO protocol
+    /// Write by Index (0x01)
     WriteByIndex = 0x01,
+    /// Read by Index (0x02)
     ReadByIndex = 0x02,
+    /// Write All by Index (0x03)
     WriteAllByIndex = 0x03,
+    /// Read All by Index (0x04)
     ReadAllByIndex = 0x04,
+    /// Write by Name (0x05)
     WriteByName = 0x05,
+    /// Read by Name (0x06)
     ReadByName = 0x06,
     // File transfer
     FileWrite = 0x20,
@@ -24,9 +29,17 @@ pub enum CommandId {
     // Variable groups
     WriteMultipleParamByIndex = 0x31,
     ReadMultipleParamByIndex = 0x32,
+    /// Abort Transfer (0x40)
+    Abort = 0x40,
     // Parameter service
     MaxSegmentSize = 0x70,
-    // Manufacturer specific from 0x80 to 0xFF
+    // Manufacturer specific from 0x80 to 0xFF    
+}
+
+impl Default for CommandId {
+    fn default() -> Self {
+        Self::Nil
+    }
 }
 
 impl TryFrom<u8> for CommandId {
@@ -45,6 +58,7 @@ impl TryFrom<u8> for CommandId {
             0x21 => Ok(Self::FileRead),
             0x31 => Ok(Self::WriteMultipleParamByIndex),
             0x32 => Ok(Self::ReadMultipleParamByIndex),
+            0x40 => Ok(Self::Abort),
             0x70 => Ok(Self::MaxSegmentSize),
             _ => Err(PowerlinkError::InvalidEnumValue),
         }

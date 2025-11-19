@@ -491,6 +491,10 @@ impl SdoSequenceHandler {
                     data_size: None,
                     payload: Vec::new(),
                 }
+            },
+            CommandId::Abort => {
+                error!("Received Abort command from client, but not handled here.");
+                self.abort(command.header.transaction_id, 0x0504_0001) // Invalid command specifier
             }
         }
     }
