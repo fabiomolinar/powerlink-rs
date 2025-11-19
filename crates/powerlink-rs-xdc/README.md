@@ -4,8 +4,6 @@ A `no_std` compatible, high-performance parser and serializer for ETHERNET POWER
 
 This crate is part of the `powerlink-rs` project. It is designed to parse, validate, provide an ergonomic, strongly-typed Rust API for accessing data from `.xdc` files, and serialize that data back to XML. It is based on the [EPSG DS 311](https://www.br-automation.com/en/technologies/powerlink/service-downloads/technical-documents/) specification.
 
-**Work in progress**.
-
 ## Features
 
 - **`no_std` Compatible:** Can be used in embedded and bare-metal environments (`alloc` required).
@@ -60,7 +58,7 @@ While the POWERLINK protocol transmits data in **Little Endian** byte order, thi
 
 - **Storage:** Values in `types.rs` (e.g., `Object::data`, `Parameter::actual_value`) are stored as `String` (e.g., `"0x1234"`, `"500"`).
 - **Parsing:** The parser does *not* convert these strings into byte vectors or native integers during the initial load. This ensures full fidelity to the XML source (preserving hex vs decimal formatting).
-- **Conversion:** Conversion to native Rust types (and subsequently to Little Endian bytes for the network) occurs exclusively in the `converter.rs` module when transforming the data for the `powerlink-rs` core crate.
+- **Conversion:** Conversion from these strings to native Rust types (wrapped in the core crate's `ObjectValue` enum) occurs in the `converter.rs` module. The `powerlink-rs` core crate then handles the subsequent serialization to Little Endian bytes for network transmission.
 
 This approach simplifies round-trip serialization (ensuring `save_xdc_to_string` produces XML that matches the input style) and decouples XML formatting from protocol-specific byte ordering.
 
