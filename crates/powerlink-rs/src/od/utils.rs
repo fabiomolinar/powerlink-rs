@@ -27,10 +27,25 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
             object: Object::Variable(ObjectValue::Unsigned32(0x000F0191)), // Generic I/O device
             name: "NMT_DeviceType_U32",
             category: Category::Mandatory,
-            access: Some(AccessType::Constant),
+            access: Some(AccessType::Constant), // Device Type is usually constant
             default_value: None,
             value_range: None,
             pdo_mapping: None,
+        },
+    );
+
+    // 0x1001: NMT_ErrorRegister_U8 (MISSING IN PREVIOUS VERSION)
+    // Bit 0: Generic Error (Active if any other bit is set)
+    od.insert(
+        0x1001,
+        ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned8(0)),
+            name: "NMT_ErrorRegister_U8",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadOnly), // CN writes internally, MN reads via SDO
+            default_value: Some(ObjectValue::Unsigned8(0)),
+            value_range: None,
+            pdo_mapping: Some(PdoMapping::Optional), // Can be mapped to PDO
         },
     );
 
@@ -48,7 +63,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         },
     );
 
-    // 0x1008: NMT_ManufactDevName_VS (Required for IdentResponse)
+    // 0x1008: NMT_ManufactDevName_VS
     od.insert(
         0x1008,
         ObjectEntry {
@@ -62,12 +77,52 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         },
     );
 
+    // 0x1010: NMT_StoreParam_REC (Essential for CFM)
+    od.insert(
+        0x1010,
+        ObjectEntry {
+            object: Object::Record(vec![
+                ObjectValue::Unsigned8(4),   // Max sub-index
+                ObjectValue::Unsigned32(0),  // 1: All parameters
+                ObjectValue::Unsigned32(0),  // 2: Communication
+                ObjectValue::Unsigned32(0),  // 3: Application
+                ObjectValue::Unsigned32(0),  // 4: Manufacturer
+            ]),
+            name: "NMT_StoreParam_REC",
+            category: Category::Optional,
+            access: Some(AccessType::ReadWrite),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
+
+    // 0x1011: NMT_RestoreParam_REC
+    od.insert(
+        0x1011,
+        ObjectEntry {
+            object: Object::Record(vec![
+                ObjectValue::Unsigned8(4),   // Max sub-index
+                ObjectValue::Unsigned32(0),  // 1: All parameters
+                ObjectValue::Unsigned32(0),  // 2: Communication
+                ObjectValue::Unsigned32(0),  // 3: Application
+                ObjectValue::Unsigned32(0),  // 4: Manufacturer
+            ]),
+            name: "NMT_RestoreParam_REC",
+            category: Category::Optional,
+            access: Some(AccessType::ReadWrite),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
+
     // 0x1018: NMT_IdentityObject_REC
     od.insert(
         0x1018,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(4),           // Max sub-index
+                ObjectValue::Unsigned8(4),           
                 ObjectValue::Unsigned32(0x12345678), // VendorId
                 ObjectValue::Unsigned32(0x00000001), // ProductCode
                 ObjectValue::Unsigned32(0x00010000), // RevisionNo
@@ -81,8 +136,10 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
             pdo_mapping: None,
         },
     );
-
-    // 0x1F82: NMT_FeatureFlags_U32 (Default: Isochronous + ASnd SDO)
+    
+    // ... (Rest of the function: 0x1F82, 0x1F93, 0x1C14, Diagnostic) ...
+    // Ensure you keep 0x1F82, 0x1F93, 0x1C14 and add_diagnostic_objects call!
+    
     let cn_flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND;
     od.insert(
         0x1F82,
@@ -102,9 +159,9 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         0x1F93,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(2), // Max sub-index
+                ObjectValue::Unsigned8(2), 
                 ObjectValue::Unsigned8(node_id.0),
-                ObjectValue::Boolean(0), // Node ID by HW = FALSE
+                ObjectValue::Boolean(0),
             ]),
             name: "NMT_EPLNodeID_REC",
             category: Category::Mandatory,
@@ -119,7 +176,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
     od.insert(
         0x1C14,
         ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned32(100000)), // 100ms
+            object: Object::Variable(ObjectValue::Unsigned32(100000)), 
             name: "DLL_CNLossOfSocTolerance_U32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),
@@ -129,7 +186,6 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         },
     );
 
-    // --- Diagnostic Counters (DS 301, 8.1) ---
     add_diagnostic_objects(&mut od)?;
 
     Ok(od)
