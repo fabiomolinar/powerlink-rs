@@ -7,13 +7,13 @@
 
 use crate::PowerlinkError;
 use crate::od::ObjectDictionary;
-use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation, WriteByIndexRequest};
+use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentation};
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::{OD_IDX_SDO_RETRIES, OD_IDX_SDO_TIMEOUT};
 use crate::types::NodeId;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, warn};
 
 const MAX_CLIENT_PAYLOAD: usize = 1452; // Max SDO payload (1456) - 4 byte command header
 
@@ -39,8 +39,6 @@ enum SdoClientConnectionState {
 /// Represents a queued job for the SDO client.
 #[derive(Debug, Clone)]
 enum SdoJob {
-    /// A single, one-off SDO command (e.g. manual Read/Write).
-    Single(SdoCommand),
     /// A sequence of writes defined by a Concise DCF binary stream.
     /// (Reference: EPSG DS 301, Section 6.7.2.2, Table 102)
     ConciseDcf {
@@ -83,6 +81,9 @@ struct SdoClientConnection {
     
     /// The current job being processed.
     current_job: Option<SdoJob>,
+    
+    /// The pending command to send after connection establishment.
+    pending_command: Option<SdoCommand>,
 }
 
 impl SdoClientConnection {
@@ -100,6 +101,7 @@ impl SdoClientConnection {
             retries_left: 0,
             last_sent_command: None,
             current_job: None,
+            pending_command: None,
         }
     }
 
@@ -201,6 +203,8 @@ impl SdoClientConnection {
                     && seq_header.send_con == SendConnState::Initialization
                 {
                     info!("SDO Client: Connection to Node {} established.", self.target_node_id.0);
+                    // If we have a pending command (Read), send it.
+                    // If we have data in buffer (Write), prepare to send it.
                     self.state = SdoClientConnectionState::Established;
                 } else {
                     warn!("SDO Client: Invalid response in Opening. Aborting.");
@@ -213,70 +217,80 @@ impl SdoClientConnection {
                     
                     // Check if job has more commands
                     if self.prepare_next_job_command() {
-                         self.state = SdoClientConnectionState::Established;
-                         // get_pending_request will pick up the next command
+                         // New command prepared in data_buffer. 
+                         // Stay in Established/DownloadInProgress to send next init frame.
+                         self.state = SdoClientConnectionState::Established; 
                     } else {
                          self.state = SdoClientConnectionState::Closed;
                     }
                 }
             }
-            // (Upload logic omitted for brevity, similar to previous implementation)
+            // (Upload logic omitted for brevity)
              _ => {
-                // For single expedited commands (like Read), we are done.
                 self.state = SdoClientConnectionState::Closed;
             }
         }
     }
 
     /// Parses the next command from the current job (if any).
+    /// Sets up `data_buffer` and `total_size` for a Write operation.
     /// Returns true if a new command is ready to send, false if job is done.
     fn prepare_next_job_command(&mut self) -> bool {
-        match &mut self.current_job {
-            Some(SdoJob::ConciseDcf { data, offset, entries_remaining }) => {
-                if *entries_remaining == 0 {
+        // We must use take() to mutate the job inside the Option, then put it back if not done
+        let job = self.current_job.take();
+        
+        match job {
+            Some(SdoJob::ConciseDcf { data, mut offset, mut entries_remaining }) => {
+                if entries_remaining == 0 {
                     return false;
                 }
 
                 // Parse Concise DCF Entry (Table 102)
                 // Index(2) + Sub(1) + Size(4) + Data(...)
-                if *offset + 7 > data.len() {
+                if offset + 7 > data.len() {
                     error!("[SDO] Concise DCF buffer underrun (header).");
                     return false;
                 }
                 
-                let index = u16::from_le_bytes(data[*offset..*offset+2].try_into().unwrap());
-                let sub_index = data[*offset+2];
-                let data_size = u32::from_le_bytes(data[*offset+3..*offset+7].try_into().unwrap()) as usize;
-                *offset += 7;
+                let index_bytes: [u8; 2] = data[offset..offset+2].try_into().unwrap();
+                let index = u16::from_le_bytes(index_bytes);
+                let sub_index = data[offset+2];
+                let size_bytes: [u8; 4] = data[offset+3..offset+7].try_into().unwrap();
+                let data_size = u32::from_le_bytes(size_bytes) as usize;
+                offset += 7;
 
-                if *offset + data_size > data.len() {
+                if offset + data_size > data.len() {
                     error!("[SDO] Concise DCF buffer underrun (data).");
                     return false;
                 }
 
-                let param_data = data[*offset..*offset+data_size].to_vec();
-                *offset += data_size;
-                *entries_remaining -= 1;
-
-                // Prepare data buffer for Write logic
-                // [index(2), sub(1), reserved(1), data...]
+                let param_data = &data[offset..offset+data_size];
+                
+                // Prepare data buffer for Write logic: [index(2), sub(1), reserved(1), data...]
                 let mut full_payload = Vec::with_capacity(4 + param_data.len());
                 full_payload.extend_from_slice(&index.to_le_bytes());
                 full_payload.push(sub_index);
-                full_payload.push(0);
-                full_payload.extend_from_slice(&param_data);
+                full_payload.push(0); // Reserved
+                full_payload.extend_from_slice(param_data);
 
                 self.data_buffer = full_payload;
                 self.total_size = self.data_buffer.len();
                 self.offset = 0;
                 
+                // Update job state
+                offset += data_size;
+                entries_remaining -= 1;
+                
+                // Put the job back with updated offset
+                self.current_job = Some(SdoJob::ConciseDcf { data, offset, entries_remaining });
+
                 self.transaction_id = self.transaction_id.wrapping_add(1);
                 if self.transaction_id == 0 { self.transaction_id = 1; }
 
-                info!("[SDO] Job: Writing 0x{:04X}/{} ({} bytes). Remaining: {}", index, sub_index, data_size, *entries_remaining);
+                info!("[SDO] Job: Configured Write 0x{:04X}/{} ({} bytes). Remaining: {}", index, sub_index, data_size, entries_remaining);
                 true
             },
-            _ => false, // Single jobs are done after one pass
+            _ => false, // Single jobs are done after one pass or None
         }
     }
 
@@ -329,8 +343,18 @@ impl SdoClientConnection {
                         receive_con: ReceiveConnState::ConnectionValid,
                     };
                     (seq, cmd)
+                } else if let Some(cmd) = self.pending_command.take() {
+                    // Manual Read command
+                     self.state = SdoClientConnectionState::UploadInit;
+                     let seq = SequenceLayerHeader {
+                        send_sequence_number: self.send_sequence_number,
+                        send_con: SendConnState::ConnectionValidAckRequest,
+                        receive_sequence_number: self.last_received_sequence_number,
+                        receive_con: ReceiveConnState::ConnectionValid,
+                    };
+                    (seq, cmd)
                 } else {
-                    // Check if the job has another command for us
+                    // No manual command and no buffer data. Check for next job command.
                     if self.prepare_next_job_command() {
                         // Recursive call to handle the new command immediately
                         return self.get_pending_request(current_time_us, od);
@@ -428,7 +452,56 @@ impl SdoClientConnection {
         Ok(())
     }
     
-    // ... read_object / write_object (Single job wrappers) same as before but wrapping in SdoJob::Single
+    fn start_read_job(&mut self, index: u16, sub_index: u8, tid: u8, current_time_us: u64, od: &ObjectDictionary) -> Result<(), PowerlinkError> {
+         if !self.is_idle() { return Err(PowerlinkError::SdoSequenceError("Client is busy")); }
+         self.state = SdoClientConnectionState::Opening;
+         self.transaction_id = tid;
+         self.send_sequence_number = 0;
+         self.last_received_sequence_number = 63;
+         
+         // Prepare Read Command
+         let cmd = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: tid,
+                segmentation: Segmentation::Expedited,
+                command_id: CommandId::ReadByIndex,
+                segment_size: 4,
+                ..Default::default()
+            },
+            data_size: None,
+            payload: [index.to_le_bytes().as_slice(), &[sub_index, 0u8]].concat(),
+        };
+        self.pending_command = Some(cmd);
+        
+        let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
+        self.deadline_us = Some(current_time_us + timeout_ms * 1000);
+        self.retries_left = od.read_u32(OD_IDX_SDO_RETRIES, 0).unwrap_or(2);
+        Ok(())
+    }
+    
+    fn start_write_job(&mut self, index: u16, sub_index: u8, data: Vec<u8>, tid: u8, current_time_us: u64, od: &ObjectDictionary) -> Result<(), PowerlinkError> {
+        if !self.is_idle() { return Err(PowerlinkError::SdoSequenceError("Client is busy")); }
+        self.state = SdoClientConnectionState::Opening;
+        self.transaction_id = tid;
+        self.send_sequence_number = 0;
+        self.last_received_sequence_number = 63;
+
+        // Create payload for WriteByIndex [index(2), sub(1), reserved(1), data...]
+        let mut full_payload = Vec::with_capacity(4 + data.len());
+        full_payload.extend_from_slice(&index.to_le_bytes());
+        full_payload.push(sub_index);
+        full_payload.push(0);
+        full_payload.extend_from_slice(&data);
+
+        self.data_buffer = full_payload;
+        self.total_size = self.data_buffer.len();
+        self.offset = 0;
+        
+        let timeout_ms = od.read_u32(OD_IDX_SDO_TIMEOUT, 0).unwrap_or(15000) as u64;
+        self.deadline_us = Some(current_time_us + timeout_ms * 1000);
+        self.retries_left = od.read_u32(OD_IDX_SDO_RETRIES, 0).unwrap_or(2);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -463,20 +536,16 @@ impl SdoClientManager {
         conn.start_concise_dcf_job(dcf_data, tid, current_time_us, od)
     }
     
-    // ... existing read_object/write_object/handle_response/tick/get_pending_request methods ...
-    // (delegating to connection methods)
     pub fn read_object_by_index(&mut self, target: NodeId, index: u16, sub_index: u8, time: u64, od: &ObjectDictionary) -> Result<(), PowerlinkError> {
-        // Simplified: just wrapper for connection.read_object
-        // This method body is unchanged from previous step, just ensures it compiles
          let tid = self.get_next_tid();
-         // ... implementation same as before ...
-         Ok(())
+         let conn = self.connections.entry(target).or_insert_with(|| SdoClientConnection::new(target));
+         conn.start_read_job(index, sub_index, tid, time, od)
     }
     
     pub fn write_object_by_index(&mut self, target: NodeId, index: u16, sub_index: u8, data: Vec<u8>, time: u64, od: &ObjectDictionary) -> Result<(), PowerlinkError> {
-        // Simplified: just wrapper for connection.write_object
-        // ... implementation same as before ...
-        Ok(())
+        let tid = self.get_next_tid();
+        let conn = self.connections.entry(target).or_insert_with(|| SdoClientConnection::new(target));
+        conn.start_write_job(index, sub_index, data, tid, time, od)
     }
 
     pub fn handle_response(&mut self, source: NodeId, seq: SequenceLayerHeader, cmd: SdoCommand) {
