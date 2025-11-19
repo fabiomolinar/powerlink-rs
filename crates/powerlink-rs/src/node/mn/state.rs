@@ -1,7 +1,9 @@
+// crates/powerlink-rs/src/node/mn/state.rs
 use crate::ErrorHandler;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame, ServiceId}; // Import ServiceId
+use crate::hal::ConfigurationInterface; // <-- ADDED: Import ConfigurationInterface
 use crate::nmt::events::MnNmtCommandRequest;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
@@ -31,6 +33,11 @@ pub enum NmtCommandData {
 /// Holds the complete state for a Managing Node.
 pub struct MnContext<'s> {
     pub core: CoreNodeContext<'s>, // Use CoreNodeContext for shared state
+    
+    /// The Configuration Manager interface.
+    /// Allows the MN to retrieve expected configuration data for CNs.
+    pub configuration_interface: Option<&'s dyn ConfigurationInterface>, // <-- ADDED
+
     pub nmt_state_machine: MnNmtStateMachine,
     pub dll_state_machine: DllMsStateMachine,
     // dll_error_manager is separated due to its generic parameters
@@ -41,7 +48,6 @@ pub struct MnContext<'s> {
     #[cfg(feature = "sdo-udp")]
     pub udp_transport: UdpTransport,
     pub cycle_time_us: u64,
-    // ... rest of the fields remain the same ...
     pub multiplex_cycle_len: u8,
     pub multiplex_assign: BTreeMap<NodeId, u8>,
     /// A map of multiplexed cycle number (1-based) -> NMT Info Service to publish.

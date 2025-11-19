@@ -1,5 +1,6 @@
+// crates/powerlink-rs/src/node/mn/events.rs
 use super::scheduler;
-use super::state::{AsyncRequest, CnState, CyclePhase, MnContext};
+use super::state::{AsyncRequest, CnState, CyclePhase, MnContext, SdoState};
 use crate::frame::{
     ASndFrame, DllMsEvent, PResFrame, PowerlinkFrame, ServiceId,
     control::{IdentResponsePayload, StatusResponsePayload},
@@ -14,7 +15,6 @@ use crate::od::constants;
 use crate::types::NodeId;
 use crate::node::mn::ip_from_node_id;
 use log::{debug, error, info, trace, warn};
-
 
 /// Processes a `PowerlinkFrame` after it has been identified as
 /// non-SDO or not for the MN. This handles NMT state changes and
@@ -96,10 +96,10 @@ pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, curr
                     asnd_frame.source.0
                 );
                 context.pending_timeout_event = None;
-                handle_asnd_frame(context, &asnd_frame);
+                handle_asnd_frame(context, &asnd_frame, current_time_us); // Pass time
                 context.current_phase = CyclePhase::Idle;
             } else {
-                handle_asnd_frame(context, &asnd_frame);
+                handle_asnd_frame(context, &asnd_frame, current_time_us); // Pass time
             }
         }
         _ => {
@@ -170,7 +170,7 @@ pub(super) fn handle_dll_event(
 }
 
 /// Handles incoming ASnd frames, such as IdentResponse or StatusResponse.
-fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
+fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame, current_time_us: u64) {
     match frame.service_id {
         ServiceId::IdentResponse => {
             let node_id = frame.source;
@@ -180,10 +180,11 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
             if let Some(state) = current_cn_state {
                 // Only validate if the node is currently Unknown or Missing
                 if state == CnState::Unknown || state == CnState::Missing {
-                    // --- Refactored logic ---
                     match IdentResponsePayload::deserialize(&frame.payload) {
                         Ok(payload) => {
-                            if validate_boot_step1_checks(context, node_id, &payload) {
+                            // Perform Boot Step 1 Checks (ID, SW, Config)
+                            // This function may trigger SDO downloads (remediation).
+                            if validate_boot_step1_checks(context, node_id, &payload, current_time_us) {
                                 info!(
                                     "[MN] Node {} successfully identified and validated.",
                                     node_id.0
@@ -215,8 +216,11 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
                                 // Check if this identification allows the MN to transition
                                 scheduler::check_bootup_state(context);
                             } else {
+                                // Validation failed, OR remediation (download) started.
+                                // We stay in Unknown/Missing effectively, waiting for the next IdentResponse
+                                // (after reset) or for the SDO download to complete.
                                 info!(
-                                    "[MN] Node {} failed BOOT_STEP1 validation. Will remain in {:?} state.",
+                                    "[MN] Node {} failed BOOT_STEP1 validation or is updating. Remaining in {:?} state.",
                                     node_id.0, state
                                 );
                             }
@@ -228,7 +232,6 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
                             );
                         }
                     }
-                    // --- End of refactored logic ---
                 }
             } else {
                 warn!(
@@ -249,7 +252,6 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
                     node_id.0, info.ea_flag
                 );
 
-                // --- Refactored logic ---
                 match StatusResponsePayload::deserialize(&frame.payload) {
                     Ok(payload) => {
                         info!(
@@ -275,7 +277,6 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
                         );
                     }
                 }
-                // --- End of refactored logic ---
             }
         }
         _ => {
@@ -289,12 +290,18 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame) {
 
 /// Validates a CN's IdentResponse payload against the MN's OD configuration.
 /// (EPSG DS 301, Section 7.4.2.2.1.1, 7.4.2.2.1.2, 7.4.2.2.1.3)
-/// Returns true if all checks pass, false otherwise.
-/// This function is now private to this module and takes the deserialized payload struct.
+///
+/// This function implements active Configuration Management (CFM).
+/// If a mismatch is found, and the ConfigurationInterface is present, it may
+/// trigger an SDO download sequence to update the node.
+///
+/// Returns `true` if all checks pass and the node is ready for `BOOT_STEP2`.
+/// Returns `false` if checks failed or if a remediation (download) process has been started.
 fn validate_boot_step1_checks(
-    context: &MnContext, // <-- Takes immutable &MnContext
+    context: &mut MnContext,
     node_id: NodeId,
     payload: &IdentResponsePayload,
+    current_time_us: u64,
 ) -> bool {
     // 1. Read received values from IdentResponse payload (already deserialized)
     let received_device_type = payload.device_type;
@@ -307,7 +314,6 @@ fn validate_boot_step1_checks(
     let received_sw_time = payload.app_sw_time;
 
     // 2. Read expected values from MN's Object Dictionary
-    // A value of 0 in the OD means "do not check"
     let expected_device_type = context
         .core
         .od
@@ -356,97 +362,96 @@ fn validate_boot_step1_checks(
 
     // 3. Perform validation checks
     // --- CHECK_IDENTIFICATION (7.4.2.2.1.1) ---
+    // (Identity mismatch usually requires a physical device replacement, not just config download)
     if expected_device_type != 0 && received_device_type != expected_device_type {
-        error!(
-            "[MN] CHECK_IDENTIFICATION failed for Node {}: DeviceType mismatch. Expected {:#010X}, got {:#010X}. [E_NMT_BPO1_DEVICE_TYPE]",
-            node_id.0, expected_device_type, received_device_type
-        );
+        error!("[MN] CHECK_IDENTIFICATION failed Node {}: DeviceType mismatch.", node_id.0);
         return false;
     }
     if expected_vendor_id != 0 && received_vendor_id != expected_vendor_id {
-        error!(
-            "[MN] CHECK_IDENTIFICATION failed for Node {}: VendorId mismatch. Expected {:#010X}, got {:#010X}. [E_NMT_BPO1_VENDOR_ID]",
-            node_id.0, expected_vendor_id, received_vendor_id
-        );
+        error!("[MN] CHECK_IDENTIFICATION failed Node {}: VendorId mismatch.", node_id.0);
         return false;
     }
     if expected_product_code != 0 && received_product_code != expected_product_code {
-        error!(
-            "[MN] CHECK_IDENTIFICATION failed for Node {}: ProductCode mismatch. Expected {:#010X}, got {:#010X}. [E_NMT_BPO1_PRODUCT_CODE]",
-            node_id.0, expected_product_code, received_product_code
-        );
+        error!("[MN] CHECK_IDENTIFICATION failed Node {}: ProductCode mismatch.", node_id.0);
         return false;
     }
     if expected_revision_no != 0 && received_revision_no != expected_revision_no {
-        error!(
-            "[MN] CHECK_IDENTIFICATION failed for Node {}: RevisionNo mismatch. Expected {:#010X}, got {:#010X}. [E_NMT_BPO1_REVISION_NO]",
-            node_id.0, expected_revision_no, received_revision_no
-        );
+        error!("[MN] CHECK_IDENTIFICATION failed Node {}: RevisionNo mismatch.", node_id.0);
         return false;
     }
 
     trace!("[MN] CHECK_IDENTIFICATION passed for Node {}.", node_id.0);
 
     // --- CHECK_SOFTWARE (7.4.2.2.1.2) ---
-    // Check NMT_StartUp_U32.Bit10 (Software Version Check)
     if (startup_flags & (1 << 10)) != 0 {
-        if expected_sw_date == 0 && expected_sw_time == 0 {
-            // MN does not have an expected version configured
-            warn!(
-                "[MN] CHECK_SOFTWARE failed for Node {}: MN validation is enabled (0x1F80.10) but no expected SW version is configured (0x1F53/0x1F54). [E_NMT_BPO1_SW_INVALID]",
-                node_id.0
-            );
+        // Check if software update is required via the HAL
+        // The HAL might use the received dates or internal logic
+        let sw_update_required = if let Some(cfg_if) = context.configuration_interface {
+            cfg_if.is_software_update_required(node_id.0, received_sw_date, received_sw_time)
+        } else {
+            // Fallback to simple OD comparison if no HAL interface
+            expected_sw_date != 0 && (received_sw_date != expected_sw_date || received_sw_time != expected_sw_time)
+        };
+
+        if sw_update_required {
+            warn!("[MN] CHECK_SOFTWARE failed for Node {}. Update required.", node_id.0);
+            // TODO: Trigger Program Download (PDL) here if supported.
+            // For now, we just fail, as PDL is a separate complex process.
             return false;
         }
-
-        if received_sw_date != expected_sw_date || received_sw_time != expected_sw_time {
-            error!(
-                "[MN] CHECK_SOFTWARE failed for Node {}: SW version mismatch. Expected {}/{}, got {}/{}. [E_NMT_BPO1_SW_INVALID]",
-                node_id.0, expected_sw_date, expected_sw_time, received_sw_date, received_sw_time
-            );
-            // TODO: In the future, trigger software update logic here.
-            // For now, we fail the boot-up step.
-            return false;
-        }
-
         trace!("[MN] CHECK_SOFTWARE passed for Node {}.", node_id.0);
-    } else {
-        trace!("[MN] CHECK_SOFTWARE skipped for Node {}.", node_id.0);
     }
 
     // --- CHECK_CONFIGURATION (7.4.2.2.1.3) ---
-    // Check NMT_StartUp_U32.Bit11 (Configuration Check)
     if (startup_flags & (1 << 11)) != 0 {
-        if expected_conf_date == 0 && expected_conf_time == 0 {
-            // MN does not have an expected configuration configured
+        let config_mismatch = expected_conf_date != 0 && (received_conf_date != expected_conf_date || received_conf_time != expected_conf_time);
+        
+        if config_mismatch {
             warn!(
-                "[MN] CHECK_CONFIGURATION failed for Node {}: MN validation is enabled (0x1F80.11) but no expected config date/time is configured (0x1F26/0x1F27). [E_NMT_BPO1_CF_VERIFY]",
-                node_id.0
+                "[MN] CHECK_CONFIGURATION failed for Node {}. Expected {}/{}, Got {}/{}.",
+                node_id.0, expected_conf_date, expected_conf_time, received_conf_date, received_conf_time
             );
-            return false;
-        }
 
-        if received_conf_date != expected_conf_date || received_conf_time != expected_conf_time {
-            error!(
-                "[MN] CHECK_CONFIGURATION failed for Node {}: Config date/time mismatch. Expected {}/{}, got {}/{}. [E_NNT_BPO1_CF_VERIFY]",
-                node_id.0,
-                expected_conf_date,
-                expected_conf_time,
-                received_conf_date,
-                received_conf_time
-            );
-            // TODO: In the future, trigger configuration download (SDO) logic here.
-            // For now, we fail the boot-up step.
-            return false;
+            // --- REMEDIATION LOGIC ---
+            // If we have a configuration interface, try to fetch the configuration and start download.
+            if let Some(cfg_if) = context.configuration_interface {
+                info!("[MN-CFM] Attempting to retrieve configuration for Node {} from application.", node_id.0);
+                match cfg_if.get_configuration(node_id.0) {
+                    Ok(concise_dcf) => {
+                        info!("[MN-CFM] Starting SDO Configuration Download ({} bytes) for Node {}.", concise_dcf.len(), node_id.0);
+                        
+                        // Trigger the SdoClientManager to start the sequence
+                        if let Err(e) = context.sdo_client_manager.start_configuration_download(
+                            node_id,
+                            concise_dcf.to_vec(),
+                            current_time_us,
+                            &context.core.od
+                        ) {
+                            error!("[MN-CFM] Failed to start configuration download: {:?}", e);
+                        } else {
+                            // Update internal state to indicate SDO is in progress
+                            if let Some(info) = context.node_info.get_mut(&node_id) {
+                                info.sdo_state = SdoState::InProgress;
+                            }
+                        }
+                        // Return false because the node is NOT ready yet. 
+                        // It will be ready after SDO finishes and it (likely) resets.
+                        return false; 
+                    }
+                    Err(e) => {
+                        error!("[MN-CFM] Application failed to provide configuration for Node {}: {:?}", node_id.0, e);
+                        return false;
+                    }
+                }
+            } else {
+                error!("[MN] Configuration mismatch, but no Configuration Interface provided to fix it.");
+                return false;
+            }
         }
-
         trace!("[MN] CHECK_CONFIGURATION passed for Node {}.", node_id.0);
-    } else {
-        trace!("[MN] CHECK_CONFIGURATION skipped for Node {}.", node_id.0);
     }
 
     // TODO: Add SerialNo check (0x1F88) as a warning-only check
-
     true
 }
 

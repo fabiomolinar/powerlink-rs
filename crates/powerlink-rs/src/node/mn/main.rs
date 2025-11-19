@@ -10,6 +10,7 @@ use crate::frame::control::SocFrame;
 use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::ms_state_machine::DllMsStateMachine;
 use crate::frame::{PowerlinkFrame, ServiceId, deserialize_frame}; // Added ServiceId
+use crate::hal::ConfigurationInterface; // <-- ADDED: Import ConfigurationInterface
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
@@ -50,9 +51,16 @@ pub struct ManagingNode<'s> {
 
 impl<'s> ManagingNode<'s> {
     /// Creates a new Managing Node.
+    ///
+    /// # Arguments
+    /// * `od` - The Object Dictionary containing the node's configuration.
+    /// * `mac_address` - The physical MAC address of the node.
+    /// * `configuration_interface` - An optional interface to an external Configuration Manager (CFM).
+    ///   If provided, the MN will use this to validate and configure CNs during boot-up.
     pub fn new(
         mut od: ObjectDictionary<'s>,
         mac_address: MacAddress,
+        configuration_interface: Option<&'s dyn ConfigurationInterface>, // <-- ADDED
     ) -> Result<Self, PowerlinkError> {
         info!("Creating new Managing Node.");
         od.init()?;
@@ -122,6 +130,7 @@ impl<'s> ManagingNode<'s> {
         // --- Initialize MnContext ---
         let context = MnContext {
             core,
+            configuration_interface, // <-- ADDED: Store the interface in the context
             nmt_state_machine,
             dll_state_machine: DllMsStateMachine::new(), // Removed node_id
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
