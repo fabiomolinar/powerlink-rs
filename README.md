@@ -1,21 +1,21 @@
 # powerlink-rs
 
-Robust, reliable, and platform-independent Rust implementation of the Ethernet Powerlink protocol.
+Robust, reliable, and platform-independent Rust implementation of the Ethernet POWERLINK protocol (EPSG DS 301).
 
-**Work in progress**.
+**Status:** Active Development (Alpha)
 
 ## Coverage
 
 This section tracks the implementation status against the **EPSG 301 V1.5.1 Communication Profile Specification**.
 
 - **EPSG 301 (Communication Profile Specification):**
-  - **Chapter 4 (Data Link Layer): 95%**
+  - **Chapter 4 (Data Link Layer): 98%**
     - `[x]` 4.6 Frame Structures (SoC, PReq, PRes, SoA, ASnd)
     - `[x]` 4.2.4.5 CN Cycle State Machine (DLL_CS)
     - `[x]` 4.2.4.6 MN Cycle State Machine (DLL_MS)
     - `[x]` 4.7 DLL Error Handling & Counters (CN/MN)
     - `[x]` 4.2.5 Recognizing Active Nodes (IdentRequest/Response)
-    - `[~]` 4.2.4.1.1.1 Multiplexed Timeslots (Basic support implemented; complex scheduling not yet optimized)
+    - `[x]` 4.2.4.1.1.1 Multiplexed Timeslots (Look-ahead scheduling implemented)
   - **Chapter 5 (Network/Transport Layer): 100%**
     - `[x]` 5.1 IP Addressing (Logic assumes 192.168.100.x subnet)
     - `[x]` 5.2 POWERLINK compliant UDP/IP format (for SDO)
@@ -24,7 +24,7 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
     - `[x]` Integration of `receive_udp` into `Node::run_cycle`
     - `[x]` 5.1.3 Address Resolution (ARP) (Passive ARP cache populated from IdentResponse. Active ARP client not implemented.)
     - `[x]` 5.1.4 Hostname (OD `0x1F9A` is set via `NMTNetHostNameSet`)
-  - **Chapter 6 (Application Layer): 85%**
+  - **Chapter 6 (Application Layer): 95%**
     - `[x]` 6.1 Basic Data Types & Encoding (in `types.rs`, `od/value.rs`)
     - `[x]` 6.2 Object Dictionary Structure (in `od/` module)
     - `[x]` 6.3.2 Service Data Objects (SDO) via ASnd (Mandatory commands: Read/WriteByIndex)
@@ -32,9 +32,10 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
     - `[x]` 6.4 Process Data Objects (PDO) (Mapping, validation, error handling)
     - `[x]` 6.5 Error Signaling (EN/EA/ER/EC flags, StatusResponse)
     - `[x]` 6.3.3 SDO Embedded in PDO
-    - `[~]` Optional SDO Commands (`WriteAllByIndex`, `WriteMultipleParamByIndex`, etc.) are *not* implemented in the core, but are supported via the `SdoCommandHandler` trait for applications to implement.
-    - `[~]` 6.6 Program Download (PDL) (Considered an application-level task. The crate provides the SDO mechanism (segmented `WriteByIndex` to 0x1F50) for the application to use.)
-    - `[ ]` 6.7 Configuration Management (CFM) (MN logic to send configuration via SDO is missing. The `powerlink-rs-xdc` crate will provide the parsing logic for this.)
+    - `[x]` SDO Segmentation (Upload/Download)
+    - `[~]` Optional SDO Commands (`FileRead`, `FileWrite`, etc.) are defined in `CommandId` but default to abort. Applications can implement the `SdoCommandHandler` trait to support them.
+    - `[~]` 6.6 Program Download (PDL) (The crate provides the SDO mechanism; application must handle the logic).
+    - `[x]` 6.7 Configuration Management (CFM) (MN logic implemented to check `VerifyConfiguration` and trigger Concise DCF download via SDO).
   - **Chapter 7 (Network Management): 100%**
     - `[x]` 7.1 NMT State Machines (Common, MN, CN)
     - `[x]` 7.3.1 NMT State Command Services (StartNode, StopNode, Resets)
@@ -58,6 +59,15 @@ This section tracks the implementation status against the **EPSG 301 V1.5.1 Comm
   - `[ ]` EPSG 302-C (PollResponse Chaining)
   - `[ ]` EPSG 302-D (Multiple PReq/PRes)
   - `[ ]` EPSG 302-E (Dynamic Node Allocation)
+
+## Workspace Structure
+
+The project is organized as a Cargo Workspace to separate core logic from platform-specific implementations.
+
+1. **`powerlink-rs` (Core):** The `no_std` protocol stack. Contains state machines, frame parsing, SDO/PDO logic, and the Object Dictionary.
+2. **`powerlink-rs-linux` (HAL & Integration):** **(Planned)** Linux implementation of the `NetworkInterface` and `ObjectDictionaryStorage` traits using raw sockets (`libpnet`) and filesystem. This crate serves as the primary integration test bench.
+3. **`powerlink-rs-xdc` (Utility):** XML Device Configuration parser.
+4. **`powerlink-rs-monitor` (Utility):** Web-based diagnostic tool.
 
 ## Testing
 
