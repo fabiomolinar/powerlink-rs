@@ -117,6 +117,12 @@ This table tracks the crate's implementation status against the main features of
 | ➡️ **Diagnostic** | `t_Diagnostic` | 🟢 **Implemented** | `ErrorList` and `StaticErrorBitField` are modeled and resolved. |
 | **Modular Support** | `*Modular_Head.xsd` | 🟢 **Implemented** | All modular profile bodies, `moduleManagement`, `interfaceList`, and `rangeList` elements are modeled and resolved. |
 
+### Limitations
+
+While the crate covers most of the EPSG DS 311 V1.2.1 specification and is sufficient for most standard device and communication profiles, certain optional or legacy elements are not yet implemented.
+
+The parser is designed to be safe; it will ignore these unsupported elements rather than crashing.
+
 ## Roadmap
 
 ### Phase 1: Core Model & API
