@@ -321,7 +321,15 @@ pub(super) fn handle_read_all_by_index(
 
     // The command is only valid for sub-index 0, which is implicit and not in the payload.
     // We parse the Index from the first 2 bytes.
-    match u16::from_le_bytes(command.payload[0..2].try_into().unwrap()) {
+    // Safety: Length check above ensures at least 2 bytes.
+    let index_bytes: [u8; 2] = if let Ok(b) = command.payload[0..2].try_into() {
+        b
+    } else {
+        // Should be unreachable given the length check
+        return handler.abort(command.header.transaction_id, 0x0504_0001);
+    };
+
+    match u16::from_le_bytes(index_bytes) {
         index => {
             info!("Processing SDO ReadAllByIndex for 0x{:04X}", index);
             // Need to handle different OD object types correctly

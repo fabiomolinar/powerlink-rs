@@ -322,10 +322,27 @@ impl SdoClientConnection {
                     return false;
                 }
 
-                let index_bytes: [u8; 2] = data[offset..offset + 2].try_into().unwrap();
+                // Safety: Bounds checked above. Using try_into() for robust no_std compliance.
+                let index_bytes: [u8; 2] =
+                    if let Ok(b) = data[offset..offset + 2].try_into() {
+                        b
+                    } else {
+                        // Should be unreachable due to bounds check
+                        error!("[SDO] Concise DCF slice error (index).");
+                        return false;
+                    };
                 let index = u16::from_le_bytes(index_bytes);
+
                 let sub_index = data[offset + 2];
-                let size_bytes: [u8; 4] = data[offset + 3..offset + 7].try_into().unwrap();
+
+                let size_bytes: [u8; 4] =
+                    if let Ok(b) = data[offset + 3..offset + 7].try_into() {
+                        b
+                    } else {
+                        // Should be unreachable due to bounds check
+                        error!("[SDO] Concise DCF slice error (size).");
+                        return false;
+                    };
                 let data_size = u32::from_le_bytes(size_bytes) as usize;
                 offset += 7;
 
@@ -570,7 +587,15 @@ impl SdoClientConnection {
         if dcf_data.len() < 4 {
             return Err(PowerlinkError::ValidationError("Concise DCF too short"));
         }
-        let entries = u32::from_le_bytes(dcf_data[0..4].try_into().unwrap());
+
+        // Safety: Bounds checked above. Use try_into() to avoid unwrap().
+        let entries_bytes: [u8; 4] =
+            if let Ok(b) = dcf_data[0..4].try_into() {
+                b
+            } else {
+                return Err(PowerlinkError::ValidationError("Concise DCF header parse failed"));
+            };
+        let entries = u32::from_le_bytes(entries_bytes);
 
         self.state = SdoClientConnectionState::Opening;
         self.transaction_id = tid;

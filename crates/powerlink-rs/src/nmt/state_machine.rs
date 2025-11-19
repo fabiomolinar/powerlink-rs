@@ -4,7 +4,7 @@ use crate::NodeId;
 use crate::frame::DllError;
 use crate::od::{ObjectDictionary, ObjectValue};
 use alloc::vec::Vec;
-use log::info;
+use log::{error, info};
 
 /// A trait defining the common behavior for all NMT state machines (MN and CN).
 pub trait NmtStateMachine {
@@ -27,14 +27,20 @@ pub trait NmtStateMachine {
     /// Writes the current NMT state to the Object Dictionary (Index 0x1F8C).
     /// This is a provided method to reduce code duplication.
     fn update_od_state(&self, od: &mut ObjectDictionary) {
-        // This write is internal and should not fail. `unwrap` is acceptable here.
-        od.write_internal(
+        // Attempt to write the NMT state to the OD.
+        // While this write is internal and unlikely to fail, proper error handling
+        // prevents potential panics in embedded environments.
+        if let Err(e) = od.write_internal(
             0x1F8C,
             0,
             ObjectValue::Unsigned8(self.current_state() as u8),
             false,
-        )
-        .unwrap();
+        ) {
+            error!(
+                "[NMT] Failed to update NMT state in OD (0x1F8C): {:?}",
+                e
+            );
+        }
     }
 
     /// Resets the state machine to a specific reset state. This is a default implementation.
