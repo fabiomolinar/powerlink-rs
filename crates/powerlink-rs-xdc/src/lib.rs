@@ -16,18 +16,18 @@ extern crate alloc;
 // --- Crate Modules ---
 
 mod builder;
-mod converter; // Add the new module
+mod converter;
 mod error;
 mod model;
 mod parser;
-mod resolver; // This now correctly refers to the `src/resolver/mod.rs` directory
+mod resolver;
 mod types;
 
 // --- Public API Re-exports ---
 
 // Functions
 pub use builder::save_xdc_to_string;
-pub use converter::{NmtSettings, extract_nmt_settings, to_core_od, xdc_to_storage_map}; // Export the new converter functions and types
+pub use converter::{NmtSettings, extract_nmt_settings, to_core_od, xdc_to_storage_map};
 pub use error::XdcError;
 pub use parser::{load_xdc_from_str, load_xdd_defaults_from_str};
 
