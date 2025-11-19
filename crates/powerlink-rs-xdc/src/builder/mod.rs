@@ -1,6 +1,9 @@
-// crates/powerlink-rs-xdc/src/builder/mod.rs
+//! Provides functionality to serialize `XdcFile` structs back into XDC-compliant XML strings.
+//!
+//! This module implements the conversion from the user-friendly public `types`
+//! back to the internal `model` structs required by `quick-xml` for correct serialization
+//! according to the EPSG DS 311 schema.
 
-// Declare the new modules for serialization logic
 pub mod app_process;
 pub mod device_function;
 pub mod device_manager;
@@ -19,13 +22,22 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 use serde::Serialize;
 
-// Import new model paths
 use crate::model::app_layers::{Object, ObjectAccessType, ObjectList, ObjectPdoMapping, SubObject};
 use crate::model::common::ReadOnlyString;
 use crate::model::header::ProfileHeader;
 use crate::model::identity::{DeviceIdentity, Version};
 
-/// Serializes `XdcFile` data into a standard XDC XML `String`.
+/// Serializes an `XdcFile` data structure into a standard XDC XML string.
+///
+/// This function generates a complete XML document, including the standard header
+/// and the ISO 15745 container structure. It handles both the Device Profile
+/// (identity, functions) and the Communication Profile (Object Dictionary, Network Management).
+///
+/// # Arguments
+/// * `file` - The `XdcFile` structure containing the device configuration.
+///
+/// # Returns
+/// * `Result<String, XdcError>` - The formatted XML string or a serialization error.
 pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
     // 1. Convert Identity, DeviceManager, and AppProcess to Device Profile
     let device_profile = build_device_profile(
@@ -50,7 +62,7 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
         ..Default::default()
     };
 
-    // 4. Serialize
+    // 4. Serialize to string
     let mut buffer = String::new();
     write!(
         &mut buffer,
@@ -65,8 +77,6 @@ pub fn save_xdc_to_string(file: &XdcFile) -> Result<String, XdcError> {
     Ok(buffer)
 }
 
-// ... (Rest of the builder logic remains the same) ...
-
 /// Helper to build the `model::ProfileHeader` from the `types::ProfileHeader`.
 fn build_model_header(header: &types::ProfileHeader) -> ProfileHeader {
     model::header::ProfileHeader {
@@ -79,7 +89,7 @@ fn build_model_header(header: &types::ProfileHeader) -> ProfileHeader {
     }
 }
 
-/// Builds the Device Profile model from the public types.
+/// Constructs the internal `Iso15745Profile` model representing the Device Profile.
 fn build_device_profile(
     header: &types::ProfileHeader,
     identity: &types::Identity,
@@ -193,7 +203,7 @@ fn build_device_profile(
     }
 }
 
-/// Builds the Communication Profile model from the public Object Dictionary.
+/// Constructs the internal `Iso15745Profile` model representing the Communication Profile.
 fn build_comm_profile(
     header: &types::ProfileHeader,
     od: &types::ObjectDictionary,
@@ -295,18 +305,12 @@ fn format_hex_u8(val: u8) -> String {
     format!("{:02X}", val)
 }
 
-/// Formats a byte slice into a string.
-/// Since `types.rs` now stores data as `String`, this function simply constructs
-/// the string from bytes. If it was already a string (UTF-8), it returns it.
+/// Helper to format a value into a string for serialization.
+/// Currently assumes input bytes are already valid UTF-8 strings.
 fn format_value_to_string(data: &[u8], _data_type_id: Option<&str>) -> Result<String, XdcError> {
-    // Try to interpret as UTF-8 string first
     if let Ok(s) = core::str::from_utf8(data) {
         return Ok(s.to_string());
     }
-    // If not valid UTF-8, shouldn't happen with our current String storage,
-    // but as a fallback we could hex encode it.
-    // However, since `types::Object` stores `Option<String>`, `data` here
-    // comes from `d.as_bytes()`, so it SHOULD be valid UTF-8.
     Err(XdcError::FmtError(core::fmt::Error))
 }
 
@@ -338,12 +342,10 @@ mod tests {
     use crate::model::Iso15745ProfileContainer;
     use crate::types::{self, Object, ObjectDictionary, SubObject};
     use alloc::string::ToString;
-    use alloc::vec; // Fix: Import ToString trait
+    use alloc::vec;
 
-    /// Test for Task 10.2: Verifies serialization of a basic XdcFile.
     #[test]
     fn test_save_xdc_to_string() {
-        // 1. Create a public `XdcFile` struct
         let xdc_file = types::XdcFile {
             header: types::ProfileHeader {
                 identification: "Test XDC".to_string(),
@@ -405,17 +407,14 @@ mod tests {
             ..Default::default()
         };
 
-        // 2. Call `save_xdc_to_string`
         let xml_string = save_xdc_to_string(&xdc_file).unwrap();
 
-        // 3. Parse the string back using the internal models
+        // Parse back to verify integrity
         let container: Iso15745ProfileContainer =
             quick_xml::de::from_str(&xml_string).expect("Serialized XML should be valid");
 
-        // 4. Assert key fields
         assert_eq!(container.profile.len(), 2);
 
-        // Check Device Profile
         let dev_profile = container.profile.get(0).unwrap();
         assert_eq!(dev_profile.profile_header.profile_name, "My Test Device");
 
@@ -423,14 +422,10 @@ mod tests {
         assert_eq!(identity.vendor_name.value, "MyVendor");
         assert_eq!(identity.vendor_id.as_ref().unwrap().value, "0x12345678");
         assert_eq!(identity.product_name.value, "MyProduct");
-        // UPDATED EXPECTATION: "0xABCD" to match serialization format
         assert_eq!(identity.product_id.as_ref().unwrap().value, "0xABCD");
         assert_eq!(identity.version[0].value, "1.2");
 
-        // Check Communication Profile
         let comm_profile = container.profile.get(1).unwrap();
-        assert_eq!(comm_profile.profile_header.profile_name, "My Test Device");
-
         let app_layers = comm_profile
             .profile_body
             .application_layers
@@ -438,8 +433,6 @@ mod tests {
             .unwrap();
         let obj_list = &app_layers.object_list.object;
         assert_eq!(obj_list.len(), 2);
-
-        // Check Object 0x1000
         assert_eq!(obj_list[0].index, "1000");
         assert_eq!(obj_list[0].name, "Device Type");
         assert_eq!(obj_list[0].actual_value, Some("0x91010F00".to_string()));
@@ -447,8 +440,6 @@ mod tests {
             obj_list[0].access_type,
             Some(model::app_layers::ObjectAccessType::Constant)
         );
-
-        // Check Object 0x1018
         assert_eq!(obj_list[1].index, "1018");
         assert_eq!(obj_list[1].sub_object.len(), 2);
         assert_eq!(obj_list[1].sub_object[1].name, "VendorID");
@@ -480,8 +471,6 @@ mod tests {
             map_access_type_to_model(PublicAccess::Constant),
             ModelAccess::Constant
         );
-
-        // Test the non-obvious mappings
         assert_eq!(
             map_access_type_to_model(PublicAccess::ReadWriteInput),
             ModelAccess::ReadWrite

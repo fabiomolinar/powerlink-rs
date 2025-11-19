@@ -1,36 +1,36 @@
-// crates/powerlink-rs-xdc/src/model/common.rs
-
-//! Contains common helper structs and enums from CommonElements.xsd.
+//! Defines common helper structs and enums shared across the XDC schema models.
+//!
+//! Based on `CommonElements.xsd`.
 
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-// --- Helper Functions for serde(default) ---
+// --- Helper Functions for Serde Defaults ---
 
-/// Helper function for `#[serde(default)]` on bool fields that should default to `true`.
+/// Returns `true`. Used for `#[serde(default = "bool_true")]`.
 pub fn bool_true() -> bool {
     true
 }
 
-/// Helper function for `#[serde(skip_serializing_if = "is_true")]`
+/// Checks if a boolean is true. Used for `#[serde(skip_serializing_if = "is_true")]`.
 pub(super) fn is_true(b: &bool) -> bool {
     *b
 }
 
-/// Helper function for `#[serde(default = "bool_false")]`
+/// Returns `false`. Used for `#[serde(default = "bool_false")]`.
 pub fn bool_false() -> bool {
     false
 }
 
-/// Helper function for `#[serde(skip_serializing_if = "is_false")]`
+/// Checks if a boolean is false. Used for `#[serde(skip_serializing_if = "is_false")]`.
 pub(super) fn is_false(b: &bool) -> bool {
     !*b
 }
 
-// --- Structs for g_labels (CommonElements.xsd) ---
+// --- Label and Description Types ---
 
-/// Represents `<label lang="en">Value</label>`
+/// Represents a localized `<label>` element.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Label {
     #[serde(rename = "@lang")]
@@ -39,7 +39,7 @@ pub struct Label {
     pub value: String,
 }
 
-/// Represents `<description lang="en" URI="...">Value</description>`
+/// Represents a localized `<description>` element.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Description {
     #[serde(rename = "@lang")]
@@ -50,7 +50,7 @@ pub struct Description {
     pub value: String,
 }
 
-/// Represents `<labelRef dictID="..." textID="...">Value</labelRef>`
+/// Represents a reference to an external label definition.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LabelRef {
     #[serde(rename = "@dictID")]
@@ -58,10 +58,10 @@ pub struct LabelRef {
     #[serde(rename = "@textID")]
     pub text_id: String,
     #[serde(rename = "$value")]
-    pub value: String, // xsd:anyURI
+    pub value: String,
 }
 
-/// Represents `<descriptionRef dictID="..." textID="...">Value</descriptionRef>`
+/// Represents a reference to an external description.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DescriptionRef {
     #[serde(rename = "@dictID")]
@@ -69,10 +69,10 @@ pub struct DescriptionRef {
     #[serde(rename = "@textID")]
     pub text_id: String,
     #[serde(rename = "$value")]
-    pub value: String, // xsd:anyURI
+    pub value: String,
 }
 
-/// Represents the `xsd:choice` inside `g_labels`
+/// Enum wrapper for the `g_labels` choice group in the schema.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum LabelChoice {
     #[serde(rename = "label")]
@@ -85,18 +85,16 @@ pub enum LabelChoice {
     DescriptionRef(DescriptionRef),
 }
 
-/// Represents the `g_labels` group from CommonElements.xsd
+/// Represents the `g_labels` group, containing a list of labels or descriptions.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Glabels {
-    // This captures the <xsd:choice maxOccurs="unbounded">
     #[serde(rename = "$value", default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<LabelChoice>,
 }
 
-// --- Common Helper Structs for DeviceIdentity / ApplicationProcess ---
+// --- Common Helper Structs ---
 
-/// Represents `<vendorName readOnly="true">Value</vendorName>`
-/// Also used for `productFamily`, `productName`, `productID`, `specificationRevision`
+/// A string value with a `readOnly` attribute (defaults to true).
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct ReadOnlyString {
     #[serde(
@@ -109,7 +107,7 @@ pub struct ReadOnlyString {
     pub value: String,
 }
 
-/// Represents `<instanceName readOnly="false">Value</instanceName>`
+/// An instance name string with a `readOnly` attribute (defaults to false).
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct InstanceName {
     #[serde(rename = "@readOnly", default, skip_serializing_if = "is_false")]
@@ -118,7 +116,7 @@ pub struct InstanceName {
     pub value: String,
 }
 
-/// Represents `<vendorText>`, `<deviceFamily>`, and `<productText>`
+/// A combination of `Glabels` and a `readOnly` attribute.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AttributedGlabels {
     #[serde(rename = "$value", default, skip_serializing_if = "Vec::is_empty")]
@@ -131,7 +129,7 @@ pub struct AttributedGlabels {
     pub read_only: bool,
 }
 
-/// Represents `<dataTypeIDRef>` (EPSG 311, 7.4.7.4.3.3).
+/// Represents a reference to a data type via unique ID.
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct DataTypeIDRef {
     #[serde(rename = "@uniqueIDRef")]

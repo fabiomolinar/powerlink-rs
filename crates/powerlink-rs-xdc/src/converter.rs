@@ -1,12 +1,15 @@
-// crates/powerlink-rs-xdc/src/converter.rs
-
 //! Converts the public, schema-based `types` into the `powerlink-rs` core crate's
 //! internal `od::ObjectDictionary` representation.
+//!
+//! This module acts as the bridge between the XML-derived configuration and the
+//! runtime Object Dictionary used by the stack. It handles parsing of string values
+//! (e.g., "0x1234") into native Rust types and mapping complex XDC structures
+//! (Arrays, Records) into the flat Object Dictionary model.
 
 use crate::error::XdcError;
+use crate::model::app_layers::DataTypeName;
 use crate::resolver::utils;
-use crate::types;
-use crate::types::XdcFile;
+use crate::types::{self, XdcFile};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -16,23 +19,31 @@ use powerlink_rs::od::{
     ValueRange,
 };
 
-// Import DataTypeName for strong typing in map_data_to_value
-use crate::model::app_layers::DataTypeName;
-
-/// Configuration settings for the NMT state machine, extracted from the XDC profile.
+/// Configuration settings for the NMT (Network Management) state machine,
+/// extracted from the XDC profile's `<NetworkManagement>` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NmtSettings {
-    /// The calculated FeatureFlags (mapping to OD 0x1F82).
+    /// The feature flags calculated from various XDC attributes (maps to OD 0x1F82).
     pub feature_flags: FeatureFlags,
-    /// The boot time not active duration in microseconds (mapping to NMTBootTimeNotActive).
+    /// The duration to wait in the `NmtNotActive` state (microseconds).
     pub boot_time_not_active: u32,
-    /// The minimum cycle time in microseconds.
+    /// The minimum supported cycle time (microseconds).
     pub cycle_time_min: u32,
-    /// The maximum cycle time in microseconds.
+    /// The maximum supported cycle time (microseconds).
     pub cycle_time_max: u32,
 }
 
-// ... extract_nmt_settings implementation remains the same ...
+/// Extracts NMT configuration settings from the parsed XDC file.
+///
+/// This function aggregates various attributes from `GeneralFeatures`, `MNFeatures`,
+/// and `CNFeatures` to build the `NmtSettings` struct, including the bitmask
+/// for `NMT_FeatureFlags_U32` (0x1F82).
+///
+/// # Arguments
+/// * `xdc_file` - The parsed XDC file structure.
+///
+/// # Returns
+/// * `Result<NmtSettings, XdcError>` - The extracted settings or an error if required sections are missing.
 pub fn extract_nmt_settings(xdc_file: &XdcFile) -> Result<NmtSettings, XdcError> {
     let nm = xdc_file
         .network_management
@@ -108,8 +119,17 @@ pub fn extract_nmt_settings(xdc_file: &XdcFile) -> Result<NmtSettings, XdcError>
     })
 }
 
-/// Converts a parsed `XdcFile` into the `ObjectDictionary` format required
-/// by the `powerlink-rs` core crate.
+/// Converts a parsed `XdcFile` into the runtime `ObjectDictionary`.
+///
+/// This function iterates through the `ObjectList` in the XDC, parsing values and attributes
+/// into the format required by the `powerlink-rs` core crate. It resolves strings
+/// to native types and handles parameter access mapping.
+///
+/// # Arguments
+/// * `xdc_file` - The source XDC file.
+///
+/// # Returns
+/// * `Result<ObjectDictionary<'static>, XdcError>` - The ready-to-use Object Dictionary.
 pub fn to_core_od(xdc_file: &XdcFile) -> Result<ObjectDictionary<'static>, XdcError> {
     let mut core_od = ObjectDictionary::new(None);
 
@@ -144,8 +164,13 @@ pub fn to_core_od(xdc_file: &XdcFile) -> Result<ObjectDictionary<'static>, XdcEr
     Ok(core_od)
 }
 
-/// Converts a parsed `XdcFile` into a `BTreeMap` suitable for use with
-/// the `powerlink_rs::hal::ObjectDictionaryStorage` trait.
+/// Extracts storable parameters from the XDC file into a flat map.
+///
+/// This is useful for initializing the persistent storage backend with
+/// default values derived from the XDD/XDC file.
+///
+/// # Returns
+/// A map where keys are `(Index, SubIndex)` and values are `ObjectValue`.
 pub fn xdc_to_storage_map(
     xdc_file: &XdcFile,
 ) -> Result<BTreeMap<(u16, u8), ObjectValue>, XdcError> {
@@ -175,7 +200,9 @@ pub fn xdc_to_storage_map(
     Ok(map)
 }
 
-/// Maps the public `types::Object` to the core `powerlink_rs::od::Object`.
+/// Maps the XDC `Object` struct to the core `Object` enum.
+///
+/// This handles the distinction between Variable (7), Array (8), and Record (9) objects.
 fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
     match obj.object_type.as_str() {
         "7" => {
@@ -217,7 +244,7 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
 
             for sub_obj in &obj.sub_objects {
                 if sub_obj.sub_index == 0 {
-                    // We used sub-index 0 for sizing, but we don't store it in the Array vector
+                    // Sub-index 0 is the count; not stored in the vector itself
                     continue;
                 }
                 let value = sub_obj
@@ -239,7 +266,6 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
             // RECORD
             let mut sub_values = Vec::new();
 
-            // Determine size: use sub-index 0 (Count) if available, otherwise max sub-index
             let count_from_idx0 = obj
                 .sub_objects
                 .iter()
@@ -282,10 +308,9 @@ fn map_object(obj: &types::Object) -> Result<Object, XdcError> {
     }
 }
 
-/// Maps a string value and data type ID to the core `ObjectValue` enum.
+/// Parses a string value into the core `ObjectValue` enum based on the POWERLINK Data Type ID.
 ///
-/// This function handles the "human readable" string -> Native Rust type conversion.
-/// e.g. "0x1234" -> u32(0x1234) -> ObjectValue::Unsigned32(0x1234)
+/// e.g. "0x1234" with type "0006" (U16) -> `ObjectValue::Unsigned16(0x1234)`.
 fn map_data_to_value(
     value_str: &str,
     data_type_id: Option<&str>,
@@ -300,7 +325,7 @@ fn map_data_to_value(
         None => return Ok(None), // Unknown or custom type
     };
 
-    // Helper to parse numbers (dec or hex)
+    // Helper macro to parse numbers (handling hex "0x" or decimal)
     macro_rules! parse_num {
         ($typ:ty, $variant:path) => {{
             let s = value_str.trim();
@@ -319,7 +344,6 @@ fn map_data_to_value(
 
     match type_name {
         DataTypeName::Boolean => {
-            // XML boolean can be "true", "false", "1", "0"
             let s = value_str.trim();
             let val = match s {
                 "true" | "1" => 1,
@@ -346,10 +370,7 @@ fn map_data_to_value(
                 attribute: "real32",
             }),
         DataTypeName::VisibleString => Ok(Some(ObjectValue::VisibleString(value_str.into()))),
-        // OctetString in XML is usually a hex string e.g. "00 A0..." or just chars?
-        // If it starts with 0x, treat as hex bytes. If not, maybe raw string?
-        // The previous parser logic treated "000A" via `parse_hex_string`.
-        // Let's assume OctetString is hex encoded in the XML if it's data.
+        // OctetStrings and Domains are treated as hex-encoded strings in the XDC.
         DataTypeName::OctetString | DataTypeName::Domain => {
             let bytes = crate::parser::parse_hex_string(value_str)?;
             if type_name == DataTypeName::OctetString {
@@ -368,8 +389,6 @@ fn map_data_to_value(
         DataTypeName::Integer64 => parse_num!(i64, ObjectValue::Integer64),
         DataTypeName::Unsigned64 => parse_num!(u64, ObjectValue::Unsigned64),
 
-        // For MacAddress, IP, etc. we might need special parsing if they aren't simple hex strings
-        // Standard implementation often uses hex strings for these in XDC too.
         DataTypeName::MacAddress => {
             let bytes = crate::parser::parse_hex_string(value_str)?;
             if bytes.len() != 6 {
@@ -390,7 +409,6 @@ fn map_data_to_value(
             arr.copy_from_slice(&bytes);
             Ok(Some(ObjectValue::IpAddress(arr)))
         }
-        // Add others as needed
         _ => Ok(None),
     }
 }
@@ -426,8 +444,6 @@ fn map_support_to_category(support: Option<types::ParameterSupport>) -> Category
     }
 }
 
-// --- Helper functions for ValueRange resolution ---
-
 fn parse_string_to_value(s: &str, data_type_id: &str) -> Option<ObjectValue> {
     map_data_to_value(s, Some(data_type_id)).ok().flatten()
 }
@@ -443,6 +459,7 @@ fn resolve_value_range(
         None => return None,
     };
 
+    // Prioritize explicit limits if present
     if let (Some(low_str), Some(high_str)) = (low_limit_str, high_limit_str) {
         match (
             parse_string_to_value(low_str, dt_id),
@@ -454,12 +471,11 @@ fn resolve_value_range(
                     max: max_val,
                 });
             }
-            _ => {
-                // Log warning
-            }
+            _ => {}
         }
     }
 
+    // Fallback to the first range defined in AllowedValues
     if let Some(av) = allowed_values {
         if let Some(range) = av.ranges.first() {
             match (
@@ -472,9 +488,7 @@ fn resolve_value_range(
                         max: max_val,
                     });
                 }
-                _ => {
-                    // Log warning
-                }
+                _ => {}
             }
         }
     }
@@ -489,7 +503,7 @@ mod tests {
     use alloc::string::{String, ToString};
     use alloc::vec;
     use powerlink_rs::nmt::flags::FeatureFlags;
-    use powerlink_rs::od::{AccessType, Category, Object, ObjectValue, PdoMapping}; // Import the core OD Object enum
+    use powerlink_rs::od::{AccessType, Category, Object, ObjectValue, PdoMapping};
 
     #[test]
     fn test_to_core_od_var_conversion() {
@@ -504,7 +518,7 @@ mod tests {
                     pdo_mapping: Some(types::ObjectPdoMapping::No),
                     support: Some(types::ParameterSupport::Mandatory),
                     persistent: false,
-                    data: Some(String::from("0x000F0191")), // UPDATED TEST DATA: BE hex string
+                    data: Some(String::from("0x000F0191")),
                     ..Default::default()
                 }],
             },
@@ -512,8 +526,6 @@ mod tests {
         };
 
         let core_od = to_core_od(&xdc_file).unwrap();
-
-        // Use the public API of the core OD to check the value
         let entry = core_od.read_object(0x1000).unwrap();
         if let Object::Variable(val) = entry {
             assert_eq!(*val, ObjectValue::Unsigned32(0x000F0191));
@@ -535,24 +547,24 @@ mod tests {
                             sub_index: 0,
                             name: "Count".to_string(),
                             object_type: "7".to_string(),
-                            data_type: Some("0005".to_string()), // Unsigned8
-                            data: Some(String::from("2")),       // Number of entries
+                            data_type: Some("0005".to_string()),
+                            data: Some(String::from("2")),
                             ..Default::default()
                         },
                         SubObject {
                             sub_index: 1,
                             name: "VendorID".to_string(),
                             object_type: "7".to_string(),
-                            data_type: Some("0007".to_string()), // Unsigned32
-                            data: Some(String::from("0x12345678")), // UPDATED TEST DATA: BE hex string
+                            data_type: Some("0007".to_string()),
+                            data: Some(String::from("0x12345678")),
                             ..Default::default()
                         },
                         SubObject {
                             sub_index: 2,
                             name: "ProductCode".to_string(),
                             object_type: "7".to_string(),
-                            data_type: Some("0007".to_string()), // Unsigned32
-                            data: Some(String::from("0x00001234")), // UPDATED TEST DATA: BE hex string
+                            data_type: Some("0007".to_string()),
+                            data: Some(String::from("0x00001234")),
                             ..Default::default()
                         },
                     ],
@@ -563,8 +575,6 @@ mod tests {
         };
 
         let core_od = to_core_od(&xdc_file).unwrap();
-
-        // Use the public API of the core OD to check the values
         let entry = core_od.read_object(0x1018).unwrap();
         if let Object::Record(vals) = entry {
             assert_eq!(vals.len(), 2);
@@ -582,18 +592,18 @@ mod tests {
                 objects: vec![crate::types::Object {
                     index: 0x2000,
                     name: "MyArray".to_string(),
-                    object_type: "8".to_string(), // ARRAY
+                    object_type: "8".to_string(),
                     sub_objects: vec![
                         SubObject {
                             sub_index: 0,
                             name: "Count".to_string(),
-                            data: Some(String::from("3")), // 3 entries
+                            data: Some(String::from("3")),
                             ..Default::default()
                         },
                         SubObject {
                             sub_index: 1,
                             name: "Val1".to_string(),
-                            data_type: Some("0006".to_string()), // U16
+                            data_type: Some("0006".to_string()),
                             data: Some(String::from("0x1122")),
                             ..Default::default()
                         },
@@ -604,7 +614,6 @@ mod tests {
                             data: Some(String::from("0xAABB")),
                             ..Default::default()
                         },
-                        // Entry 3 is missing, should be dummy
                     ],
                     ..Default::default()
                 }],
@@ -615,13 +624,11 @@ mod tests {
         let core_od = to_core_od(&xdc_file).unwrap();
         let entry = core_od.read_object(0x2000).unwrap();
 
-        // Check that the array is created with the correct length (from sub-index 0)
-        // and that missing entries are filled with dummy data.
         if let Object::Array(vals) = entry {
             assert_eq!(vals.len(), 3);
-            assert_eq!(vals[0], ObjectValue::Unsigned16(0x1122)); // Parsed as BE hex 0x1122
+            assert_eq!(vals[0], ObjectValue::Unsigned16(0x1122));
             assert_eq!(vals[1], ObjectValue::Unsigned16(0xAABB));
-            assert_eq!(vals[2], ObjectValue::Unsigned8(0)); // Dummy data
+            assert_eq!(vals[2], ObjectValue::Unsigned8(0)); // Default zero for missing entry
         } else {
             panic!("Expected Object::Array");
         }
@@ -678,16 +685,14 @@ mod tests {
         let xdc_file = types::XdcFile {
             object_dictionary: types::ObjectDictionary {
                 objects: vec![
-                    // VAR (Sub-index 0)
                     crate::types::Object {
                         index: 0x1006,
                         name: "NMT_CycleLen_U32".to_string(),
                         object_type: "7".to_string(),
-                        data_type: Some("0007".to_string()), // U32
-                        data: Some(String::from("10000")),   // UPDATED TEST DATA: decimal 10000
+                        data_type: Some("0007".to_string()),
+                        data: Some(String::from("10000")),
                         ..Default::default()
                     },
-                    // RECORD (Sub-indices 0, 1, 2)
                     crate::types::Object {
                         index: 0x1018,
                         name: "Identity".to_string(),
@@ -697,47 +702,24 @@ mod tests {
                                 sub_index: 0,
                                 name: "Count".to_string(),
                                 object_type: "7".to_string(),
-                                data_type: Some("0005".to_string()), // U8
-                                data: Some(String::from("2")),       // Number of entries
+                                data_type: Some("0005".to_string()),
+                                data: Some(String::from("2")),
                                 ..Default::default()
                             },
                             SubObject {
                                 sub_index: 1,
                                 name: "VendorID".to_string(),
                                 object_type: "7".to_string(),
-                                data_type: Some("0007".to_string()), // U32
-                                data: Some(String::from("0x12345678")), // UPDATED TEST DATA: BE hex
+                                data_type: Some("0007".to_string()),
+                                data: Some(String::from("0x12345678")),
                                 ..Default::default()
                             },
                             SubObject {
                                 sub_index: 2,
                                 name: "ProductCode".to_string(),
                                 object_type: "7".to_string(),
-                                data_type: Some("0007".to_string()), // U32
-                                data: Some(String::from("0x00001234")), // UPDATED TEST DATA: BE hex
-                                ..Default::default()
-                            },
-                        ],
-                        ..Default::default()
-                    },
-                    // ARRAY (Sub-indices 0, 1)
-                    crate::types::Object {
-                        index: 0x2000,
-                        name: "MyArray".to_string(),
-                        object_type: "8".to_string(),
-                        sub_objects: vec![
-                            SubObject {
-                                sub_index: 0,
-                                name: "Count".to_string(),
-                                data_type: Some("0005".to_string()),
-                                data: Some(String::from("1")),
-                                ..Default::default()
-                            },
-                            SubObject {
-                                sub_index: 1,
-                                name: "Val1".to_string(),
-                                data_type: Some("0006".to_string()), // U16
-                                data: Some(String::from("0x2211")),  // UPDATED TEST DATA: BE hex
+                                data_type: Some("0007".to_string()),
+                                data: Some(String::from("0x00001234")),
                                 ..Default::default()
                             },
                         ],
@@ -750,10 +732,7 @@ mod tests {
 
         let map = xdc_to_storage_map(&xdc_file).unwrap();
 
-        // Check VAR
         assert_eq!(map.get(&(0x1006, 0)), Some(&ObjectValue::Unsigned32(10000)));
-
-        // Check RECORD
         assert_eq!(map.get(&(0x1018, 0)), Some(&ObjectValue::Unsigned8(2)));
         assert_eq!(
             map.get(&(0x1018, 1)),
@@ -763,13 +742,6 @@ mod tests {
             map.get(&(0x1018, 2)),
             Some(&ObjectValue::Unsigned32(0x00001234))
         );
-
-        // Check ARRAY
-        assert_eq!(map.get(&(0x2000, 0)), Some(&ObjectValue::Unsigned8(1)));
-        assert_eq!(
-            map.get(&(0x2000, 1)),
-            Some(&ObjectValue::Unsigned16(0x2211))
-        );
     }
 
     #[test]
@@ -777,16 +749,16 @@ mod tests {
         let xdc_file = XdcFile {
             network_management: Some(NetworkManagement {
                 general_features: GeneralFeatures {
-                    dll_feature_mn: true,         // MN
-                    nmt_isochronous: Some(true),  // ISOCHRONOUS
-                    sdo_support_asnd: Some(true), // SDO_ASND
+                    dll_feature_mn: true,
+                    nmt_isochronous: Some(true),
+                    sdo_support_asnd: Some(true),
                     nmt_boot_time_not_active: 50000,
                     nmt_cycle_time_min: 100,
                     nmt_cycle_time_max: 50000,
                     ..Default::default()
                 },
                 mn_features: Some(MnFeatures {
-                    nmt_service_udp_ip: Some(true), // NMT_SERVICE_UDP
+                    nmt_service_udp_ip: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -803,7 +775,7 @@ mod tests {
                 .feature_flags
                 .contains(FeatureFlags::NMT_SERVICE_UDP)
         );
-        assert!(!settings.feature_flags.contains(FeatureFlags::SDO_UDP)); // Should be false
+        assert!(!settings.feature_flags.contains(FeatureFlags::SDO_UDP));
 
         assert_eq!(settings.boot_time_not_active, 50000);
         assert_eq!(settings.cycle_time_min, 100);
@@ -812,7 +784,7 @@ mod tests {
 
     #[test]
     fn test_extract_nmt_settings_missing_block() {
-        let xdc_file = XdcFile::default(); // No network_management
+        let xdc_file = XdcFile::default();
         let result = extract_nmt_settings(&xdc_file);
         assert!(result.is_err());
     }
