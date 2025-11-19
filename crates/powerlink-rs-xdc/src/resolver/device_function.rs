@@ -13,42 +13,42 @@ use alloc::vec::Vec;
 fn resolve_capabilities(
     model: &model::device_function::Capabilities,
 ) -> Result<types::Capabilities, XdcError> {
-    let characteristics =
-        model
-            .characteristics_list
-            .iter()
-            .map(|cl| {
-                Ok::<_, XdcError>(types::CharacteristicList {
-                    category: cl
-                        .category
-                        .as_ref()
-                        .and_then(|c| utils::extract_label(&c.labels.items)),
-                    characteristics: cl
-                        .characteristic
-                        .iter()
-                        .map(|c| {
-                            Ok::<_, XdcError>(types::Characteristic {
-                                name: utils::extract_label(&c.characteristic_name.items)
-                                    .ok_or(XdcError::MissingElement {
-                                        element: "characteristicName/label",
-                                    })?,
-                                content: c
-                                    .characteristic_content
-                                    .iter()
-                                    .map(|cc| {
-                                        utils::extract_label(&cc.items).ok_or(
-                                            XdcError::MissingElement {
-                                                element: "characteristicContent/label",
-                                            },
-                                        )
-                                    })
-                                    .collect::<Result<Vec<_>, _>>()?,
-                            })
+    let characteristics = model
+        .characteristics_list
+        .iter()
+        .map(|cl| {
+            Ok::<_, XdcError>(types::CharacteristicList {
+                category: cl
+                    .category
+                    .as_ref()
+                    .and_then(|c| utils::extract_label(&c.labels.items)),
+                characteristics: cl
+                    .characteristic
+                    .iter()
+                    .map(|c| {
+                        Ok::<_, XdcError>(types::Characteristic {
+                            name: utils::extract_label(&c.characteristic_name.items).ok_or(
+                                XdcError::MissingElement {
+                                    element: "characteristicName/label",
+                                },
+                            )?,
+                            content: c
+                                .characteristic_content
+                                .iter()
+                                .map(|cc| {
+                                    utils::extract_label(&cc.items).ok_or(
+                                        XdcError::MissingElement {
+                                            element: "characteristicContent/label",
+                                        },
+                                    )
+                                })
+                                .collect::<Result<Vec<_>, _>>()?,
                         })
-                        .collect::<Result<Vec<_>, _>>()?,
-                })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
             })
-            .collect::<Result<Vec<_>, _>>()?;
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let standard_compliance = model
         .standard_compliance_list

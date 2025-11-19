@@ -2,7 +2,7 @@
 //!
 //! (Schema: `ProfileBody_Device_Powerlink.xsd`)
 
-use super::common::{bool_true, is_true, AttributedGlabels, InstanceName, ReadOnlyString};
+use super::common::{AttributedGlabels, InstanceName, ReadOnlyString, bool_true, is_true};
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};

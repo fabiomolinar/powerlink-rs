@@ -8,7 +8,7 @@
 //!
 //! This module flattens this hierarchy into a simple `ObjectDictionary` struct.
 
-use super::{utils, ValueMode};
+use super::{ValueMode, utils};
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_layers::DataTypeName;

@@ -15,8 +15,8 @@
 
 use crate::error::XdcError;
 use crate::model;
-use crate::model::app_layers::DataTypeName;
 use crate::model::Iso15745ProfileContainer;
+use crate::model::app_layers::DataTypeName;
 use crate::types;
 use alloc::collections::BTreeMap;
 use alloc::string::String;

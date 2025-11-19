@@ -4,7 +4,7 @@
 //! malformed XML, invalid attributes, missing mandatory elements, and data type
 //! mismatches, without panicking.
 
-use powerlink_rs_xdc::{load_xdc_from_str, to_core_od, XdcError};
+use powerlink_rs_xdc::{XdcError, load_xdc_from_str, to_core_od};
 
 /// A minimal valid XDC template used as a base for creating corrupted test cases.
 const MINIMAL_VALID_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -97,10 +97,8 @@ fn test_invalid_index_hex() {
 fn test_missing_application_layers() {
     // Remove the ApplicationLayers block
     let start = MINIMAL_VALID_XML.find("<ApplicationLayers>").unwrap();
-    let end = MINIMAL_VALID_XML
-        .find("</ApplicationLayers>")
-        .unwrap()
-        + "</ApplicationLayers>".len();
+    let end =
+        MINIMAL_VALID_XML.find("</ApplicationLayers>").unwrap() + "</ApplicationLayers>".len();
     let mut xml = MINIMAL_VALID_XML.to_string();
     xml.replace_range(start..end, "");
 
@@ -147,21 +145,24 @@ fn test_data_type_conversion_failure() {
 /// Verifies that the `converter` handles boolean parsing correctly across variants.
 #[test]
 fn test_boolean_conversion_variants() {
-    let base_xml = MINIMAL_VALID_XML.replace(
-        r#"<defType dataType="0006"><Unsigned16/></defType>"#,
-        r#"<defType dataType="0001"><Boolean/></defType>"#,
-    ).replace(
-        r#"dataType="0006" actualValue="0x1234""#,
-        r#"dataType="0001" actualValue="REPLACE_ME""#,
-    );
+    let base_xml = MINIMAL_VALID_XML
+        .replace(
+            r#"<defType dataType="0006"><Unsigned16/></defType>"#,
+            r#"<defType dataType="0001"><Boolean/></defType>"#,
+        )
+        .replace(
+            r#"dataType="0006" actualValue="0x1234""#,
+            r#"dataType="0001" actualValue="REPLACE_ME""#,
+        );
 
     // Case 1: "true" -> 1
     let xml_true = base_xml.replace("REPLACE_ME", "true");
     let file_true = load_xdc_from_str(&xml_true).unwrap();
     let od_true = to_core_od(&file_true).unwrap();
     let val_true = od_true.read_object(0x1000).unwrap();
-    
-    if let powerlink_rs::od::Object::Variable(powerlink_rs::od::ObjectValue::Boolean(v)) = val_true {
+
+    if let powerlink_rs::od::Object::Variable(powerlink_rs::od::ObjectValue::Boolean(v)) = val_true
+    {
         assert_eq!(*v, 1);
     } else {
         panic!("Expected Boolean(1)");
@@ -172,7 +173,8 @@ fn test_boolean_conversion_variants() {
     let file_zero = load_xdc_from_str(&xml_zero).unwrap();
     let od_zero = to_core_od(&file_zero).unwrap();
     let val_zero = od_zero.read_object(0x1000).unwrap();
-    if let powerlink_rs::od::Object::Variable(powerlink_rs::od::ObjectValue::Boolean(v)) = val_zero {
+    if let powerlink_rs::od::Object::Variable(powerlink_rs::od::ObjectValue::Boolean(v)) = val_zero
+    {
         assert_eq!(*v, 0);
     } else {
         panic!("Expected Boolean(0)");
@@ -182,7 +184,10 @@ fn test_boolean_conversion_variants() {
     let xml_invalid = base_xml.replace("REPLACE_ME", "yes");
     let file_invalid = load_xdc_from_str(&xml_invalid).unwrap();
     let res_invalid = to_core_od(&file_invalid);
-    assert!(matches!(res_invalid, Err(XdcError::InvalidAttributeFormat { .. })));
+    assert!(matches!(
+        res_invalid,
+        Err(XdcError::InvalidAttributeFormat { .. })
+    ));
 }
 
 /// Verifies resilience against broken `uniqueIDRef` links.
@@ -221,13 +226,15 @@ fn test_xml_entity_decoding() {
 #[test]
 fn test_numeric_overflow() {
     // Set type to Unsigned8 (0005) but value to 256
-    let base_xml = MINIMAL_VALID_XML.replace(
-        r#"<defType dataType="0006"><Unsigned16/></defType>"#,
-        r#"<defType dataType="0005"><Unsigned8/></defType>"#,
-    ).replace(
-        r#"dataType="0006" actualValue="0x1234""#,
-        r#"dataType="0005" actualValue="256""#,
-    );
+    let base_xml = MINIMAL_VALID_XML
+        .replace(
+            r#"<defType dataType="0006"><Unsigned16/></defType>"#,
+            r#"<defType dataType="0005"><Unsigned8/></defType>"#,
+        )
+        .replace(
+            r#"dataType="0006" actualValue="0x1234""#,
+            r#"dataType="0005" actualValue="256""#,
+        );
 
     let xdc_file = load_xdc_from_str(&base_xml).expect("Initial parse should succeed");
 
@@ -249,10 +256,8 @@ fn test_numeric_overflow() {
 /// Verifies behavior when mandatory fields in ProfileHeader are missing.
 #[test]
 fn test_missing_header_fields() {
-    let xml = MINIMAL_VALID_XML.replace(
-        r#"<ProfileIdentification>Test</ProfileIdentification>"#,
-        "",
-    );
+    let xml =
+        MINIMAL_VALID_XML.replace(r#"<ProfileIdentification>Test</ProfileIdentification>"#, "");
 
     let result = load_xdc_from_str(&xml);
     // Quick-xml struct deserialization should fail because the field is not Option<>

@@ -2,7 +2,7 @@
 //!
 //! (Schema: `ProfileBody_Device_Powerlink.xsd`)
 
-use super::common::{bool_false, is_false, DataTypeIDRef, Glabels};
+use super::common::{DataTypeIDRef, Glabels, bool_false, is_false};
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};

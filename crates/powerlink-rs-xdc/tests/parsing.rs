@@ -5,7 +5,7 @@
 //! back to XML without data loss.
 
 use powerlink_rs_xdc::{
-    load_xdc_from_str, load_xdd_defaults_from_str, save_xdc_to_string, ParameterAccess,
+    ParameterAccess, load_xdc_from_str, load_xdd_defaults_from_str, save_xdc_to_string,
 };
 use std::fs;
 use std::path::PathBuf;

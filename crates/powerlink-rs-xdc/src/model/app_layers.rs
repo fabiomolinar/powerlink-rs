@@ -81,7 +81,6 @@ pub struct Object {
     pub index: String,
 
     // --- Fields from ag_Powerlink_Object ---
-
     #[serde(rename = "@name")]
     pub name: String,
 
@@ -152,7 +151,6 @@ pub struct Object {
     pub unique_id_ref: Option<String>,
 
     // --- End of fields from ag_Powerlink_Object ---
-
     /// This attribute is used by modular devices to reference an index range.
     /// (from `t_Object_Extension_Head` and `t_Object_Extension`)
     #[serde(
@@ -175,7 +173,6 @@ pub struct SubObject {
     pub sub_index: String,
 
     // --- Fields from ag_Powerlink_Object ---
-
     #[serde(rename = "@name")]
     pub name: String,
 

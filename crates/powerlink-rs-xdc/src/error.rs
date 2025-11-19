@@ -2,8 +2,8 @@ use alloc::fmt;
 use alloc::string::String;
 use core::num::ParseIntError;
 use hex::FromHexError;
-use quick_xml::errors::serialize::{DeError, SeError};
 use quick_xml::Error as XmlError;
+use quick_xml::errors::serialize::{DeError, SeError};
 
 /// Errors that can occur during XDC parsing, validation, or serialization.
 #[derive(Debug)]
