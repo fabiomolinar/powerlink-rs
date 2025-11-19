@@ -3,7 +3,6 @@ name = "powerlink-rs-xdc"
 description = "A no_std-compatible parser for POWERLINK XDC (XML Device Configuration) files."
 # Inherit package metadata
 version = "0.1.0"
-version.workspace = false
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
