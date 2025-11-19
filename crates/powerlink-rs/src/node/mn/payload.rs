@@ -10,7 +10,7 @@ use crate::frame::{
     ASndFrame, PReqFrame, PowerlinkFrame, RequestedServiceId, ServiceId, SoAFrame, SocFrame,
 };
 use crate::nmt::NmtStateMachine;
-use crate::nmt::events::MnNmtCommandRequest; // Import the new wrapper
+use crate::nmt::events::MnNmtCommandRequest;
 use crate::od::ObjectValue;
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId};
@@ -20,7 +20,7 @@ use log::{debug, error, trace, warn};
 
 // Import NmtCommandData
 use crate::node::mn::state::{CnState, NmtCommandData};
-use crate::nmt::states::NmtState; // Import CnState and NmtState
+use crate::nmt::states::NmtState;
 
 // Constants for OD access
 const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
@@ -159,21 +159,15 @@ pub(super) fn build_preq_frame(
     }
 }
 
-/// Builds the payload for a TPDO (in this case, for a PReq frame) by reading from the Object Dictionary
-/// based on the configured mapping for a specific TPDO channel.
-///
-/// Returns the payload and the mapping version, or an error if the configuration is invalid.
+/// Builds the payload for a TPDO (in this case, for a PReq frame).
 pub(super) fn build_tpdo_payload(
     context: &mut MnContext,
     channel_index: u8,
 ) -> Result<(Vec<u8>, PDOVersion), PowerlinkError> {
     let comm_param_index = OD_IDX_TPDO_COMM_PARAM_BASE + channel_index as u16;
     let mapping_index = OD_IDX_TPDO_MAPP_PARAM_BASE + channel_index as u16;
-
-    // We need an immutable reference to the OD for most operations
     let od = &context.core.od;
 
-    // 1. Determine the target Node ID and Mapping Version for this channel from 0x18xx.
     let target_node_id = od
         .read_u8(comm_param_index, OD_SUBIDX_PDO_COMM_NODEID)
         .unwrap_or(0);
@@ -182,18 +176,14 @@ pub(super) fn build_tpdo_payload(
             .unwrap_or(0),
     );
 
-    // 2. Get the configured fixed payload size for this PReq from 0x1F8B.
     let payload_limit = od
         .read_u16(OD_IDX_MN_PREQ_PAYLOAD_LIMIT_LIST, target_node_id)
         .unwrap_or(36) as usize;
     let payload_limit = payload_limit.min(crate::types::C_DLL_ISOCHR_MAX_PAYL as usize);
 
-    // 3. Pre-allocate a zero-filled buffer of the fixed payload size.
     let mut payload = vec![0u8; payload_limit];
 
-    // 4. Read the number of mapped objects from 0x1Axx/0.
     if let Some(ObjectValue::Unsigned8(num_entries)) = od.read(mapping_index, 0).as_deref() {
-        // 5. Iterate through each mapping entry if the mapping is active.
         if *num_entries > 0 {
             trace!(
                 "Building MN TPDO for channel {} with {} entries.",
@@ -216,7 +206,6 @@ pub(super) fn build_tpdo_payload(
                 };
 
                 let entry = PdoMappingEntry::from_u64(raw_mapping);
-
                 let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length())
                 else {
                     warn!(
@@ -274,7 +263,6 @@ pub(super) fn build_tpdo_payload(
                             // data_slice is already zeros, so just continue
                             continue;
                         };
-
                         let serialized_data = value_cow.serialize();
                         if serialized_data.len() != length {
                             warn!(
@@ -386,17 +374,15 @@ pub(super) fn build_nmt_command_frame(
             // NMTNetHostNameSet (34 bytes: CommandID + Reserved + HostName[32])
             // (Reference: EPSG DS 301, Section 7.3.2.1.1, Table 130)
             let mut payload = Vec::with_capacity(34);
-            payload.push(command.as_u8()); // NMTCommandID
-            payload.push(0u8); // Reserved
+            payload.push(command.as_u8());
+            payload.push(0u8);
             let hostname_bytes = hostname.as_bytes();
             let len = hostname_bytes.len().min(32);
             payload.extend_from_slice(&hostname_bytes[..len]);
-            payload.resize(34, 0u8); // Pad with zeros to 32 bytes
+            payload.resize(34, 0u8);
             payload
         }
         NmtCommandData::FlushArp(flush_target_node) => {
-            // NMTFlushArpEntry (3 bytes: CommandID + Reserved + NodeID)
-            // (Reference: EPSG DS 301, Section 7.3.2.1.2, Table 132)
             vec![command.as_u8(), 0u8, flush_target_node.0]
         }
     };
@@ -421,36 +407,27 @@ pub(super) fn build_nmt_info_frame(
     debug!("[MN] Building ASnd(NMT Info={:?}) broadcast.", service_id);
 
     let nmt_payload = match service_id {
-        ServiceId::NMTPublishTime => {
-            build_publish_time_payload(context) // Spec 7.3.4.1.1, Table 140
-        }
-        ServiceId::NMTPublishNMTState => {
-            // Spec 7.3.4.3.1, Table 144
-            vec![context.nmt_state_machine.current_state() as u8]
-        }
-        ServiceId::NMTPublishNodeState => {
-            build_node_state_payload(context) // Spec 7.3.4.4.1, Table 146
-        }
+        ServiceId::NMTPublishTime => build_publish_time_payload(context),
+        ServiceId::NMTPublishNMTState => vec![context.nmt_state_machine.current_state() as u8],
+        ServiceId::NMTPublishNodeState => build_node_state_payload(context),
         ServiceId::NMTPublishNodeList => {
-            // Spec 7.3.4.5.1, Table 148
-            build_node_list_payload(context, false)
+            // Configured CNs (Spec 7.3.4.4.1)
+            build_node_list_payload(context, |info| info.state >= CnState::Identified)
         }
         ServiceId::NMTPublishActiveNodes => {
-            // Spec 7.3.4.7.1, Table 150
-            build_node_list_payload(context, true)
+            // Active CNs (Spec 7.3.4.7.1) -> Must be Operational
+            build_node_list_payload(context, |info| info.state == CnState::Operational)
         }
         ServiceId::NMTPublishEmergNew => {
-            // TODO: Track the last CN that signaled an emergency
-            warn!("[MN] NMTPublishEmergNew not yet implemented. Sending empty payload.");
-            vec![0u8] // Payload is NodeID_U8 (1 byte)
+            // Nodes with EN flag set (Spec 7.3.4.1.9)
+            build_node_list_payload(context, |info| info.en_flag)
         }
         ServiceId::NMTPublishHeartbeat => {
-            // TODO: Track the last CN that triggered a heartbeat timeout
-            warn!("[MN] NMTPublishHeartbeat not yet implemented. Sending empty payload.");
-            vec![0u8] // Payload is NodeID_U8 (1 byte)
+            // TODO: Implement tracking of heartbeat events
+            warn!("[MN] NMTPublishHeartbeat not fully implemented. Sending empty node list.");
+            vec![0u8; 32]
         }
         _ => {
-            // This function should not be called for other ServiceIds
             error!(
                 "[MN] Invalid call to build_nmt_info_frame with ServiceId {:?}",
                 service_id
@@ -470,10 +447,7 @@ pub(super) fn build_nmt_info_frame(
 }
 
 /// Helper for NMTPublishTime
-/// (Reference: EPSG DS 301, Section 7.3.4.1.1, Table 140)
 fn build_publish_time_payload(context: &MnContext) -> Vec<u8> {
-    // Payload is NetTime_U64 (8 bytes).
-    // We don't have a real PTP clock, so we use the cycle start time.
     let net_time = NetTime {
         seconds: (context.current_cycle_start_time_us / 1_000_000) as u32,
         nanoseconds: ((context.current_cycle_start_time_us % 1_000_000) * 1000) as u32,
@@ -485,10 +459,8 @@ fn build_publish_time_payload(context: &MnContext) -> Vec<u8> {
 }
 
 /// Helper for NMTPublishNodeState
-/// (Reference: EPSG DS 301, Section 7.3.4.4.1, Table 146)
 fn build_node_state_payload(context: &MnContext) -> Vec<u8> {
-    // Payload is NMTStateList_AU8 (239 bytes)
-    let mut payload = vec![0u8; 239]; // Index 0 = Node 1, Index 238 = Node 239
+    let mut payload = vec![0u8; 239];
     for (node_id, info) in &context.node_info {
         let idx = (node_id.0 - 1) as usize;
         if idx < payload.len() {
@@ -498,10 +470,14 @@ fn build_node_state_payload(context: &MnContext) -> Vec<u8> {
     payload
 }
 
-/// Helper for NMTPublishNodeList and NMTPublishActiveNodes
-/// (Reference: EPSG DS 301, Table 148, Table 150)
-fn build_node_list_payload(context: &MnContext, only_operational: bool) -> Vec<u8> {
-    // Payload is POWERLINKNodeList_AU32 (32 bytes / 256 bits)
+/// Generic Helper to build a POWERLINK Node List payload (32 bytes).
+///
+/// Iterates through all tracked nodes and sets the bit if the `filter` predicate returns true.
+/// (Reference: EPSG DS 301, 7.3.1.2.3)
+fn build_node_list_payload<F>(context: &MnContext, filter: F) -> Vec<u8>
+where
+    F: Fn(&super::state::CnInfo) -> bool,
+{
     let mut payload_bytes = [0u8; 32];
 
     let mut set_bit = |node_id: u8| {
@@ -516,32 +492,29 @@ fn build_node_list_payload(context: &MnContext, only_operational: bool) -> Vec<u
         }
     };
 
-    // Add all CNs
+    // Check all CNs
     for (node_id, info) in &context.node_info {
-        if !only_operational {
-            // NMTPublishNodeList: all nodes "configured and detected" (Spec 7.3.4.4.1)
-            // We interpret this as Identified or further.
-            if info.state >= CnState::Identified {
-                set_bit(node_id.0);
-            }
-        } else {
-            // NMTPublishActiveNodes: all nodes "in NMT state NMT_CS_OPERATIONAL" (Spec 7.3.4.7.1)
-            if info.state == CnState::Operational {
-                set_bit(node_id.0);
-            }
+        if filter(info) {
+            set_bit(node_id.0);
         }
     }
 
-    // Add the MN itself (Node 240)
+    // Check if MN itself should be included (Node 240)
+    // This is context-dependent, but generally, if the MN is part of the active set, include it.
+    // For EmergNew, MN doesn't have an EN flag in the same way, but could trigger emergency.
+    // For now, we assume MN is active if in a cyclic state.
     let mn_state = context.nmt_state_machine.current_state();
-    if !only_operational {
-        // For PublishNodeList, if the MN is in any cyclic state, include it.
-        if mn_state >= NmtState::NmtPreOperational1 {
-            set_bit(context.nmt_state_machine.node_id().0);
-        }
-    } else {
-        // For PublishActiveNodes, only include MN if it is Operational.
-        if mn_state == NmtState::NmtOperational {
+    if mn_state >= NmtState::NmtPreOperational1 {
+        // For ActiveNodes/ConfiguredNodes, usually include MN.
+        // For EmergNew, only if MN has an emergency (not tracked in node_info).
+        // Simplification: Only include MN for "Active/Configured" checks, not status checks.
+        // This is inferred by checking if the filter likely targets status flags (like EN).
+        // A better approach would be to pass an explicit flag, but we can infer from the
+        // state of CNs. Since we don't store MnInfo in node_info, we skip MN for dynamic flags.
+        if filter(&super::state::CnInfo {
+            state: CnState::Operational, // Dummy success state
+            ..Default::default()
+        }) {
             set_bit(context.nmt_state_machine.node_id().0);
         }
     }
