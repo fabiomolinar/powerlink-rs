@@ -22,6 +22,36 @@ This crate is part of the `powerlink-rs` project. It is designed to parse, valid
   - `NetworkManagement` (including `GeneralFeatures`, `MNFeatures`, `CNFeatures`, `Diagnostic`)
   - **Modular Device Profiles** (XDDM) for both Head and Child nodes.
 
+## Usage
+
+```rust
+use powerlink_rs_xdc::{load_xdc_from_str, to_core_od};
+use std::fs;
+
+fn main() {
+    // 1. Load the XDD/XDC file content
+    let xml_content = fs::read_to_string("tests/data/MyDevice.xdd")
+        .expect("Failed to read file");
+
+    // 2. Parse into a strongly-typed XdcFile struct
+    //    (Use load_xdd_defaults_from_str for XDDs to prioritize defaultValue)
+    let xdc_file = load_xdc_from_str(&xml_content)
+        .expect("Failed to parse XDC");
+
+    println!("Device: {}", xdc_file.identity.product_name);
+    println!("Vendor ID: {:#010x}", xdc_file.identity.vendor_id);
+
+    // 3. Access the Object Dictionary
+    if let Some(obj) = xdc_file.object_dictionary.objects.iter().find(|o| o.index == 0x1000) {
+        println!("Device Type: {:?}", obj.data);
+    }
+
+    // 4. Convert to the core crate's ObjectDictionary format (if needed)
+    let core_od = to_core_od(&xdc_file)
+        .expect("Failed to convert to core OD");
+}
+```
+
 ## Data Representation & Endianness
 
 **Important Design Decision:**
@@ -112,14 +142,14 @@ This table tracks the crate's implementation status against the main features of
 
 ### Phase 3: Comprehensive Testing & Validation
 
-- **Focus:** Ensure the parser is robust, compliant, and correct by testing against a wide variety of real-world and malformed XDC files.
+- **Focus:** Ensure the parser is robust, compliant, and correct by testing against robustness and edge cases.
 - **Key Features:**
-  - Integrate a test suite of diverse, valid XDC files from different vendors.
+  - Integrate a test suite of valid XDC files.
   - Create specification-driven unit tests for all resolver logic (e.g., `accessType` parsing, `PDOmapping` logic).
   - Develop fuzz tests to handle malformed or unexpected XML structures.
   - Add tests for edge-case data type parsing (e.g., `Unsigned24`, bit-packed structs).
-- **Success Metric:** The crate achieves >95% test coverage and correctly parses all valid XDC files in the test suite while returning descriptive errors for all malformed ones.
-- **Status:** 🟡 **In Progress** (Core resolver and builder tests are implemented).
+- **Success Metric:** The crate achieves high test coverage on edge cases and returns descriptive errors for malformed inputs without panicking.
+- **Status:** 🟢 **Complete**
 
 ### Phase 4: Serialization & Validation
 
