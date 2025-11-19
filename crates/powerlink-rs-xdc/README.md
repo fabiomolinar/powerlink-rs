@@ -164,3 +164,9 @@ The parser is designed to be safe; it will ignore these unsupported elements rat
   - Implement a `builder.rs` API for programmatically creating new `XdcFile` structs.
 - **Success Metric:** A user can create a valid XDC file from scratch, serialize it to XML, parse it back, and get an identical struct.
 - **Status:** 🟢 **Complete** (`save_xdc_to_string` and `to_core_od` converter are implemented).
+
+### Phase 5: Close the Gap with EPSG DS 311
+
+- **Focus:** Implement all optional fields defined on the specification.
+- **Success Metric:** The entire specification is implemented.
+- **Status:** 🔴 **Not started and not planned**.
