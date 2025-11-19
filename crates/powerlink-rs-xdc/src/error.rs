@@ -1,44 +1,41 @@
-// crates/powerlink-rs-xdc/src/error.rs
-
 use alloc::fmt;
 use alloc::string::String;
 use core::num::ParseIntError;
 use hex::FromHexError;
+use quick_xml::errors::serialize::{DeError, SeError};
 use quick_xml::Error as XmlError;
-use quick_xml::errors::serialize::DeError;
-use quick_xml::errors::serialize::SeError;
 
-/// Errors that can occur during XDC parsing or serialization.
+/// Errors that can occur during XDC parsing, validation, or serialization.
 #[derive(Debug)]
 pub enum XdcError {
-    /// An error from the underlying `quick-xml` deserializer.
+    /// An error occurred while deserializing the XML structure.
     XmlParsing(DeError),
 
-    /// An error from the underlying `quick-xml` serializer.
+    /// An error occurred while serializing data to XML.
     XmlSerializing(SeError),
 
-    /// An error from the underlying `quick-xml` writer (e.g., I/O).
+    /// An I/O or syntax error occurred in the underlying XML writer.
     XmlWriting(XmlError),
 
-    /// The `actualValue` or `defaultValue` attribute contained invalid hex.
+    /// The `actualValue` or `defaultValue` attribute contained invalid hex data.
     HexParsing(FromHexError),
 
-    /// An error occurred during string formatting (e.g., in helpers).
+    /// An error occurred during string formatting.
     FmtError(fmt::Error),
 
-    /// A required XML element was missing (e.g., ProfileBody).
+    /// A mandatory XML element required by the POWERLINK profile (e.g., `ProfileBody`) was missing.
     MissingElement { element: &'static str },
 
-    /// A required attribute was missing (e.g., @index).
+    /// A mandatory attribute (e.g., `@index`) was missing from an element.
     MissingAttribute { attribute: &'static str },
 
-    /// An attribute (e.g., @index) had an invalid format.
+    /// An attribute (e.g., `@index`) existed but had an invalid format (e.g., non-hex string).
     InvalidAttributeFormat { attribute: &'static str },
 
-    /// A generic validation error.
+    /// A generic validation error occurred during profile resolution.
     ValidationError(&'static str),
 
-    /// The parsed data length does not match the `dataType` attribute.
+    /// The parsed data length does not match the definition provided in `dataType`.
     TypeValidationError {
         index: u16,
         sub_index: u8,
@@ -47,7 +44,7 @@ pub enum XdcError {
         actual_bytes: usize,
     },
 
-    /// Functionality is not yet implemented.
+    /// The requested functionality is not yet implemented.
     NotImplemented,
 }
 
@@ -81,7 +78,7 @@ impl From<fmt::Error> for XdcError {
     }
 }
 
-/// Converts `ParseIntError` (typically from reading hex index/subindex) into a user-friendly error.
+/// Converts `ParseIntError` (typically from reading hex index/subindex) into a domain-specific error.
 impl From<ParseIntError> for XdcError {
     fn from(_: ParseIntError) -> Self {
         XdcError::InvalidAttributeFormat {
@@ -93,14 +90,13 @@ impl From<ParseIntError> for XdcError {
 #[cfg(test)]
 mod tests {
     use super::XdcError;
-    use crate::model; // Import model for test
+    use crate::model;
     use alloc::string::ToString;
     use hex;
     use quick_xml;
 
     #[test]
     fn test_from_de_error() {
-        // Create a dummy DeError by failing to parse a struct with required fields
         let xml_err =
             quick_xml::de::from_str::<model::header::ProfileHeader>("<Test></Test>").unwrap_err();
         let xdc_err: XdcError = xml_err.into();
@@ -109,7 +105,6 @@ mod tests {
 
     #[test]
     fn test_from_se_error() {
-        // Create a dummy SeError
         let xml_err = quick_xml::errors::serialize::SeError::Custom("test error".to_string());
         let xdc_err: XdcError = xml_err.into();
         assert!(matches!(xdc_err, XdcError::XmlSerializing(_)));
@@ -117,7 +112,6 @@ mod tests {
 
     #[test]
     fn test_from_xml_error() {
-        // Create a dummy XmlError
         let xml_err = quick_xml::Error::Syntax(quick_xml::errors::SyntaxError::InvalidBangMarkup);
         let xdc_err: XdcError = xml_err.into();
         assert!(matches!(xdc_err, XdcError::XmlWriting(_)));
@@ -125,7 +119,6 @@ mod tests {
 
     #[test]
     fn test_from_hex_error() {
-        // Create a dummy FromHexError by parsing invalid hex
         let hex_err = hex::decode("Z").unwrap_err();
         let xdc_err: XdcError = hex_err.into();
         assert!(matches!(xdc_err, XdcError::HexParsing(_)));
@@ -133,7 +126,6 @@ mod tests {
 
     #[test]
     fn test_from_fmt_error() {
-        // Create a dummy fmt::Error
         let fmt_err = core::fmt::Error;
         let xdc_err: XdcError = fmt_err.into();
         assert!(matches!(xdc_err, XdcError::FmtError(_)));
@@ -141,7 +133,6 @@ mod tests {
 
     #[test]
     fn test_from_parse_int_error() {
-        // Create a dummy ParseIntError
         let parse_err = "not a number".parse::<u16>().unwrap_err();
         let xdc_err: XdcError = parse_err.into();
         assert!(matches!(

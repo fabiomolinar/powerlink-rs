@@ -1,13 +1,21 @@
-// crates/powerlink-rs-xdc/src/types.rs
-
 //! Public, ergonomic data structures for representing a parsed XDC file.
+//!
+//! These types are the primary interface for consumers of this crate. They abstract
+//! away the complexity of the underlying XML schema (handled by the `model` module)
+//! and provide resolved, easy-to-use structures.
+//!
+//! **Note on Data Storage:**
+//! Values (e.g., `Object::data`, `Parameter::actual_value`) are stored as `String`s
+//! (e.g., "0x1234", "500"). This maintains fidelity to the XML source and allows
+//! high-level manipulation without forcing immediate conversion to native binary types.
+//! Conversion to `powerlink-rs` native types happens in the `converter` module.
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-// --- Root XDC Structure ---
-
 /// Represents a fully parsed and resolved XDC/XDD file.
+///
+/// This is the root structure returned by `load_xdc_from_str` or `load_xdd_defaults_from_str`.
 #[derive(Debug, Default, PartialEq)]
 pub struct XdcFile {
     /// Metadata from the `<ProfileHeader>` block.
@@ -16,16 +24,16 @@ pub struct XdcFile {
     /// Information from the `<DeviceIdentity>` block.
     pub identity: Identity,
 
-    /// Information from the `<DeviceFunction>` block.
+    /// Information from the `<DeviceFunction>` block (e.g., capabilities, connectors).
     pub device_function: Vec<DeviceFunction>,
 
-    /// Information from the `<DeviceManager>` block.
+    /// Information from the `<DeviceManager>` block (e.g., LEDs, modular management).
     pub device_manager: Option<DeviceManager>,
 
-    /// Information from the `<NetworkManagement>` block.
+    /// Information from the `<NetworkManagement>` block (e.g., cycle timing, feature flags).
     pub network_management: Option<NetworkManagement>,
 
-    /// Information from the `<ApplicationProcess>` block.
+    /// Information from the `<ApplicationProcess>` block (e.g., parameters, templates).
     pub application_process: Option<ApplicationProcess>,
 
     /// The complete Object Dictionary for the device.
@@ -35,89 +43,85 @@ pub struct XdcFile {
     pub module_management_comm: Option<ModuleManagementComm>,
 }
 
-// --- Profile Header ---
-
 /// Represents the `<ProfileHeader>` block, containing file metadata.
 #[derive(Debug, Default, PartialEq)]
 pub struct ProfileHeader {
-    /// `<ProfileIdentification>`
+    /// The profile identification string.
     pub identification: String,
-    /// `<ProfileRevision>`
+    /// The profile revision.
     pub revision: String,
-    /// `<ProfileName>`
+    /// The profile name.
     pub name: String,
-    /// `<ProfileSource>`
+    /// The source/creator of the profile.
     pub source: String,
-    /// `<ProfileDate>`
+    /// The profile creation date (ISO 8601).
     pub date: Option<String>,
 }
-
-// --- Device Identity ---
 
 /// Represents the `<DeviceIdentity>` block.
 #[derive(Debug, Default, PartialEq)]
 pub struct Identity {
-    /// `<vendorName>` (Mandatory)
+    /// The vendor name.
     pub vendor_name: String,
-    /// `<vendorID>` (as a u32, parsed from hex)
+    /// The unique vendor ID (parsed from hex to u32).
     pub vendor_id: u32,
-    /// `<vendorText>` (First available label)
+    /// Descriptive text about the vendor (first available label).
     pub vendor_text: Option<String>,
 
-    /// `<deviceFamily>` (First available label)
+    /// The device family name.
     pub device_family: Option<String>,
-    /// `<productFamily>`
+    /// The product family name.
     pub product_family: Option<String>,
 
-    /// `<productName>` (Mandatory)
+    /// The product name.
     pub product_name: String,
-    /// `<productID>` (as a u32, parsed from hex)
+    /// The unique product ID (parsed from hex to u32).
     pub product_id: u32,
-    /// `<productText>` (First available label)
+    /// Descriptive text about the product.
     pub product_text: Option<String>,
 
-    /// All `<orderNumber>` elements.
+    /// List of order numbers associated with the device.
     pub order_number: Vec<String>,
-    /// All `<version>` elements.
+    /// List of version entries (HW, SW, FW).
     pub versions: Vec<Version>,
 
-    /// `<buildDate>`
+    /// The build date of the device definition.
     pub build_date: Option<String>,
-    /// `<specificationRevision>`
+    /// The revision of the specification used.
     pub specification_revision: Option<String>,
-    /// `<instanceName>`
+    /// The specific instance name of the device.
     pub instance_name: Option<String>,
 }
 
 /// Represents a `<version>` element.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Version {
-    /// `@versionType`
+    /// The type of version (e.g., "HW", "SW", "FW").
     pub version_type: String,
-    /// `@value`
+    /// The version value.
     pub value: String,
 }
 
-// --- Device Function ---
-
-/// Represents the `<DeviceFunction>` block (EPSG DS 311, 7.4.6).
+/// Represents the `<DeviceFunction>` block.
+/// (EPSG DS 311, 7.4.6)
 #[derive(Debug, Default, PartialEq)]
 pub struct DeviceFunction {
-    /// Contains device capabilities and standard compliance.
+    /// Device capabilities and standard compliance information.
     pub capabilities: Option<Capabilities>,
-    /// Contains links to device pictures or icons.
+    /// Links to device pictures or icons.
     pub pictures: Vec<Picture>,
-    /// Contains links to external text resource files.
+    /// Links to external text resource files.
     pub dictionaries: Vec<Dictionary>,
-    /// Contains definitions of physical connectors.
+    /// Definitions of physical connectors.
     pub connectors: Vec<Connector>,
-    /// Contains links to firmware files.
+    /// Links to firmware files.
     pub firmware_list: Vec<Firmware>,
-    /// Contains a list of classification keywords.
+    /// List of classification keywords (e.g., "IO", "Drive").
     pub classifications: Vec<Classification>,
 }
 
-/// Represents the `<capabilities>` element (EPSG DS 311, 7.4.6.2).
+/// Represents the `<capabilities>` element.
+/// (EPSG DS 311, 7.4.6.2)
 #[derive(Debug, Default, PartialEq)]
 pub struct Capabilities {
     /// A list of characteristics, often grouped by category.
@@ -126,16 +130,18 @@ pub struct Capabilities {
     pub standard_compliance: Vec<StandardCompliance>,
 }
 
-/// Represents a `<characteristicsList>` (EPSG DS 311, 7.4.6.2.2).
+/// Represents a `<characteristicsList>`, grouping characteristics by category.
+/// (EPSG DS 311, 7.4.6.2.2)
 #[derive(Debug, Default, PartialEq)]
 pub struct CharacteristicList {
-    /// An optional category name for this group of characteristics.
+    /// An optional category name for this group.
     pub category: Option<String>,
     /// The list of characteristics in this group.
     pub characteristics: Vec<Characteristic>,
 }
 
-/// Represents a single `<characteristic>` (EPSG DS 311, 7.4.6.2.2.2).
+/// Represents a single `<characteristic>`.
+/// (EPSG DS 311, 7.4.6.2.2.2)
 #[derive(Debug, Default, PartialEq)]
 pub struct Characteristic {
     /// The name of the characteristic (e.g., "Transfer rate").
@@ -144,74 +150,80 @@ pub struct Characteristic {
     pub content: Vec<String>,
 }
 
-/// Represents a `<compliantWith>` element (EPSG DS 311, 7.4.6.2.2.5).
+/// Represents a `<compliantWith>` element describing standard compliance.
+/// (EPSG DS 311, 7.4.6.2.2.5)
 #[derive(Debug, Default, PartialEq)]
 pub struct StandardCompliance {
     /// The name of the standard (e.g., "EN 61131-2").
     pub name: String,
-    /// The range, either "international" or "internal".
+    /// The range of compliance, either "international" or "internal".
     pub range: String,
-    /// An optional description (from `<label>`).
+    /// An optional description.
     pub description: Option<String>,
 }
 
-/// Represents a `<picture>` element (EPSG DS 311, 7.4.6.3).
+/// Represents a `<picture>` element.
+/// (EPSG DS 311, 7.4.6.3)
 #[derive(Debug, Default, PartialEq)]
 pub struct Picture {
-    /// The link to the picture file.
+    /// The URI to the picture file.
     pub uri: String,
     /// The type of picture ("frontPicture", "icon", "additional", "none").
     pub picture_type: String,
-    /// An optional number for the picture.
+    /// An optional number/index for the picture.
     pub number: Option<u32>,
-    /// An optional label for the picture.
+    /// An optional label.
     pub label: Option<String>,
-    /// An optional description for the picture.
+    /// An optional description.
     pub description: Option<String>,
 }
 
-/// Represents a `<dictionary>` element (EPSG DS 311, 7.4.6.4).
+/// Represents a `<dictionary>` element for external text resources.
+/// (EPSG DS 311, 7.4.6.4)
 #[derive(Debug, Default, PartialEq)]
 pub struct Dictionary {
-    /// The link to the text resource file.
+    /// The URI to the text resource file.
     pub uri: String,
     /// The language of the dictionary (e.g., "en", "de").
     pub lang: String,
-    /// The ID used to reference this dictionary.
+    /// The ID used to reference this dictionary within the XDC.
     pub dict_id: String,
 }
 
-/// Represents a `<connector>` element (EPSG DS 311, 7.4.6.5).
+/// Represents a `<connector>` element.
+/// (EPSG DS 311, 7.4.6.5)
 #[derive(Debug, Default, PartialEq)]
 pub struct Connector {
     /// The ID of the connector.
     pub id: String,
     /// The type of connector (e.g., "POWERLINK", "RJ45").
     pub connector_type: String,
-    /// Optional reference to a modular interface.
+    /// Optional reference to a modular interface ID.
     pub interface_id_ref: Option<String>,
-    /// Optional label for the connector.
+    /// Optional label.
     pub label: Option<String>,
-    /// Optional description for the connector.
+    /// Optional description.
     pub description: Option<String>,
 }
 
-/// Represents a `<firmware>` element (EPSG DS 311, 7.4.6.6).
+/// Represents a `<firmware>` element.
+/// (EPSG DS 311, 7.4.6.6)
 #[derive(Debug, Default, PartialEq)]
 pub struct Firmware {
-    /// The link to the firmware file.
+    /// The URI to the firmware file.
     pub uri: String,
     /// The revision number this firmware corresponds to.
     pub device_revision_number: u32,
     /// Optional build date of the firmware.
     pub build_date: Option<String>,
-    /// Optional label for the firmware.
+    /// Optional label.
     pub label: Option<String>,
-    /// Optional description for the firmware.
+    /// Optional description.
     pub description: Option<String>,
 }
 
-/// Represents a `<classification>` element (EPSG DS 311, 7.4.6.7).
+/// Represents a `<classification>` element.
+/// (EPSG DS 311, 7.4.6.7)
 #[derive(Debug, Default, PartialEq)]
 pub struct Classification {
     /// The classification value (e.g., "Controller", "IO", "Drive").
@@ -229,7 +241,7 @@ pub struct DeviceManager {
     pub module_management: Option<ModuleManagementDevice>,
 }
 
-/// Represents an `<indicatorList>` containing an `<LEDList>`.
+/// Represents an `<indicatorList>` containing LED definitions.
 #[derive(Debug, Default, PartialEq)]
 pub struct IndicatorList {
     /// A list of all LEDs defined for the device.
@@ -245,37 +257,37 @@ pub struct LED {
     pub label: Option<String>,
     /// Description of the LED's purpose.
     pub description: Option<String>,
-    /// Whether the LED is "monocolor" or "bicolor".
-    pub colors: String, // Mapped from `LEDcolors` enum
-    /// The type of functionality the LED indicates ("IO", "device", "communication").
-    pub led_type: Option<String>, // Mapped from `LEDtype` enum
+    /// Color configuration ("monocolor" or "bicolor").
+    pub colors: String,
+    /// The functionality type ("IO", "device", "communication").
+    pub led_type: Option<String>,
     /// A list of all defined states for this LED.
     pub states: Vec<LEDstate>,
 }
 
-/// Represents a single `<LEDstate>` for a specific `<LED>`.
+/// Represents a single state for a specific `<LED>` (e.g., "flashing red").
 #[derive(Debug, Default, PartialEq)]
 pub struct LEDstate {
-    /// The unique ID used to reference this state (e.g., in `<combinedState>`).
+    /// The unique ID used to reference this state.
     pub unique_id: String,
-    /// The state being represented ("on", "off", "flashing").
-    pub state: String, // Mapped from `LEDstateEnum`
-    /// The color of the LED in this state ("green", "amber", "red").
-    pub color: String, // Mapped from `LEDcolor`
+    /// The state ("on", "off", "flashing").
+    pub state: String,
+    /// The color in this state ("green", "amber", "red").
+    pub color: String,
     /// Primary label for this state.
     pub label: Option<String>,
-    /// Description of what this state means.
+    /// Description of this state.
     pub description: Option<String>,
 }
 
-/// Represents a `<combinedState>` that references multiple `<LEDstate>`s.
+/// Represents a state composed of multiple LEDs (e.g., "Error Stop").
 #[derive(Debug, Default, PartialEq)]
 pub struct CombinedState {
     /// Primary label for this combined state.
     pub label: Option<String>,
-    /// Description of what this combined state means.
+    /// Description of this combined state.
     pub description: Option<String>,
-    /// A list of `uniqueID`s referencing the `<LEDstate>`s that make up this state.
+    /// A list of `uniqueID`s referencing the constituent `<LEDstate>`s.
     pub led_state_refs: Vec<String>,
 }
 
@@ -286,57 +298,57 @@ pub struct CombinedState {
 pub struct ModuleManagementDevice {
     /// A list of interfaces (e.g., bus controllers) on the head module.
     pub interfaces: Vec<InterfaceDevice>,
-    /// Information about this device, if it is *also* a module (child).
+    /// Information about this device if it acts as a module (child).
     pub module_interface: Option<ModuleInterface>,
 }
 
 /// Represents an `<interface>` on a modular head (Device profile).
 #[derive(Debug, Default, PartialEq)]
 pub struct InterfaceDevice {
-    /// The unique ID for this interface, referenced by the Communication profile.
+    /// The unique ID for this interface.
     pub unique_id: String,
     /// The type of interface (e.g., "X2X").
     pub interface_type: String,
-    /// The maximum number of child modules this interface supports.
+    /// The maximum number of child modules supported.
     pub max_modules: u32,
-    /// Defines how child modules are addressed (`manual` or `position`).
-    pub module_addressing: String, // Mapped from `ModuleAddressingHead`
-    /// A list of XDC/XDD files for modules that can be connected.
-    pub file_list: Vec<String>, // List of URIs
-    /// A list of modules that are pre-configured in this XDC.
+    /// Addressing mode for child modules (`manual` or `position`).
+    pub module_addressing: String,
+    /// A list of URIs to XDC/XDD files for compatible modules.
+    pub file_list: Vec<String>,
+    /// A list of pre-configured/connected modules.
     pub connected_modules: Vec<ConnectedModule>,
 }
 
-/// Represents a `<connectedModule>` entry.
+/// Represents a `<connectedModule>` entry, linking a slot to a child module.
 #[derive(Debug, Default, PartialEq)]
 pub struct ConnectedModule {
-    /// The `@childIDRef` linking to a `childID` from a module's XDC.
+    /// The reference to a `childID` in a module's XDC.
     pub child_id_ref: String,
-    /// The physical position (slot) of the module, 1-based.
+    /// The physical position (slot), 1-based.
     pub position: u32,
-    /// The bus address, if different from the position.
+    /// The bus address, if different from position.
     pub address: Option<u32>,
 }
 
-/// Represents a `<moduleInterface>` (a child module's properties).
+/// Represents a `<moduleInterface>` (properties of a child module).
 #[derive(Debug, Default, PartialEq)]
 pub struct ModuleInterface {
     /// The unique ID of this child module.
     pub child_id: String,
-    /// The type of interface this module connects to (e.g., "X2X").
+    /// The interface type this module connects to.
     pub interface_type: String,
-    /// The addressing mode this module supports (`manual`, `position`, `next`).
-    pub module_addressing: String, // Mapped from `ModuleAddressingChild`
+    /// Supported addressing mode (`manual`, `position`, `next`).
+    pub module_addressing: String,
 }
 
 /// Represents the `<moduleManagement>` block from the *Communication* profile.
 #[derive(Debug, Default, PartialEq)]
 pub struct ModuleManagementComm {
-    /// A list of interfaces and their OD range definitions.
+    /// A list of interfaces and their Object Dictionary range definitions.
     pub interfaces: Vec<InterfaceComm>,
 }
 
-/// Represents an `<interface>` in the Communication profile.
+/// Represents an `<interface>` in the Communication profile, mapping hardware interfaces to OD ranges.
 #[derive(Debug, Default, PartialEq)]
 pub struct InterfaceComm {
     /// The `uniqueID` of the corresponding interface in the Device profile.
@@ -348,6 +360,7 @@ pub struct InterfaceComm {
 /// Represents a `<range>` of OD indices for a modular interface.
 #[derive(Debug, Default, PartialEq)]
 pub struct Range {
+    /// Name of the range.
     pub name: String,
     /// The starting index (e.g., 0x3000).
     pub base_index: u16,
@@ -355,10 +368,10 @@ pub struct Range {
     pub max_index: Option<u16>,
     /// The maximum sub-index (e.g., 0xFF).
     pub max_sub_index: u8,
-    /// How to assign new objects (`index` or `subindex`).
-    pub sort_mode: String, // Mapped from `SortMode`
-    /// How to calculate the next index/sub-index (`continuous` or `address`).
-    pub sort_number: String, // Mapped from `AddressingAttribute`
+    /// Assignment mode (`index` or `subindex`).
+    pub sort_mode: String,
+    /// Calculation mode for next index (`continuous` or `address`).
+    pub sort_number: String,
     /// The step size between new indices.
     pub sort_step: Option<u32>,
     /// The default PDO mapping for objects created in this range.
@@ -367,7 +380,7 @@ pub struct Range {
 
 // --- Network Management ---
 
-/// Represents the `<NetworkManagement>` block from the Comm Profile.
+/// Represents the `<NetworkManagement>` block.
 #[derive(Debug, Default, PartialEq)]
 pub struct NetworkManagement {
     pub general_features: GeneralFeatures,
@@ -379,113 +392,116 @@ pub struct NetworkManagement {
 /// Represents `<GeneralFeatures>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct GeneralFeatures {
-    /// `@DLLFeatureMN`
+    /// `DLLFeatureMN`: Supports Managing Node functionality.
     pub dll_feature_mn: bool,
-    /// `@NMTBootTimeNotActive` (in microseconds)
+    /// `NMTBootTimeNotActive`: Time in microseconds to wait in NmtNotActive.
     pub nmt_boot_time_not_active: u32,
-    /// `@NMTCycleTimeMax` (in microseconds)
+    /// `NMTCycleTimeMax`: Max cycle time in microseconds.
     pub nmt_cycle_time_max: u32,
-    /// `@NMTCycleTimeMin` (in microseconds)
+    /// `NMTCycleTimeMin`: Min cycle time in microseconds.
     pub nmt_cycle_time_min: u32,
-    /// `@NMTErrorEntries`
+    /// `NMTErrorEntries`: Size of error history.
     pub nmt_error_entries: u32,
-    /// `@NMTMaxCNNumber`
+    /// `NMTMaxCNNumber`: Max number of CNs.
     pub nmt_max_cn_number: Option<u8>,
-    /// `@PDODynamicMapping`
+    /// `PDODynamicMapping`: Supports dynamic PDO mapping.
     pub pdo_dynamic_mapping: Option<bool>,
-    /// `@SDOClient`
+    /// `SDOClient`: Supports SDO Client.
     pub sdo_client: Option<bool>,
-    /// `@SDOServer`
+    /// `SDOServer`: Supports SDO Server.
     pub sdo_server: Option<bool>,
-    /// `@SDOSupportASnd`
+    /// `SDOSupportASnd`: Supports SDO over ASnd.
     pub sdo_support_asnd: Option<bool>,
-    /// `@SDOSupportUdpIp`
+    /// `SDOSupportUdpIp`: Supports SDO over UDP/IP.
     pub sdo_support_udp_ip: Option<bool>,
 
-    /// `@NMTIsochronous`
+    /// `NMTIsochronous`: Supports isochronous operation.
     pub nmt_isochronous: Option<bool>,
-    /// `@SDOSupportPDO`
+    /// `SDOSupportPDO`: Supports SDO embedded in PDO.
     pub sdo_support_pdo: Option<bool>,
-    /// `@NMTExtNmtCmds`
+    /// `NMTExtNmtCmds`: Supports extended NMT commands.
     pub nmt_ext_nmt_cmds: Option<bool>,
-    /// `@CFMConfigManager`
+    /// `CFMConfigManager`: Supports Configuration Manager.
     pub cfm_config_manager: Option<bool>,
-    /// `@NMTNodeIDBySW`
+    /// `NMTNodeIDBySW`: Supports setting Node ID via software.
     pub nmt_node_id_by_sw: Option<bool>,
-    /// `@SDOCmdReadAllByIndex`
+    /// `SDOCmdReadAllByIndex`: Supports reading all sub-indices.
     pub sdo_cmd_read_all_by_index: Option<bool>,
-    /// `@SDOCmdWriteAllByIndex`
+    /// `SDOCmdWriteAllByIndex`: Supports writing all sub-indices.
     pub sdo_cmd_write_all_by_index: Option<bool>,
-    /// `@SDOCmdReadMultParam`
+    /// `SDOCmdReadMultParam`: Supports multiple parameter read.
     pub sdo_cmd_read_mult_param: Option<bool>,
-    /// `@SDOCmdWriteMultParam`
+    /// `SDOCmdWriteMultParam`: Supports multiple parameter write.
     pub sdo_cmd_write_mult_param: Option<bool>,
-    /// `@NMTPublishActiveNodes`
+    /// `NMTPublishActiveNodes`: Supports publishing Active Nodes list.
     pub nmt_publish_active_nodes: Option<bool>,
-    /// `@NMTPublishConfigNodes`
+    /// `NMTPublishConfigNodes`: Supports publishing Configured Nodes list.
     pub nmt_publish_config_nodes: Option<bool>,
 }
 
-/// Represents `<MNFeatures>`.
+/// Represents `<MNFeatures>`, specific to Managing Nodes.
 #[derive(Debug, Default, PartialEq)]
 pub struct MnFeatures {
-    /// `@DLLMNFeatureMultiplex`
+    /// `DLLMNFeatureMultiplex`: Supports multiplexing.
     pub dll_mn_feature_multiplex: Option<bool>,
-    /// `@NMTMNPResChaining`
+    /// `DLLMNPResChaining`: Supports PRes Chaining.
     pub dll_mn_pres_chaining: Option<bool>,
-    /// `@NMTSimpleBoot`
+    /// `NMTSimpleBoot`: Supports simple boot-up.
     pub nmt_simple_boot: bool,
 
-    /// `@NMTServiceUdpIp`
+    /// `NMTServiceUdpIp`: Supports NMT services over UDP.
     pub nmt_service_udp_ip: Option<bool>,
-    /// `@NMTMNBasicEthernet`
+    /// `NMTMNBasicEthernet`: Supports Basic Ethernet mode.
     pub nmt_mn_basic_ethernet: Option<bool>,
 }
 
-/// Public representation of the `@NMTCNDNA` attribute (Dynamic Node Addressing).
+/// Public representation of the `NMTCNDNA` attribute (Dynamic Node Addressing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NmtCnDna {
-    /// "0" = Do not clear.
+    /// Do not clear configuration.
     DoNotClear,
-    /// "1" = Clear on PRE_OP1 -> PRE_OP2.
+    /// Clear configuration on transition PRE_OP1 -> PRE_OP2.
     ClearOnPreOp1ToPreOp2,
-    /// "2" = Clear on NMT_Reset_Node.
+    /// Clear configuration on NMT_Reset_Node.
     ClearOnNmtResetNode,
 }
 
-/// Represents `<CNFeatures>`.
+/// Represents `<CNFeatures>`, specific to Controlled Nodes.
 #[derive(Debug, Default, PartialEq)]
 pub struct CnFeatures {
-    /// `@DLLCNFeatureMultiplex`
+    /// `DLLCNFeatureMultiplex`: Supports multiplexing.
     pub dll_cn_feature_multiplex: Option<bool>,
-    /// `@DLLCNPResChaining`
+    /// `DLLCNPResChaining`: Supports PRes Chaining.
     pub dll_cn_pres_chaining: Option<bool>,
-    /// `@NMTCNPreOp2ToReady2Op` (in nanoseconds)
+    /// `NMTCNPreOp2ToReady2Op`: Transition time in nanoseconds.
     pub nmt_cn_pre_op2_to_ready2_op: Option<u32>,
-    /// `@NMTCNSoC2PReq` (in nanoseconds)
+    /// `NMTCNSoC2PReq`: SoC to PReq latency in nanoseconds.
     pub nmt_cn_soc_2_preq: u32,
-    /// `@NMTCNDNA`
+    /// `NMTCNDNA`: Dynamic Node Addressing behavior.
     pub nmt_cn_dna: Option<NmtCnDna>,
 }
 
 /// Represents `<Diagnostic>` capabilities.
 #[derive(Debug, Default, PartialEq)]
 pub struct Diagnostic {
-    /// All defined `<Error>` elements.
+    /// List of defined errors.
     pub errors: Vec<ErrorDefinition>,
-    /// All defined `<ErrorBit>` elements from `<StaticErrorBitField>`.
+    /// Definitions for bits in the Static Error Bit Field.
     pub static_error_bit_field: Option<Vec<StaticErrorBit>>,
 }
 
-/// Represents one `<Error>` in the `<ErrorList>`.
+/// Represents one `<Error>` entry in the `<ErrorList>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct ErrorDefinition {
+    /// The name of the error.
     pub name: String,
+    /// The error code value.
     pub value: String,
+    /// Additional information fields.
     pub add_info: Vec<AddInfo>,
 }
 
-/// Represents one `<addInfo>` element from an `<Error>`.
+/// Represents one `<addInfo>` element.
 #[derive(Debug, Default, PartialEq)]
 pub struct AddInfo {
     pub name: String,
@@ -505,23 +521,23 @@ pub struct StaticErrorBit {
 
 // --- Application Process ---
 
-/// Represents `<allowedValues>` from `<parameter>`.
+/// Represents `<allowedValues>` for a parameter.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct AllowedValues {
-    /// An optional reference to a template allowedValues.
+    /// Optional reference to a template.
     pub template_id_ref: Option<String>,
-    /// A list of enumerated allowed values.
+    /// List of enumerated allowed values.
     pub values: Vec<Value>,
-    /// A list of allowed ranges.
+    /// List of allowed ranges.
     pub ranges: Vec<ValueRange>,
 }
 
-/// Represents a single `<value>` from `<allowedValues>`.
+/// Represents a single `<value>`.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Value {
     /// The literal value string (e.g., "1", "0x0A").
     pub value: String,
-    /// An optional label for this value.
+    /// Optional label.
     pub label: Option<String>,
     /// Optional offset for scaling.
     pub offset: Option<String>,
@@ -529,35 +545,35 @@ pub struct Value {
     pub multiplier: Option<String>,
 }
 
-/// Represents a `<range>` from `<allowedValues>`.
+/// Represents a `<range>`.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ValueRange {
-    /// The literal `minValue` string.
+    /// The minimum value.
     pub min_value: String,
-    /// The literal `maxValue` string.
+    /// The maximum value.
     pub max_value: String,
-    /// An optional `step` string.
+    /// Optional step size.
     pub step: Option<String>,
 }
 
-/// Represents the `<ApplicationProcess>` block.
+/// Represents the `<ApplicationProcess>` block, defining application parameters and types.
 #[derive(Debug, Default, PartialEq)]
 pub struct ApplicationProcess {
-    /// List of user-defined data types.
+    /// User-defined data types.
     pub data_types: Vec<AppDataType>,
-    /// List of parameter templates.
+    /// Parameter templates.
     pub templates: Vec<Parameter>,
-    /// List of actual parameters.
+    /// Actual parameters.
     pub parameters: Vec<Parameter>,
-    /// List of parameter groups.
+    /// Parameter groupings.
     pub parameter_groups: Vec<ParameterGroup>,
-    /// List of function type definitions.
+    /// Function type definitions.
     pub function_types: Vec<FunctionType>,
-    /// List of function instances.
+    /// Function instances.
     pub function_instances: Vec<FunctionInstance>,
 }
 
-/// An enum representing a user-defined data type from `<dataTypeList>`.
+/// Enum representing user-defined data types from `<dataTypeList>`.
 #[derive(Debug, PartialEq)]
 pub enum AppDataType {
     Struct(AppStruct),
@@ -576,14 +592,14 @@ pub struct AppStruct {
     pub members: Vec<StructMember>,
 }
 
-/// Represents a `<varDeclaration>` within a `<struct>`.
+/// Represents a `<varDeclaration>` within a struct.
 #[derive(Debug, Default, PartialEq)]
 pub struct StructMember {
     pub name: String,
     pub unique_id: String,
-    /// The data type of this member.
+    /// The data type ID or name.
     pub data_type: String,
-    /// Size in bits, if applicable.
+    /// Size in bits.
     pub size: Option<u32>,
     pub label: Option<String>,
     pub description: Option<String>,
@@ -598,7 +614,7 @@ pub struct AppArray {
     pub description: Option<String>,
     pub lower_limit: u32,
     pub upper_limit: u32,
-    /// The data type of the array elements.
+    /// The data type of array elements.
     pub data_type: String,
 }
 
@@ -609,13 +625,13 @@ pub struct AppEnum {
     pub unique_id: String,
     pub label: Option<String>,
     pub description: Option<String>,
-    /// The base data type for the enum.
+    /// The base data type.
     pub data_type: String,
     pub size_in_bits: Option<u32>,
     pub values: Vec<EnumValue>,
 }
 
-/// Represents a single `<enumValue>` within an `<enum>`.
+/// Represents a single `<enumValue>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct EnumValue {
     pub name: String,
@@ -631,12 +647,12 @@ pub struct AppDerived {
     pub unique_id: String,
     pub label: Option<String>,
     pub description: Option<String>,
-    /// The base data type this is derived from.
+    /// The base data type.
     pub data_type: String,
     pub count: Option<Count>,
 }
 
-/// Represents a `<count>` element within a `<derived>` type.
+/// Represents a `<count>` element within a derived type.
 #[derive(Debug, Default, PartialEq)]
 pub struct Count {
     pub unique_id: String,
@@ -644,7 +660,7 @@ pub struct Count {
     pub default_value: Option<String>,
 }
 
-/// Represents a `<parameterGroup>` from the `<parameterGroupList>`.
+/// Represents a `<parameterGroup>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct ParameterGroup {
     pub unique_id: String,
@@ -654,23 +670,19 @@ pub struct ParameterGroup {
     pub items: Vec<ParameterGroupItem>,
 }
 
-/// An enum representing an item inside a `<parameterGroup>`.
+/// An item inside a `<parameterGroup>`.
 #[derive(Debug, PartialEq)]
 pub enum ParameterGroupItem {
-    /// A nested parameter group.
     Group(ParameterGroup),
-    /// A reference to a parameter.
     Parameter(ParameterRef),
 }
 
-/// Represents a `<parameterRef>` inside a `<parameterGroup>`.
+/// Represents a reference to a parameter within a group.
 #[derive(Debug, Default, PartialEq)]
 pub struct ParameterRef {
-    /// The `uniqueID` of the parameter being referenced.
     pub unique_id_ref: String,
     pub visible: bool,
     pub locked: bool,
-    /// Optional bit offset for bit-packed groups.
     pub bit_offset: Option<u32>,
 }
 
@@ -713,34 +725,18 @@ impl Default for ParameterDataType {
 /// Represents a `<parameter>` or `<parameterTemplate>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct Parameter {
-    /// `@uniqueID`
     pub unique_id: String,
-    /// `@access`
     pub access: Option<ParameterAccess>,
-    /// `@support`
     pub support: Option<ParameterSupport>,
-    /// `@persistent`
     pub persistent: bool,
-    /// `@offset`
     pub offset: Option<String>,
-    /// `@multiplier`
     pub multiplier: Option<String>,
-    /// `@templateIDRef`
     pub template_id_ref: Option<String>,
-
-    /// The data type of the parameter.
     pub data_type: ParameterDataType,
-
-    /// Descriptive label.
     pub label: Option<String>,
-    /// Descriptive text.
     pub description: Option<String>,
-
-    /// `<actualValue>`
     pub actual_value: Option<Value>,
-    /// `<defaultValue>`
     pub default_value: Option<Value>,
-    /// `<allowedValues>`
     pub allowed_values: Option<AllowedValues>,
 }
 
@@ -767,7 +763,7 @@ pub struct VersionInfo {
     pub description: Option<String>,
 }
 
-/// Represents an `<interfaceList>` for a function type.
+/// Represents an `<interfaceList>`.
 #[derive(Debug, Default, PartialEq)]
 pub struct InterfaceList {
     pub inputs: Vec<VarDeclaration>,
@@ -775,7 +771,7 @@ pub struct InterfaceList {
     pub configs: Vec<VarDeclaration>,
 }
 
-/// Represents a `<varDeclaration>` within an `<interfaceList>`.
+/// Represents a `<varDeclaration>` in an interface list.
 #[derive(Debug, Default, PartialEq)]
 pub struct VarDeclaration {
     pub name: String,
@@ -792,7 +788,6 @@ pub struct VarDeclaration {
 pub struct FunctionInstance {
     pub name: String,
     pub unique_id: String,
-    /// The `uniqueID` of the `<functionType>` this is an instance of.
     pub type_id_ref: String,
     pub label: Option<String>,
     pub description: Option<String>,
@@ -839,74 +834,66 @@ pub struct ObjectDictionary {
 /// Represents a single `<Object>` (an OD Index).
 #[derive(Debug, Default, PartialEq)]
 pub struct Object {
-    /// `@index` (as a u16, parsed from hex)
+    /// The object index (parsed from hex string).
     pub index: u16,
 
     // --- Metadata ---
-    /// `@name`
+    /// Object name.
     pub name: String,
-    /// `@objectType`
+    /// Object type (e.g., "7" for VAR, "8" for ARRAY, "9" for RECORD).
     pub object_type: String,
-    /// `@dataType`
+    /// Data type ID (e.g., "0006").
     pub data_type: Option<String>,
-    /// `@lowLimit`
+    /// Low limit for the value.
     pub low_limit: Option<String>,
-    /// `@highLimit`
+    /// High limit for the value.
     pub high_limit: Option<String>,
-    /// Resolved access type.
+    /// Access type.
     pub access_type: Option<ParameterAccess>,
-    /// `@PDOmapping`
+    /// PDO mapping capability.
     pub pdo_mapping: Option<ObjectPdoMapping>,
-    /// `@objFlags`
+    /// Object flags.
     pub obj_flags: Option<String>,
-    /// Resolved support level.
+    /// Support level.
     pub support: Option<ParameterSupport>,
-    /// Resolved `persistent` flag.
+    /// Persistence flag.
     pub persistent: bool,
-    /// Resolved `<allowedValues>`.
+    /// Allowed values constraint.
     pub allowed_values: Option<AllowedValues>,
 
     // --- Value ---
-    /// The resolved data for this object (human-readable string).
-    /// For RECORD types, this is None.
+    /// The resolved value for this object.
+    ///
+    /// This prioritizes `actualValue` (XDC) or `defaultValue` (XDD) depending on the
+    /// parsing mode. It resolves `uniqueIDRef` links to Application Process parameters.
+    /// stored as a human-readable string.
     pub data: Option<String>,
 
     // --- Children ---
-    /// All `<SubObject>` children.
+    /// List of sub-objects.
     pub sub_objects: Vec<SubObject>,
 }
 
 /// Represents a `<SubObject>` (an OD Sub-Index).
 #[derive(Debug, Default, PartialEq)]
 pub struct SubObject {
-    /// `@subIndex` (as a u8, parsed from hex)
+    /// The sub-index (parsed from hex string).
     pub sub_index: u8,
 
     // --- Metadata ---
-    /// `@name`
     pub name: String,
-    /// `@objectType`
     pub object_type: String,
-    /// `@dataType`
     pub data_type: Option<String>,
-    /// `@lowLimit`
     pub low_limit: Option<String>,
-    /// `@highLimit`
     pub high_limit: Option<String>,
-    /// Resolved access type.
     pub access_type: Option<ParameterAccess>,
-    /// `@PDOmapping`
     pub pdo_mapping: Option<ObjectPdoMapping>,
-    /// `@objFlags`
     pub obj_flags: Option<String>,
-    /// Resolved support level.
     pub support: Option<ParameterSupport>,
-    /// Resolved `persistent` flag.
     pub persistent: bool,
-    /// Resolved `<allowedValues>`.
     pub allowed_values: Option<AllowedValues>,
 
     // --- Value ---
-    /// The resolved data for this sub-object (human-readable string).
+    /// The resolved value for this sub-object (human-readable string).
     pub data: Option<String>,
 }

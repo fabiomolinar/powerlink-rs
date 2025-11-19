@@ -1,19 +1,16 @@
-// src/lib.rs
-
 #![no_std]
 #![doc = "Parses and generates POWERLINK XDC (XML Device Configuration) files."]
 #![doc = ""]
 #![doc = "This `no_std + alloc` library provides type-safe parsing and serialization"]
-#![doc = "for POWERLINK XDC (Configuration Manager) data."]
+#![doc = "for POWERLINK XDC (Configuration Manager) data based on the EPSG DS 311 specification."]
 #![doc = ""]
-#![doc = "It supports:"]
-#![doc = "- `load_xdc_from_str`: Parsing `actualValue` attributes from an XDC."]
-#![doc = "- `load_xdd_defaults_from_str`: Parsing `defaultValue` attributes from an XDD."]
-#![doc = "- `save_xdc_to_string`: Serializing configuration data back into a minimal XDC string."]
+#![doc = "It provides the following main capabilities:"]
+#![doc = "- **Parsing**: Loading `.xdc` or `.xdd` XML strings into strongly-typed Rust structures."]
+#![doc = "- **Resolution**: Resolving complex inheritance, `uniqueIDRef` links, and templates defined in the Application Process."]
+#![doc = "- **Serialization**: generating minimal valid XDC XML strings from Rust structures."]
+#![doc = "- **Core Integration**: Converting the parsed data into the `ObjectDictionary` format required by the `powerlink-rs` core stack."]
 
 extern crate alloc;
-
-// --- Crate Modules ---
 
 mod builder;
 mod converter;
@@ -27,7 +24,7 @@ mod types;
 
 // Functions
 pub use builder::save_xdc_to_string;
-pub use converter::{NmtSettings, extract_nmt_settings, to_core_od, xdc_to_storage_map};
+pub use converter::{extract_nmt_settings, to_core_od, xdc_to_storage_map, NmtSettings};
 pub use error::XdcError;
 pub use parser::{load_xdc_from_str, load_xdd_defaults_from_str};
 

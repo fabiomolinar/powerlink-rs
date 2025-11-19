@@ -1,11 +1,12 @@
-// crates/powerlink-rs-xdc/src/parser.rs
-
-//! The internal XML parser and helper functions for parsing hex strings.
+//! The internal XML parser entry point.
+//!
+//! This module handles the raw XML deserialization using `quick-xml` and forwards
+//! the data to the `resolver` module for business logic processing.
 
 use crate::error::XdcError;
 use crate::model;
-use crate::resolver; // This module's functions are now called by `load_...`
-use crate::resolver::ValueMode; // Import the new ValueMode enum
+use crate::resolver;
+use crate::resolver::ValueMode;
 use crate::types::XdcFile;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -15,62 +16,69 @@ use quick_xml::de::from_str;
 
 // --- Public API Functions ---
 
-/// Loads XDC data (using `actualValue`) from an XML string.
+/// Loads XDC data from an XML string, prioritizing `actualValue` attributes.
 ///
-/// This function parses the XML and resolves the data model by prioritizing
-/// the `actualValue` attributes, which is standard for XDC (Configuration) files.
+/// This function is intended for loading **Configuration** files (XDC). It will
+/// resolve object dictionary values by looking for `@actualValue` first. If not found,
+/// it falls back to `@defaultValue`.
+///
+/// # Arguments
+/// * `s` - The raw XML string content.
+///
+/// # Returns
+/// * `Result<XdcFile, XdcError>` - The parsed and resolved file structure.
 pub fn load_xdc_from_str(s: &str) -> Result<XdcFile, XdcError> {
     let container = parse_xml_str(s)?;
-    // Call the resolver with ValueMode::Actual
     resolver::resolve_data(container, ValueMode::Actual)
 }
 
-/// Loads XDD default data (using `defaultValue`) from an XML string.
+/// Loads XDD data from an XML string, prioritizing `defaultValue` attributes.
 ///
-/// This function parses the XML and resolves the data model by prioritizing
-/// the `defaultValue` attributes, which is standard for XDD (Device Description) files.
+/// This function is intended for loading **Device Description** files (XDD). It will
+/// resolve object dictionary values by looking for `@defaultValue` first.
+///
+/// # Arguments
+/// * `s` - The raw XML string content.
+///
+/// # Returns
+/// * `Result<XdcFile, XdcError>` - The parsed and resolved file structure.
 pub fn load_xdd_defaults_from_str(s: &str) -> Result<XdcFile, XdcError> {
     let container = parse_xml_str(s)?;
-    // Call the resolver with ValueMode::Default
     resolver::resolve_data(container, ValueMode::Default)
 }
 
 // --- Internal XML Deserialization ---
 
-/// The core internal function that uses `quick-xml` to deserialize the string
-/// into the raw `model` structs.
+/// Deserializes the raw XML string into the internal `model` structs.
 pub(crate) fn parse_xml_str(s: &str) -> Result<model::Iso15745ProfileContainer, XdcError> {
-    // quick-xml's deserializer is very efficient.
-    // It maps the XML structure directly to our `model` structs.
     from_str(s).map_err(XdcError::from)
 }
 
 // --- Hex String Parsing Helpers ---
-// These are used by the resolver.
 
-/// Parses a "0x..." or "..." hex string into a `u32`.
+/// Parses a "0x..." or raw hex string into a `u32`.
 pub(crate) fn parse_hex_u32(s: &str) -> Result<u32, ParseIntError> {
     let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
     u32::from_str_radix(s_no_prefix, 16)
 }
 
-/// Parses a "0x..." or "..." hex string into a `u16`.
+/// Parses a "0x..." or raw hex string into a `u16`.
 pub(crate) fn parse_hex_u16(s: &str) -> Result<u16, ParseIntError> {
     let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
     u16::from_str_radix(s_no_prefix, 16)
 }
 
-/// Parses a "0x..." or "..." hex string into a `u8`.
+/// Parses a "0x..." or raw hex string into a `u8`.
 pub(crate) fn parse_hex_u8(s: &str) -> Result<u8, ParseIntError> {
     let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
     u8::from_str_radix(s_no_prefix, 16)
 }
 
-/// Parses a "0x..." or "..." hex string into a byte vector.
+/// Parses a "0x..." or raw hex string into a byte vector.
+/// Handles odd-length strings by padding with a leading zero.
 pub(crate) fn parse_hex_string(s: &str) -> Result<Vec<u8>, FromHexError> {
     let s_no_prefix = s.strip_prefix("0x").unwrap_or(s);
 
-    // Handle odd-length strings by padding with a leading zero
     if s_no_prefix.len() % 2 != 0 {
         let mut padded_s = String::with_capacity(s_no_prefix.len() + 1);
         padded_s.push('0');
@@ -86,9 +94,8 @@ mod tests {
     use super::*;
     use crate::error::XdcError;
     use alloc::vec;
-    use hex::FromHexError; // Import for invalid char test
+    use hex::FromHexError;
 
-    // A minimal but complete XDC structure for testing.
     const MINIMAL_GOOD_XDC: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <ISO15745ProfileContainer xmlns="http://www.ethernet-powerlink.org" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.ethernet-powerlink.org Powerlink_Main.xsd">
   <ISO15745Profile>
@@ -145,12 +152,10 @@ mod tests {
         let result = load_xdc_from_str(MINIMAL_GOOD_XDC);
         assert!(result.is_ok());
         let xdc_file = result.unwrap();
-        // Fix: Use `name` field, not `profile_name`
         assert_eq!(xdc_file.header.name, "Test Profile");
         assert_eq!(xdc_file.identity.vendor_name, "TestVendor");
         assert_eq!(xdc_file.object_dictionary.objects.len(), 1);
         assert_eq!(xdc_file.object_dictionary.objects[0].index, 0x1000);
-        // FIX: The value "0x1234" (U16) is parsed as LE, so it becomes [0x34, 0x12].
         assert_eq!(
             xdc_file.object_dictionary.objects[0].data.as_deref(),
             Some("0x1234")
@@ -164,7 +169,6 @@ mod tests {
         assert!(result.is_ok());
         let xdd_file = result.unwrap();
         assert_eq!(xdd_file.identity.vendor_name, "TestVendor");
-        // FIX: The value "0x1234" (U16) is parsed as LE, so it becomes [0x34, 0x12].
         assert_eq!(
             xdd_file.object_dictionary.objects[0].data.as_deref(),
             Some("0x1234")
@@ -173,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_load_xdc_malformed_xml() {
-        let malformed_xml = "<ISO15745ProfileContainer><ProfileHeader>"; // Missing closing tags
+        let malformed_xml = "<ISO15745ProfileContainer><ProfileHeader>";
         let result = load_xdc_from_str(malformed_xml);
         assert!(matches!(result, Err(XdcError::XmlParsing(_))));
     }
@@ -225,8 +229,6 @@ mod tests {
         ));
     }
 
-    // --- Unit Tests for Helpers ---
-
     #[test]
     fn test_parse_hex_u32() {
         assert_eq!(parse_hex_u32("0x1A2B3C4D").unwrap(), 0x1A2B3C4D);
@@ -265,11 +267,8 @@ mod tests {
 
     #[test]
     fn test_parse_hex_string_odd_length() {
-        // Odd length string "1" becomes "01"
         assert_eq!(parse_hex_string("1").unwrap(), vec![0x01]);
-        // Odd length string "0xABC" becomes "0ABC"
         assert_eq!(parse_hex_string("0xABC").unwrap(), vec![0x0A, 0xBC]);
-        // Odd length string "123" becomes "0123"
         assert_eq!(parse_hex_string("123").unwrap(), vec![0x01, 0x23]);
     }
 
