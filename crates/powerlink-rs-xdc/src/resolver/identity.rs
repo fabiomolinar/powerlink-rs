@@ -1,4 +1,4 @@
-// crates/powerlink-rs-xdc/src/resolver/identity.rs
+//! Handles resolving the `<DeviceIdentity>` block from the model to public types.
 
 use crate::error::XdcError;
 use crate::model;
@@ -6,14 +6,16 @@ use crate::model::common::AttributedGlabels;
 use crate::parser::parse_hex_u32;
 use crate::resolver::utils;
 use crate::types;
-use alloc::string::String; // Import utils
+use alloc::string::String;
 
 /// Helper to extract the first available `<label>` value from an `AttributedGlabels` struct.
 fn extract_label_from_attributed_glabels(attributed_labels: &AttributedGlabels) -> Option<String> {
-    utils::extract_label(&attributed_labels.items) // FIX: Pass .items
+    utils::extract_label(&attributed_labels.items)
 }
 
 /// Parses a `model::DeviceIdentity` into a clean `types::Identity`.
+///
+/// Handles parsing of Vendor IDs (hex) and Product IDs (hex or decimal).
 pub(super) fn resolve_identity(
     model: &model::identity::DeviceIdentity,
 ) -> Result<types::Identity, XdcError> {
@@ -24,22 +26,20 @@ pub(super) fn resolve_identity(
         .transpose()?
         .unwrap_or(0);
 
-    // Try hex first (if "0x" prefix exists), fall back to decimal.
+    // Product ID can be hex or decimal depending on the file version or vendor convention.
     let product_id = model
         .product_id
         .as_ref()
         .map(|p| {
             if p.value.starts_with("0x") {
-                // Explicitly hex
                 parse_hex_u32(&p.value)
             } else {
-                // Try decimal parse
                 p.value.parse::<u32>()
             }
             .map_err(|_| XdcError::InvalidAttributeFormat {
                 attribute: "productID",
             })
-            .ok() // Convert Result to Option, discarding error details
+            .ok()
         })
         .flatten()
         .unwrap_or(0);
@@ -65,8 +65,6 @@ pub(super) fn resolve_identity(
         vendor_name: model.vendor_name.value.clone(),
         product_name: model.product_name.value.clone(),
         versions,
-
-        // --- New fields ---
         vendor_text: model
             .vendor_text
             .as_ref()

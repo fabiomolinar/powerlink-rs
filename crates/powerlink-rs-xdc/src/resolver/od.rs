@@ -1,6 +1,14 @@
-// crates/powerlink-rs-xdc/src/resolver/od.rs
+//! Resolves the Object Dictionary (OD) from the Application Layers model.
+//!
+//! This module handles the complex resolution logic for OD Objects. In XDC files,
+//! the value of an object might be defined in several places:
+//! 1.  Directly on the `<Object>` or `<SubObject>` element (as `actualValue` or `defaultValue`).
+//! 2.  Indirectly via a `uniqueIDRef` pointing to a `<Parameter>` in the `ApplicationProcess`.
+//! 3.  Further indirectly via that `<Parameter>` pointing to a `<ParameterTemplate>`.
+//!
+//! This module flattens this hierarchy into a simple `ObjectDictionary` struct.
 
-use super::{ValueMode, utils};
+use super::{utils, ValueMode};
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_layers::DataTypeName;
@@ -10,20 +18,30 @@ use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+/// Intermediate structure to hold attributes resolved from multiple sources.
 struct ResolvedAttributes {
     access: Option<types::ParameterAccess>,
     support: Option<types::ParameterSupport>,
     persistent: bool,
     allowed_values: Option<types::AllowedValues>,
-    data: Option<String>, // Changed to String
+    /// The resolved value string (if any).
+    data: Option<String>,
     data_type: Option<String>,
 }
 
+/// Resolves the `ObjectDictionary` from the raw model.
+///
+/// # Arguments
+///
+/// * `app_layers` - The raw ApplicationLayers model.
+/// * `param_map` - Map of uniqueIDs to Parameters (from Pass 2).
+/// * `template_map` - Map of uniqueIDs to Templates (from Pass 1).
+/// * `mode` - Whether to prioritize actual or default values.
 pub(super) fn resolve_object_dictionary<'a>(
     app_layers: &'a model::app_layers::ApplicationLayers,
     param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
     template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
-    _type_map: &BTreeMap<String, DataTypeName>, // Unused now that we don't validate types
+    _type_map: &BTreeMap<String, DataTypeName>,
     mode: ValueMode,
 ) -> Result<types::ObjectDictionary, XdcError> {
     let mut od_objects = Vec::new();
@@ -31,8 +49,10 @@ pub(super) fn resolve_object_dictionary<'a>(
     for model_obj in &app_layers.object_list.object {
         let index = parse_hex_u16(&model_obj.index)?;
 
+        // Resolve attributes for the main object
         let attributes = resolve_object_attributes(model_obj, param_map, template_map, mode)?;
 
+        // Resolve attributes for all sub-objects
         let sub_objects = resolve_sub_objects(
             &model_obj.sub_object,
             model_obj.unique_id_ref.as_ref(),
@@ -56,7 +76,7 @@ pub(super) fn resolve_object_dictionary<'a>(
             support: attributes.support,
             persistent: attributes.persistent,
             allowed_values: attributes.allowed_values,
-            data: attributes.data, // String
+            data: attributes.data,
             sub_objects,
         });
     }
@@ -66,6 +86,7 @@ pub(super) fn resolve_object_dictionary<'a>(
     })
 }
 
+/// Resolves attributes for a single Object, walking the reference chain if necessary.
 fn resolve_object_attributes<'a>(
     model_obj: &'a model::app_layers::Object,
     param_map: &'a BTreeMap<&'a String, &'a model::app_process::Parameter>,
@@ -81,24 +102,29 @@ fn resolve_object_attributes<'a>(
         data_type: model_obj.data_type.clone(),
     };
 
+    // If the Object has a uniqueIDRef, it inherits properties from the Application Process Parameter.
     if let Some(id_ref) = model_obj.unique_id_ref.as_ref() {
         if let Some(param) = param_map.get(id_ref) {
             apply_parameter_attributes(param, &mut resolved)?;
+            // If the OD definition didn't specify a DataType, inherit it from the Parameter.
             if resolved.data_type.is_none() {
                 resolved.data_type = map_param_type_to_hex(&param.data_type);
             }
         }
     }
 
+    // Resolve the value string.
+    // Note: We only resolve values for VAR (type 7) objects here.
+    // ARRAY and RECORD objects hold their values in their SubObjects.
     if model_obj.object_type == "7" {
         let value_str_opt = get_value_str_for_object(model_obj, mode, param_map, template_map);
-        // Just clone the string, no parsing
         resolved.data = value_str_opt.cloned();
     }
 
     Ok(resolved)
 }
 
+/// Resolves a list of sub-objects.
 fn resolve_sub_objects<'a>(
     model_subs: &'a [model::app_layers::SubObject],
     parent_unique_id_ref: Option<&'a String>,
@@ -120,6 +146,7 @@ fn resolve_sub_objects<'a>(
             data_type: model_sub.data_type.clone(),
         };
 
+        // SubObjects can also have uniqueIDRefs pointing to specific Parameters.
         if let Some(id_ref) = model_sub.unique_id_ref.as_ref() {
             if let Some(param) = param_map.get(id_ref) {
                 apply_parameter_attributes(param, &mut resolved)?;
@@ -129,7 +156,9 @@ fn resolve_sub_objects<'a>(
             }
         }
 
-        // Check parent if needed (logic preserved but simplified)
+        // Resolve the value.
+        // Sub-index 0 is special: if the Parent Object has a uniqueIDRef, it might point
+        // to a Parameter that defines the 'count' or array size, which maps to SubIndex 0.
         let value_str_opt = get_value_str_for_subobject(
             model_sub,
             mode,
@@ -163,6 +192,7 @@ fn resolve_sub_objects<'a>(
     Ok(result)
 }
 
+/// Applies attributes from an Application Process `Parameter` to the resolved attributes.
 fn apply_parameter_attributes(
     param: &model::app_process::Parameter,
     resolved: &mut ResolvedAttributes,
@@ -181,6 +211,7 @@ fn apply_parameter_attributes(
     Ok(())
 }
 
+/// Maps Application Process data types to standard POWERLINK hex codes.
 fn map_param_type_to_hex(dt: &model::app_process::ParameterDataType) -> Option<String> {
     use model::app_process::ParameterDataType as PDT;
     match dt {
@@ -197,6 +228,8 @@ fn map_param_type_to_hex(dt: &model::app_process::ParameterDataType) -> Option<S
         PDT::ULINT | PDT::LWORD => Some("001B".to_string()),
         PDT::LREAL => Some("0011".to_string()),
         PDT::WSTRING => Some("000B".to_string()),
+        // Reference types (DataTypeIDRef, VariableRef) cannot be simply mapped to a hex code
+        // without further context, so we return None.
         _ => None,
     }
 }
@@ -235,16 +268,23 @@ fn resolve_allowed_values(
     })
 }
 
+/// Resolves the value string from a Parameter, respecting precedence rules.
+///
+/// Precedence:
+/// 1. Direct value in the Parameter (Actual vs Default based on mode).
+/// 2. Value from the referenced Template.
 fn resolve_value_from_param<'a>(
     param: &'a model::app_process::Parameter,
     mode: ValueMode,
     template_map: &'a BTreeMap<&'a String, &'a model::app_process::Value>,
 ) -> Option<&'a String> {
+    // 1. Check direct value in parameter
     let direct_value = match mode {
         ValueMode::Actual => param.actual_value.as_ref().or(param.default_value.as_ref()),
         ValueMode::Default => param.default_value.as_ref().or(param.actual_value.as_ref()),
     };
 
+    // 2. Check template reference if no direct value found
     direct_value.map(|v| &v.value).or_else(|| {
         param
             .template_id_ref
@@ -254,6 +294,11 @@ fn resolve_value_from_param<'a>(
     })
 }
 
+/// Determines the string value for a top-level Object.
+///
+/// Precedence:
+/// 1. Direct attribute on `<Object>` (Actual vs Default).
+/// 2. Value derived from `uniqueIDRef` Parameter.
 fn get_value_str_for_object<'a>(
     model_obj: &'a model::app_layers::Object,
     mode: ValueMode,
@@ -280,6 +325,12 @@ fn get_value_str_for_object<'a>(
     })
 }
 
+/// Determines the string value for a SubObject.
+///
+/// Precedence:
+/// 1. Direct attribute on `<SubObject>`.
+/// 2. Value derived from `uniqueIDRef` on the SubObject.
+/// 3. (If SubIndex == 0) Value derived from the parent Object's `uniqueIDRef` (implicit array/record size).
 fn get_value_str_for_subobject<'a>(
     model_sub_obj: &'a model::app_layers::SubObject,
     mode: ValueMode,
@@ -301,6 +352,7 @@ fn get_value_str_for_subobject<'a>(
 
     direct_value
         .or_else(|| {
+            // Check SubObject's uniqueIDRef
             model_sub_obj
                 .unique_id_ref
                 .as_ref()
@@ -308,6 +360,9 @@ fn get_value_str_for_subobject<'a>(
                 .and_then(|param| resolve_value_from_param(param, mode, template_map))
         })
         .or_else(|| {
+            // If SubIndex is 0, check parent Object's uniqueIDRef.
+            // This often handles the case where a Parameter definition (e.g. an Array)
+            // has a default value which implies the count (SubIndex 0).
             if sub_index == 0 {
                 parent_unique_id_ref
                     .and_then(|id_ref| param_map.get(id_ref))

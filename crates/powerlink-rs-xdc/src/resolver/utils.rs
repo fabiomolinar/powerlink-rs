@@ -1,6 +1,7 @@
-// crates/powerlink-rs-xdc/src/resolver/utils.rs
-
-//! Utility functions for the resolver.
+//! Utility functions shared across the resolver modules.
+//!
+//! This includes helpers for extracting localized strings from label groups
+//! and mapping raw model enums to public types.
 
 use crate::model;
 use crate::model::app_layers::DataTypeName;
@@ -8,6 +9,9 @@ use crate::types;
 use alloc::string::String;
 
 /// Helper to extract the first available `<label>` value from a `g_labels` group.
+///
+/// XDC uses `g_labels` to support multiple languages. This function currently
+/// simplifies this by returning the first valid label it encounters.
 pub(super) fn extract_label(items: &[model::common::LabelChoice]) -> Option<String> {
     items.iter().find_map(|item| {
         if let model::common::LabelChoice::Label(label) = item {
@@ -31,7 +35,7 @@ pub(super) fn extract_description(items: &[model::common::LabelChoice]) -> Optio
 
 /// Maps a POWERLINK hex string ID (from EPSG 311, Table 56) to the `DataTypeName` enum.
 ///
-/// This centralizes the parsing of "0005" -> `Unsigned8`, etc.
+/// Example: "0006" -> `DataTypeName::Unsigned16`.
 pub(crate) fn get_standard_type_from_hex(type_id: &str) -> Option<DataTypeName> {
     // Strip optional "0x" prefix for robustness
     let id = type_id.strip_prefix("0x").unwrap_or(type_id);

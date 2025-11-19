@@ -1,16 +1,18 @@
-// crates/powerlink-rs-xdc/src/resolver/app_process.rs
-
 //! Handles resolving the `ApplicationProcess` block from the model to public types.
+//!
+//! The Application Process section defines the device's parameters, templates, data types,
+//! and function blocks. It is the most complex part of the XDC schema due to its
+//! hierarchical nature.
 
 use crate::error::XdcError;
 use crate::model;
 use crate::model::app_process::{AppDataTypeChoice, ParameterGroupItem};
-use crate::resolver::utils; // Import the utils module
+use crate::resolver::utils;
 use crate::types;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// Helper to extract the name of a `ParameterDataType` enum.
+/// Helper to extract the string name of a `ParameterDataType`.
 fn get_data_type_name(data_type: &model::app_process::ParameterDataType) -> String {
     use model::app_process::ParameterDataType::*;
     match data_type {
@@ -33,12 +35,13 @@ fn get_data_type_name(data_type: &model::app_process::ParameterDataType) -> Stri
         LREAL => "LREAL".into(),
         STRING => "STRING".into(),
         WSTRING => "WSTRING".into(),
+        // For references, we return the referenced ID.
         DataTypeIDRef(r) => r.unique_id_ref.clone(),
         VariableRef(_) => "variableRef".into(),
     }
 }
 
-/// Maps the model's ParameterDataType to the public types::ParameterDataType.
+/// Maps the model's internal `ParameterDataType` enum to the public API's enum.
 fn resolve_parameter_data_type(
     model: &model::app_process::ParameterDataType,
 ) -> types::ParameterDataType {
@@ -69,9 +72,9 @@ fn resolve_parameter_data_type(
     }
 }
 
-// --- Main Resolver ---
-
-/// Resolves the `model::ApplicationProcess` into the public `types::ApplicationProcess`.
+/// Resolves the entire `model::ApplicationProcess` into the public `types::ApplicationProcess`.
+///
+/// This function processes lists of data types, templates, parameters, groups, and functions.
 pub(super) fn resolve_application_process(
     model: &model::app_process::ApplicationProcess,
 ) -> Result<types::ApplicationProcess, XdcError> {
@@ -112,7 +115,6 @@ pub(super) fn resolve_application_process(
     })
 }
 
-/// Helper to resolve a `model::app_process::Value` to `types::Value`.
 fn resolve_value(model: &model::app_process::Value) -> types::Value {
     types::Value {
         value: model.value.clone(),
@@ -125,7 +127,6 @@ fn resolve_value(model: &model::app_process::Value) -> types::Value {
     }
 }
 
-/// Helper to resolve `model::app_process::AllowedValues` to `types::AllowedValues`.
 fn resolve_allowed_values(model: &model::app_process::AllowedValues) -> types::AllowedValues {
     types::AllowedValues {
         template_id_ref: model.template_id_ref.clone(),
@@ -142,7 +143,6 @@ fn resolve_allowed_values(model: &model::app_process::AllowedValues) -> types::A
     }
 }
 
-/// Helper to resolve a single `model::app_process::Parameter` into `types::Parameter`.
 fn resolve_parameter(model: &model::app_process::Parameter) -> Result<types::Parameter, XdcError> {
     Ok(types::Parameter {
         unique_id: model.unique_id.clone(),
@@ -153,7 +153,6 @@ fn resolve_parameter(model: &model::app_process::Parameter) -> Result<types::Par
         multiplier: model.multiplier.clone(),
         template_id_ref: model.template_id_ref.clone(),
         data_type: resolve_parameter_data_type(&model.data_type),
-        // `labels` is Glabels (not Option) here (from model/app_process.rs)
         label: utils::extract_label(&model.labels.items),
         description: utils::extract_description(&model.labels.items),
         actual_value: model.actual_value.as_ref().map(resolve_value),
@@ -162,25 +161,22 @@ fn resolve_parameter(model: &model::app_process::Parameter) -> Result<types::Par
     })
 }
 
-/// Helper to resolve the `<parameterList>`.
 fn resolve_parameter_list(
     list: &model::app_process::ParameterList,
 ) -> Result<Vec<types::Parameter>, XdcError> {
     list.parameter.iter().map(resolve_parameter).collect()
 }
 
-/// Helper to resolve the `<templateList>`.
 fn resolve_template_list(
     list: &model::app_process::TemplateList,
 ) -> Result<Vec<types::Parameter>, XdcError> {
-    // parameterTemplate is identical to parameter in structure
+    // Parameter templates have the same structure as parameters.
     list.parameter_template
         .iter()
         .map(resolve_parameter)
         .collect()
 }
 
-/// Helper to resolve the `<dataTypeList>`.
 fn resolve_data_type_list(
     list: &model::app_process::AppDataTypeList,
 ) -> Result<Vec<types::AppDataType>, XdcError> {
@@ -195,7 +191,6 @@ fn resolve_data_type_list(
         .collect()
 }
 
-/// Helper to resolve a `<struct>`.
 fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStruct, XdcError> {
     let members = model
         .var_declaration
@@ -206,7 +201,6 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
                 unique_id: var.unique_id.clone(),
                 data_type: get_data_type_name(&var.data_type),
                 size: var.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
-                // `labels` is Glabels
                 label: utils::extract_label(&var.labels.items),
                 description: utils::extract_description(&var.labels.items),
             })
@@ -216,14 +210,12 @@ fn resolve_struct(model: &model::app_process::AppStruct) -> Result<types::AppStr
     Ok(types::AppStruct {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        // `labels` is Glabels
         label: utils::extract_label(&model.labels.items),
         description: utils::extract_description(&model.labels.items),
         members,
     })
 }
 
-/// Helper to resolve an `<array>`.
 fn resolve_array(model: &model::app_process::AppArray) -> Result<types::AppArray, XdcError> {
     let subrange = model.subrange.first().ok_or(XdcError::MissingElement {
         element: "subrange",
@@ -232,7 +224,6 @@ fn resolve_array(model: &model::app_process::AppArray) -> Result<types::AppArray
     Ok(types::AppArray {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        // `labels` is Glabels
         label: utils::extract_label(&model.labels.items),
         description: utils::extract_description(&model.labels.items),
         lower_limit: subrange.lower_limit.parse().unwrap_or(0),
@@ -241,13 +232,11 @@ fn resolve_array(model: &model::app_process::AppArray) -> Result<types::AppArray
     })
 }
 
-/// Helper to resolve an `<enum>`.
 fn resolve_enum(model: &model::app_process::AppEnum) -> Result<types::AppEnum, XdcError> {
     let values = model
         .enum_value
         .iter()
         .map(|val| types::EnumValue {
-            // `labels` is Glabels
             name: utils::extract_label(&val.labels.items).unwrap_or_default(),
             value: val.value.clone().unwrap_or_default(),
             label: utils::extract_label(&val.labels.items),
@@ -258,7 +247,6 @@ fn resolve_enum(model: &model::app_process::AppEnum) -> Result<types::AppEnum, X
     Ok(types::AppEnum {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        // `labels` is Glabels
         label: utils::extract_label(&model.labels.items),
         description: utils::extract_description(&model.labels.items),
         data_type: model
@@ -271,7 +259,6 @@ fn resolve_enum(model: &model::app_process::AppEnum) -> Result<types::AppEnum, X
     })
 }
 
-/// Helper to resolve a `<derived>` type.
 fn resolve_derived(model: &model::app_process::AppDerived) -> Result<types::AppDerived, XdcError> {
     let count = model.count.as_ref().map(|c| types::Count {
         unique_id: c.unique_id.clone(),
@@ -282,7 +269,6 @@ fn resolve_derived(model: &model::app_process::AppDerived) -> Result<types::AppD
     Ok(types::AppDerived {
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
-        // `labels` is Glabels
         label: utils::extract_label(&model.labels.items),
         description: utils::extract_description(&model.labels.items),
         data_type: get_data_type_name(&model.data_type),
@@ -290,7 +276,6 @@ fn resolve_derived(model: &model::app_process::AppDerived) -> Result<types::AppD
     })
 }
 
-/// Helper to resolve the `<parameterGroupList>`.
 fn resolve_parameter_group_list(
     list: &model::app_process::ParameterGroupList,
 ) -> Result<Vec<types::ParameterGroup>, XdcError> {
@@ -300,7 +285,6 @@ fn resolve_parameter_group_list(
         .collect()
 }
 
-/// Helper to recursively resolve a `<parameterGroup>`.
 fn resolve_parameter_group(
     model: &model::app_process::ParameterGroup,
 ) -> Result<types::ParameterGroup, XdcError> {
@@ -324,14 +308,12 @@ fn resolve_parameter_group(
 
     Ok(types::ParameterGroup {
         unique_id: model.unique_id.clone(),
-        // `labels` is Glabels
         label: utils::extract_label(&model.labels.items),
         description: utils::extract_description(&model.labels.items),
         items,
     })
 }
 
-/// Helper to resolve `<functionTypeList>`.
 fn resolve_function_type_list(
     list: &model::app_process::FunctionTypeList,
 ) -> Result<Vec<types::FunctionType>, XdcError> {
@@ -341,7 +323,6 @@ fn resolve_function_type_list(
         .collect()
 }
 
-/// Helper to resolve a single `<functionType>`.
 fn resolve_function_type(
     model: &model::app_process::FunctionType,
 ) -> Result<types::FunctionType, XdcError> {
@@ -353,7 +334,6 @@ fn resolve_function_type(
             version: v.version.clone(),
             author: v.author.clone(),
             date: v.date.clone(),
-            // `labels` is Glabels
             label: utils::extract_label(&v.labels.items),
             description: utils::extract_description(&v.labels.items),
         })
@@ -365,7 +345,6 @@ fn resolve_function_type(
         name: model.name.clone(),
         unique_id: model.unique_id.clone(),
         package: model.package.clone(),
-        // `labels` is Glabels
         label: utils::extract_label(&model.labels.items),
         description: utils::extract_description(&model.labels.items),
         version_info,
@@ -373,7 +352,6 @@ fn resolve_function_type(
     })
 }
 
-/// Helper to resolve an `<interfaceList>`.
 fn resolve_interface_list(
     model: &model::app_process::InterfaceList,
 ) -> Result<types::InterfaceList, XdcError> {
@@ -405,7 +383,6 @@ fn resolve_interface_list(
     })
 }
 
-/// Helper to resolve a `<varDeclaration>`.
 fn resolve_var_declaration(
     model: &model::app_process::VarDeclaration,
 ) -> Result<types::VarDeclaration, XdcError> {
@@ -415,13 +392,11 @@ fn resolve_var_declaration(
         data_type: get_data_type_name(&model.data_type),
         size: model.size.as_ref().and_then(|s| s.parse::<u32>().ok()),
         initial_value: model.initial_value.clone(),
-        // `labels` is Glabels
         label: utils::extract_label(&model.labels.items),
         description: utils::extract_description(&model.labels.items),
     })
 }
 
-/// Helper to resolve `<functionInstanceList>`.
 fn resolve_function_instance_list(
     list: &model::app_process::FunctionInstanceList,
 ) -> Result<Vec<types::FunctionInstance>, XdcError> {
@@ -432,7 +407,6 @@ fn resolve_function_instance_list(
                 name: inst.name.clone(),
                 unique_id: inst.unique_id.clone(),
                 type_id_ref: inst.type_id_ref.clone(),
-                // `labels` is Glabels
                 label: utils::extract_label(&inst.labels.items),
                 description: utils::extract_description(&inst.labels.items),
             })

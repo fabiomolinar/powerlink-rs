@@ -1,21 +1,20 @@
-// crates/powerlink-rs-xdc/src/resolver/modular.rs
-
 //! Handles resolving modular device structs from the model to public types.
+//!
+//! Modular device profiles define `Interface` and `Range` lists to handle
+//! devices composed of a Head node and multiple attached Modules.
 
 use crate::error::XdcError;
 use crate::model;
 use crate::parser::{parse_hex_u8, parse_hex_u16};
 use crate::resolver::utils;
 use crate::types;
-use alloc::string::{String, ToString}; // Fix: Add String import
-use alloc::vec::Vec; // Use the OD utils for mapping
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
-/// Helper to resolve a `<fileList>` into a `Vec<String>`.
 fn resolve_file_list(model: &model::modular::FileList) -> Result<Vec<String>, XdcError> {
     Ok(model.file.iter().map(|f| f.uri.clone()).collect())
 }
 
-/// Helper to resolve a `<connectedModule>`.
 fn resolve_connected_module(
     model: &model::modular::ConnectedModule,
 ) -> Result<types::ConnectedModule, XdcError> {
@@ -42,7 +41,6 @@ fn resolve_connected_module(
     })
 }
 
-/// Helper to resolve a `<connectedModuleList>`.
 fn resolve_connected_module_list(
     model: &model::modular::ConnectedModuleList,
 ) -> Result<Vec<types::ConnectedModule>, XdcError> {
@@ -53,7 +51,6 @@ fn resolve_connected_module_list(
         .collect()
 }
 
-/// Helper to resolve an `<interface>` from the Device profile.
 fn resolve_interface_device(
     model: &model::modular::InterfaceDevice,
 ) -> Result<types::InterfaceDevice, XdcError> {
@@ -89,7 +86,6 @@ fn resolve_interface_device(
     })
 }
 
-/// Helper to resolve an `<interfaceList>` from the Device profile.
 fn resolve_interface_list_device(
     model: &model::modular::InterfaceListDevice,
 ) -> Result<Vec<types::InterfaceDevice>, XdcError> {
@@ -100,7 +96,6 @@ fn resolve_interface_list_device(
         .collect()
 }
 
-/// Helper to resolve a `<moduleInterface>`.
 fn resolve_module_interface(
     model: &model::modular::ModuleInterface,
 ) -> Result<types::ModuleInterface, XdcError> {
@@ -135,7 +130,6 @@ pub(super) fn resolve_module_management_device(
     })
 }
 
-/// Helper to resolve a `<range>`.
 fn resolve_range(model: &model::modular::Range) -> Result<types::Range, XdcError> {
     let base_index = parse_hex_u16(&model.base_index)?;
     let max_index = model
@@ -176,12 +170,10 @@ fn resolve_range(model: &model::modular::Range) -> Result<types::Range, XdcError
     })
 }
 
-/// Helper to resolve a `<rangeList>`.
 fn resolve_range_list(model: &model::modular::RangeList) -> Result<Vec<types::Range>, XdcError> {
     model.range.iter().map(resolve_range).collect()
 }
 
-/// Helper to resolve an `<interface>` from the Communication profile.
 fn resolve_interface_comm(
     model: &model::modular::InterfaceComm,
 ) -> Result<types::InterfaceComm, XdcError> {
@@ -192,7 +184,6 @@ fn resolve_interface_comm(
     })
 }
 
-/// Helper to resolve an `<interfaceList>` from the Communication profile.
 fn resolve_interface_list_comm(
     model: &model::modular::InterfaceListComm,
 ) -> Result<Vec<types::InterfaceComm>, XdcError> {

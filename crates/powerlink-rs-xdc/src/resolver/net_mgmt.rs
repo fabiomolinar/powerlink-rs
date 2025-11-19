@@ -1,19 +1,21 @@
-// crates/powerlink-rs-xdc/src/resolver/net_mgmt.rs
+//! Handles resolving the `<NetworkManagement>` block from the model to public types.
+//!
+//! The Network Management block defines global device features, including NMT timings,
+//! cycle timings, and diagnostic capabilities.
 
 use crate::error::XdcError;
 use crate::model;
-// Import label helpers
 use crate::resolver::utils;
 use crate::types;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// Helper to parse a string attribute as a u32.
+/// Helper to parse a string attribute as a u32, defaulting to 0 on failure.
 fn parse_u32_attr(s: Option<String>) -> u32 {
     s.and_then(|val| val.parse().ok()).unwrap_or(0)
 }
 
-/// Parses a `model::NetworkManagement` into a `types::NetworkManagement`.
+/// Parses a `model::NetworkManagement` into a public `types::NetworkManagement` struct.
 pub(super) fn resolve_network_management(
     model: &model::net_mgmt::NetworkManagement,
 ) -> Result<types::NetworkManagement, XdcError> {
@@ -36,8 +38,6 @@ pub(super) fn resolve_network_management(
         sdo_server: model.general_features.sdo_server,
         sdo_support_asnd: model.general_features.sdo_support_asnd,
         sdo_support_udp_ip: model.general_features.sdo_support_udp_ip,
-
-        // --- NEW Fields ---
         nmt_isochronous: model.general_features.nmt_isochronous,
         sdo_support_pdo: model.general_features.sdo_support_pdo,
         nmt_ext_nmt_cmds: model.general_features.nmt_ext_nmt_cmds,
@@ -51,18 +51,16 @@ pub(super) fn resolve_network_management(
         nmt_publish_config_nodes: model.general_features.nmt_publish_config_nodes,
     };
 
-    // --- MN Features ---
+    // --- MN Features (Managing Node) ---
     let mn_features = model.mn_features.as_ref().map(|mn| types::MnFeatures {
         dll_mn_feature_multiplex: mn.dll_mn_feature_multiplex,
         dll_mn_pres_chaining: mn.dll_mn_pres_chaining,
         nmt_simple_boot: mn.nmt_simple_boot,
-
-        // --- NEW Fields ---
         nmt_service_udp_ip: mn.nmt_service_udp_ip,
         nmt_mn_basic_ethernet: mn.nmt_mn_basic_ethernet,
     });
 
-    // --- CN Features ---
+    // --- CN Features (Controlled Node) ---
     let cn_features = model.cn_features.as_ref().map(|cn| types::CnFeatures {
         dll_cn_feature_multiplex: cn.dll_cn_feature_multiplex,
         dll_cn_pres_chaining: cn.dll_cn_pres_chaining,
@@ -71,6 +69,7 @@ pub(super) fn resolve_network_management(
             .clone()
             .and_then(|s| s.parse().ok()),
         nmt_cn_soc_2_preq: parse_u32_attr(Some(cn.nmt_cn_soc_2_preq.clone())),
+        // Map the internal DNA enum to the public enum
         nmt_cn_dna: cn.nmt_cn_dna.map(|dna_model| match dna_model {
             model::net_mgmt::CnFeaturesNmtCnDna::DoNotClear => types::NmtCnDna::DoNotClear,
             model::net_mgmt::CnFeaturesNmtCnDna::ClearOnPreOp1ToPreOp2 => {
@@ -96,9 +95,8 @@ pub(super) fn resolve_network_management(
     })
 }
 
-/// Parses a `model::Diagnostic` into a `types::Diagnostic`.
+/// Parses a `model::Diagnostic` block into a `types::Diagnostic`.
 fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diagnostic, XdcError> {
-    // --- Error List ---
     let errors = model.error_list.as_ref().map_or(Vec::new(), |list| {
         list.error
             .iter()
@@ -122,7 +120,6 @@ fn resolve_diagnostic(model: &model::net_mgmt::Diagnostic) -> Result<types::Diag
             .collect()
     });
 
-    // --- Static Error Bit Field ---
     let static_error_bit_field = model.static_error_bit_field.as_ref().map(|field| {
         field
             .error_bit

@@ -1,4 +1,4 @@
-// crates/powerlink-rs-xdc/src/resolver/header.rs
+//! Handles resolving the `<ProfileHeader>` block from the model to public types.
 
 use crate::error::XdcError;
 use crate::model;

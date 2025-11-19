@@ -1,41 +1,25 @@
-// crates/powerlink-rs-xdc/src/resolver/device_manager.rs
-
 //! Handles resolving the `<DeviceManager>` block from the model to public types.
+//!
+//! The Device Manager contains definitions for physical indicators (LEDs) and
+//! the modular device management structure (interfaces, modules).
 
 use crate::error::XdcError;
 use crate::model::device_manager as model_dm;
-use crate::resolver::{modular, utils}; // Import the utils module
+use crate::resolver::{modular, utils};
 use crate::types;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-// --- Sub-Resolvers ---
-
-/// Resolves an `<LEDstate>`.
 fn resolve_led_state(model: &model_dm::LEDstate) -> Result<types::LEDstate, XdcError> {
     Ok(types::LEDstate {
         unique_id: model.unique_id.clone(),
         state: model.state.to_string(),
         color: model.led_color.to_string(),
-        // FIX: Removed fields that are not in the public `types::LEDState` struct
-        // flashing_period: model
-        //     .flashing_period
-        //     .as_ref()
-        //     .and_then(|p| p.parse().ok()),
-        // impuls_width: model
-        //     .impuls_width
-        //     .as_ref()
-        //     .and_then(|w| w.parse().ok()),
-        // number_of_impulses: model
-        //     .number_of_impulses
-        //     .as_ref()
-        //     .and_then(|n| n.parse().ok()),
-        label: utils::extract_label(&model.labels.items), // Use utils::
-        description: utils::extract_description(&model.labels.items), // Use utils::
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
     })
 }
 
-/// Resolves an `<LED>`.
 fn resolve_led(model: &model_dm::LED) -> Result<types::LED, XdcError> {
     let states = model
         .led_state
@@ -46,13 +30,12 @@ fn resolve_led(model: &model_dm::LED) -> Result<types::LED, XdcError> {
     Ok(types::LED {
         led_type: model.led_type.map(|t| t.to_string()),
         colors: model.led_colors.to_string(),
-        label: utils::extract_label(&model.labels.items), // Use utils::
-        description: utils::extract_description(&model.labels.items), // Use utils::
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
         states,
     })
 }
 
-/// Resolves a `<combinedState>`.
 fn resolve_combined_state(
     model: &model_dm::CombinedState,
 ) -> Result<types::CombinedState, XdcError> {
@@ -62,12 +45,11 @@ fn resolve_combined_state(
             .iter()
             .map(|r| r.state_id_ref.clone())
             .collect(),
-        label: utils::extract_label(&model.labels.items), // Use utils::
-        description: utils::extract_description(&model.labels.items), // Use utils::
+        label: utils::extract_label(&model.labels.items),
+        description: utils::extract_description(&model.labels.items),
     })
 }
 
-/// Resolves an `<indicatorList>`.
 fn resolve_indicator_list(
     model: &model_dm::IndicatorList,
 ) -> Result<types::IndicatorList, XdcError> {
@@ -87,8 +69,6 @@ fn resolve_indicator_list(
         combined_states,
     })
 }
-
-// --- Main Resolver ---
 
 /// Parses a `model::DeviceManager` into a `types::DeviceManager`.
 pub(super) fn resolve_device_manager(

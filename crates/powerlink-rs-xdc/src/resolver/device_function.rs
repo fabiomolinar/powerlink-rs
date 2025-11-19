@@ -1,22 +1,15 @@
-// crates/powerlink-rs-xdc/src/resolver/device_function.rs
-
 //! Handles resolving the `<DeviceFunction>` block from the model to public types.
+//!
+//! Device Function blocks describe capabilities, compliance, pictures, connectors,
+//! and firmware versions associated with the device profile.
 
 use crate::error::XdcError;
 use crate::model;
-use crate::resolver::utils; // Import the utils module
+use crate::resolver::utils;
 use crate::types;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-// --- Label Helpers ---
-
-// REMOVED: `extract_label` - Now in `utils.rs`
-// REMOVED: `extract_description` - Now in `utils.rs`
-
-// --- Sub-Resolvers ---
-
-/// Resolves `<capabilities>`.
 fn resolve_capabilities(
     model: &model::device_function::Capabilities,
 ) -> Result<types::Capabilities, XdcError> {
@@ -35,20 +28,22 @@ fn resolve_capabilities(
                         .iter()
                         .map(|c| {
                             Ok::<_, XdcError>(types::Characteristic {
-                            name: utils::extract_label(&c.characteristic_name.items) // FIX: Pass .items
-                                .ok_or(XdcError::MissingElement {
-                                    element: "characteristicName/label",
-                                })?,
-                            content: c
-                                .characteristic_content
-                                .iter()
-                                .map(|cc| {
-                                    utils::extract_label(&cc.items).ok_or(XdcError::MissingElement { // FIX: Pass .items
-                                        element: "characteristicContent/label",
+                                name: utils::extract_label(&c.characteristic_name.items)
+                                    .ok_or(XdcError::MissingElement {
+                                        element: "characteristicName/label",
+                                    })?,
+                                content: c
+                                    .characteristic_content
+                                    .iter()
+                                    .map(|cc| {
+                                        utils::extract_label(&cc.items).ok_or(
+                                            XdcError::MissingElement {
+                                                element: "characteristicContent/label",
+                                            },
+                                        )
                                     })
-                                })
-                                .collect::<Result<Vec<_>, _>>()?,
-                        })
+                                    .collect::<Result<Vec<_>, _>>()?,
+                            })
                         })
                         .collect::<Result<Vec<_>, _>>()?,
                 })
@@ -64,7 +59,7 @@ fn resolve_capabilities(
                 .map(|cw| types::StandardCompliance {
                     name: cw.name.clone(),
                     range: cw.range.clone().unwrap_or("international".to_string()),
-                    description: utils::extract_description(&cw.labels.items), // FIX: Pass .items
+                    description: utils::extract_description(&cw.labels.items),
                 })
                 .collect()
         });
@@ -75,7 +70,6 @@ fn resolve_capabilities(
     })
 }
 
-/// Resolves `<picturesList>`.
 fn resolve_pictures_list(
     model: &model::device_function::PicturesList,
 ) -> Result<Vec<types::Picture>, XdcError> {
@@ -87,14 +81,13 @@ fn resolve_pictures_list(
                 uri: p.uri.clone(),
                 picture_type: p.picture_type.clone().unwrap_or("none".to_string()),
                 number: p.number.as_ref().and_then(|n| n.parse::<u32>().ok()),
-                label: utils::extract_label(&p.labels.items), // FIX: Pass .items
-                description: utils::extract_description(&p.labels.items), // FIX: Pass .items
+                label: utils::extract_label(&p.labels.items),
+                description: utils::extract_description(&p.labels.items),
             })
         })
         .collect()
 }
 
-/// Resolves `<dictionaryList>`.
 fn resolve_dictionary_list(
     model: &model::device_function::DictionaryList,
 ) -> Result<Vec<types::Dictionary>, XdcError> {
@@ -109,7 +102,6 @@ fn resolve_dictionary_list(
         .collect())
 }
 
-/// Resolves `<connectorList>`.
 fn resolve_connector_list(
     model: &model::device_function::ConnectorList,
 ) -> Result<Vec<types::Connector>, XdcError> {
@@ -120,13 +112,12 @@ fn resolve_connector_list(
             id: c.id.clone(),
             connector_type: c.connector_type.clone().unwrap_or("POWERLINK".to_string()),
             interface_id_ref: c.interface_id_ref.clone(),
-            label: utils::extract_label(&c.labels.items), // FIX: Pass .items
-            description: utils::extract_description(&c.labels.items), // FIX: Pass .items
+            label: utils::extract_label(&c.labels.items),
+            description: utils::extract_description(&c.labels.items),
         })
         .collect())
 }
 
-/// Resolves `<firmwareList>`.
 fn resolve_firmware_list(
     model: &model::device_function::FirmwareList,
 ) -> Result<Vec<types::Firmware>, XdcError> {
@@ -142,14 +133,13 @@ fn resolve_firmware_list(
                     }
                 })?,
                 build_date: f.build_date.clone(),
-                label: utils::extract_label(&f.labels.items), // FIX: Pass .items
-                description: utils::extract_description(&f.labels.items), // FIX: Pass .items
+                label: utils::extract_label(&f.labels.items),
+                description: utils::extract_description(&f.labels.items),
             })
         })
         .collect()
 }
 
-/// Resolves `<classificationList>`.
 fn resolve_classification_list(
     model: &model::device_function::ClassificationList,
 ) -> Result<Vec<types::Classification>, XdcError> {
@@ -161,8 +151,6 @@ fn resolve_classification_list(
         })
         .collect())
 }
-
-// --- Main Resolver ---
 
 /// Parses a `model::DeviceFunction` into a `types::DeviceFunction`.
 pub(super) fn resolve_device_function(
