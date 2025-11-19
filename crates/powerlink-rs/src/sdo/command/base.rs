@@ -377,10 +377,16 @@ mod tests {
         let deserialized = SdoCommand::deserialize(&buffer[..bytes_written]).unwrap();
 
         // Check header fields individually
-        assert_eq!(original.header.transaction_id, deserialized.header.transaction_id);
+        assert_eq!(
+            original.header.transaction_id,
+            deserialized.header.transaction_id
+        );
         assert_eq!(original.header.is_response, deserialized.header.is_response);
         assert_eq!(original.header.is_aborted, deserialized.header.is_aborted);
-        assert_eq!(original.header.segmentation, deserialized.header.segmentation);
+        assert_eq!(
+            original.header.segmentation,
+            deserialized.header.segmentation
+        );
         assert_eq!(original.header.command_id, deserialized.header.command_id);
         // segment_size in the header is the length of the data *in that segment*
         // which is just the payload for expedited.

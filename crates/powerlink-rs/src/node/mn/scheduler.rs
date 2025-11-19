@@ -1,14 +1,14 @@
 // crates/powerlink-rs/src/node/mn/scheduler.rs
-use super::state::{CnInfo, CnState, MnContext};
 use super::payload; // Import payload to build frames
+use super::state::{CnInfo, CnState, MnContext};
 use crate::frame::basic::MacAddress;
 use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId}; // Added ServiceId/Frame
 use crate::nmt::events::{MnNmtCommandRequest, NmtEvent, NmtStateCommand};
 use crate::nmt::{NmtStateMachine, states::NmtState};
-use crate::node::mn::state::NmtCommandData;
-use crate::types::{C_ADR_MN_DEF_NODE_ID, C_ADR_BROADCAST_NODE_ID, NodeId};
-use log::{debug, info, trace};
 use crate::node::mn::ip_from_node_id;
+use crate::node::mn::state::NmtCommandData;
+use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+use log::{debug, info, trace};
 
 /// Looks up a CN's MAC address from the dynamic ARP cache.
 /// The cache is populated passively by `IdentResponse` frames.
@@ -74,10 +74,10 @@ pub(super) fn determine_next_async_action(
     // 5. Check for pending SDO client requests from the MN's stateful manager.
     // CRITICAL FIX: get_pending_request is stateful. We must CAPTURE the result
     // and queue it, otherwise the frame is lost and the manager hangs.
-    if let Some((target_node_id, seq, cmd)) = context.sdo_client_manager.get_pending_request(
-        context.current_cycle_start_time_us,
-        &context.core.od,
-    ) {
+    if let Some((target_node_id, seq, cmd)) = context
+        .sdo_client_manager
+        .get_pending_request(context.current_cycle_start_time_us, &context.core.od)
+    {
         info!(
             "[MN] Prioritizing MN-initiated SDO request to Node {} for async slot.",
             target_node_id.0
@@ -109,7 +109,7 @@ pub(super) fn determine_next_async_action(
 
         return (
             RequestedServiceId::UnspecifiedInvite,
-            NodeId(C_ADR_MN_DEF_NODE_ID), 
+            NodeId(C_ADR_MN_DEF_NODE_ID),
             false,
         );
     }
@@ -128,13 +128,16 @@ pub(super) fn determine_next_async_action(
     // Only if no other frames are queued.
     if context.mn_async_send_queue.is_empty() {
         if let Some(service_id) = context.publish_config.get(&context.current_multiplex_cycle) {
-             trace!("[MN] Scheduling NMT Info Broadcast ({:?}) for async slot.", service_id);
-             
-             // Build the frame using payload logic
-             let frame = payload::build_nmt_info_frame(context, *service_id);
-             context.mn_async_send_queue.push(frame);
-             
-             return (
+            trace!(
+                "[MN] Scheduling NMT Info Broadcast ({:?}) for async slot.",
+                service_id
+            );
+
+            // Build the frame using payload logic
+            let frame = payload::build_nmt_info_frame(context, *service_id);
+            context.mn_async_send_queue.push(frame);
+
+            return (
                 RequestedServiceId::UnspecifiedInvite,
                 NodeId(C_ADR_MN_DEF_NODE_ID),
                 false,
@@ -236,7 +239,7 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             context
                 .node_info
                 .get(node_id)
-                .is_some_and(|info| info.communication_ok) 
+                .is_some_and(|info| info.communication_ok)
         });
 
         if all_mandatory_comm_checked {
@@ -401,7 +404,7 @@ pub(super) fn has_more_isochronous_nodes(context: &MnContext, current_multiplex_
     for idx in context.next_isoch_node_idx..context.isochronous_nodes.len() {
         let node_id = context.isochronous_nodes[idx];
         let assigned_cycle = context.multiplex_assign.get(&node_id).copied().unwrap_or(0);
-        
+
         let should_poll_this_cycle = assigned_cycle == 0
             || (context.multiplex_cycle_len > 0 && assigned_cycle == (current_multiplex_cycle + 1));
 

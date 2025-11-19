@@ -316,11 +316,16 @@ pub(super) fn process_frame(
                                             ObjectValue::VisibleString(hostname),
                                             false, // Bypass access checks for internal write
                                         ) {
-                                            error!("[CN] Failed to write new hostname to OD: {:?}", e);
+                                            error!(
+                                                "[CN] Failed to write new hostname to OD: {:?}",
+                                                e
+                                            );
                                         }
 
                                         // Spec: "CN requests an IdentRequest to itself"
-                                        info!("[CN] NmtNetHostNameSet: Queueing IdentRequest service.");
+                                        info!(
+                                            "[CN] NmtNetHostNameSet: Queueing IdentRequest service."
+                                        );
                                         // Use the new helper method on CnContext
                                         context.queue_nmt_service_request(
                                             NmtServiceRequest::IdentRequest,
@@ -328,11 +333,17 @@ pub(super) fn process_frame(
                                         );
                                     }
                                     Err(e) => {
-                                        error!("[CN] Failed to parse hostname from NmtNetHostNameSet: {:?}", e);
+                                        error!(
+                                            "[CN] Failed to parse hostname from NmtNetHostNameSet: {:?}",
+                                            e
+                                        );
                                     }
                                 }
                             } else {
-                                warn!("[CN] Received NmtNetHostNameSet with invalid payload length ({} bytes)", asnd_frame.payload.len());
+                                warn!(
+                                    "[CN] Received NmtNetHostNameSet with invalid payload length ({} bytes)",
+                                    asnd_frame.payload.len()
+                                );
                             }
                         }
                         NmtManagingCommand::NmtFlushArpEntry => {
@@ -340,10 +351,16 @@ pub(super) fn process_frame(
                             // Payload is [CmdID(1), Reserved(1), NodeID(1)]
                             if asnd_frame.payload.len() >= 3 {
                                 let node_to_flush = asnd_frame.payload[2];
-                                info!("[CN] Received NmtFlushArpEntry for Node ID {}. (ARP cache not yet implemented).", node_to_flush);
+                                info!(
+                                    "[CN] Received NmtFlushArpEntry for Node ID {}. (ARP cache not yet implemented).",
+                                    node_to_flush
+                                );
                                 // TODO: Add call to cn.arp_cache.flush(node_to_flush)
                             } else {
-                                warn!("[CN] Received NmtFlushArpEntry with invalid payload length ({} bytes)", asnd_frame.payload.len());
+                                warn!(
+                                    "[CN] Received NmtFlushArpEntry with invalid payload length ({} bytes)",
+                                    asnd_frame.payload.len()
+                                );
                             }
                         }
                     }

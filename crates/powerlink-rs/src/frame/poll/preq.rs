@@ -274,10 +274,7 @@ mod tests {
         let buffer_short_header = [0u8; 13];
         let result_header = crate::frame::deserialize_frame(&buffer_short_header);
         // Correct the assertion: Expect BufferTooShort, not InvalidEthernetFrame
-        assert!(matches!(
-            result_header,
-            Err(PowerlinkError::BufferTooShort)
-        ));
+        assert!(matches!(result_header, Err(PowerlinkError::BufferTooShort)));
 
         // Test buffer that is too short for payload size indicated IN the frame
         let original_frame = PReqFrame::new(

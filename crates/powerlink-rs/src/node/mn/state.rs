@@ -33,7 +33,7 @@ pub enum NmtCommandData {
 /// Holds the complete state for a Managing Node.
 pub struct MnContext<'s> {
     pub core: CoreNodeContext<'s>, // Use CoreNodeContext for shared state
-    
+
     /// The Configuration Manager interface.
     /// Allows the MN to retrieve expected configuration data for CNs.
     pub configuration_interface: Option<&'s dyn ConfigurationInterface>, // <-- ADDED

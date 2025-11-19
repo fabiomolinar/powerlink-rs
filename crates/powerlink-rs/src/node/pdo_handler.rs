@@ -3,8 +3,8 @@ use crate::node::NodeContext;
 use crate::od::{ObjectValue, constants};
 use crate::pdo::{PDOVersion, PdoMappingEntry};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
-use log::{error, trace, warn};
 use alloc::vec::Vec;
+use log::{error, trace, warn};
 
 /// A trait for handling Process Data Object (PDO) logic.
 /// The lifetime parameter 's matches the lifetime of the Node implementing this trait.

@@ -19,8 +19,8 @@ use alloc::vec::Vec;
 use log::{debug, error, trace, warn};
 
 // Import NmtCommandData
-use crate::node::mn::state::{CnState, NmtCommandData};
 use crate::nmt::states::NmtState;
+use crate::node::mn::state::{CnState, NmtCommandData};
 
 // Constants for OD access
 const OD_IDX_TPDO_COMM_PARAM_BASE: u16 = 0x1800;
@@ -400,10 +400,7 @@ pub(super) fn build_nmt_command_frame(
 
 /// Builds an ASnd(NMT Info) broadcast frame.
 /// (Reference: EPSG DS 301, Section 7.3.4)
-pub(super) fn build_nmt_info_frame(
-    context: &MnContext,
-    service_id: ServiceId,
-) -> PowerlinkFrame {
+pub(super) fn build_nmt_info_frame(context: &MnContext, service_id: ServiceId) -> PowerlinkFrame {
     debug!("[MN] Building ASnd(NMT Info={:?}) broadcast.", service_id);
 
     let nmt_payload = match service_id {

@@ -279,13 +279,11 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             );
         } else if let Some(&node_id) = context.mandatory_nodes.first() {
             info!("[MN] Queuing NMTStartNode (Unicast).");
-            context
-                .pending_nmt_commands
-                .push((
-                    MnNmtCommandRequest::State(NmtStateCommand::StartNode),
-                    node_id,
-                    NmtCommandData::None,
-                ));
+            context.pending_nmt_commands.push((
+                MnNmtCommandRequest::State(NmtStateCommand::StartNode),
+                node_id,
+                NmtCommandData::None,
+            ));
         }
     } else if current_nmt_state < NmtState::NmtOperational {
         context.initial_operational_actions_done = false;

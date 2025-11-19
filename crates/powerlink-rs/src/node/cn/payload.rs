@@ -182,9 +182,9 @@ pub(super) fn build_nmt_request(
     );
     // Payload format from Spec Table 144
     let payload = vec![
-        command_id,    // NMTRequestedCommandID
-        target.0,      // NMTRequestedCommandTarget
-                       // NMTRequestedCommandData is omitted for plain commands/services
+        command_id, // NMTRequestedCommandID
+        target.0,   // NMTRequestedCommandTarget
+                    // NMTRequestedCommandData is omitted for plain commands/services
     ];
 
     let asnd = ASndFrame::new(

@@ -5,7 +5,7 @@ use super::{
     entry::ObjectEntry,
     {AccessType, Category, Object, ObjectValue, PdoMapping},
 };
-use crate::{nmt::flags::FeatureFlags, types::NodeId, PowerlinkError};
+use crate::{PowerlinkError, nmt::flags::FeatureFlags, types::NodeId};
 use alloc::vec;
 
 /// Creates a minimal, compliant Object Dictionary for a POWERLINK
@@ -82,11 +82,11 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         0x1010,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(4),   // Max sub-index
-                ObjectValue::Unsigned32(0),  // 1: All parameters
-                ObjectValue::Unsigned32(0),  // 2: Communication
-                ObjectValue::Unsigned32(0),  // 3: Application
-                ObjectValue::Unsigned32(0),  // 4: Manufacturer
+                ObjectValue::Unsigned8(4),  // Max sub-index
+                ObjectValue::Unsigned32(0), // 1: All parameters
+                ObjectValue::Unsigned32(0), // 2: Communication
+                ObjectValue::Unsigned32(0), // 3: Application
+                ObjectValue::Unsigned32(0), // 4: Manufacturer
             ]),
             name: "NMT_StoreParam_REC",
             category: Category::Optional,
@@ -102,11 +102,11 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         0x1011,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(4),   // Max sub-index
-                ObjectValue::Unsigned32(0),  // 1: All parameters
-                ObjectValue::Unsigned32(0),  // 2: Communication
-                ObjectValue::Unsigned32(0),  // 3: Application
-                ObjectValue::Unsigned32(0),  // 4: Manufacturer
+                ObjectValue::Unsigned8(4),  // Max sub-index
+                ObjectValue::Unsigned32(0), // 1: All parameters
+                ObjectValue::Unsigned32(0), // 2: Communication
+                ObjectValue::Unsigned32(0), // 3: Application
+                ObjectValue::Unsigned32(0), // 4: Manufacturer
             ]),
             name: "NMT_RestoreParam_REC",
             category: Category::Optional,
@@ -122,7 +122,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         0x1018,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(4),           
+                ObjectValue::Unsigned8(4),
                 ObjectValue::Unsigned32(0x12345678), // VendorId
                 ObjectValue::Unsigned32(0x00000001), // ProductCode
                 ObjectValue::Unsigned32(0x00010000), // RevisionNo
@@ -136,10 +136,10 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
             pdo_mapping: None,
         },
     );
-    
+
     // ... (Rest of the function: 0x1F82, 0x1F93, 0x1C14, Diagnostic) ...
     // Ensure you keep 0x1F82, 0x1F93, 0x1C14 and add_diagnostic_objects call!
-    
+
     let cn_flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND;
     od.insert(
         0x1F82,
@@ -159,7 +159,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         0x1F93,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(2), 
+                ObjectValue::Unsigned8(2),
                 ObjectValue::Unsigned8(node_id.0),
                 ObjectValue::Boolean(0),
             ]),
@@ -176,7 +176,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
     od.insert(
         0x1C14,
         ObjectEntry {
-            object: Object::Variable(ObjectValue::Unsigned32(100000)), 
+            object: Object::Variable(ObjectValue::Unsigned32(100000)),
             name: "DLL_CNLossOfSocTolerance_U32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),

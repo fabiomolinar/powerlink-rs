@@ -6,6 +6,7 @@ use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler}
 use crate::frame::{DllError, NmtAction, ServiceId, deserialize_frame};
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtEvent;
+use crate::nmt::events::{CnNmtRequest, NmtStateCommand};
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{CoreNodeContext, Node, NodeAction};
@@ -20,13 +21,12 @@ use crate::sdo::{
 };
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
-use crate::nmt::events::{CnNmtRequest, NmtStateCommand};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
-use log::{error, info, warn};
 #[cfg(feature = "sdo-udp")]
 use log::debug;
+use log::{error, info, warn};
 
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct is a thin wrapper around a context object that holds all state.

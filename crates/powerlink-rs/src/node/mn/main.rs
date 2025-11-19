@@ -82,8 +82,7 @@ impl<'s> ManagingNode<'s> {
 
         // --- Initialize NMT Info Publish Configuration (0x1F9E) ---
         let mut publish_config = BTreeMap::new();
-        if let Some(Object::Array(entries)) =
-            od.read_object(constants::IDX_NMT_PUBLISH_CONFIG_AU32)
+        if let Some(Object::Array(entries)) = od.read_object(constants::IDX_NMT_PUBLISH_CONFIG_AU32)
         {
             // Sub-index 0 is NumberOfEntries. Real entries start at 1.
             for (i, entry) in entries.iter().enumerate() {
@@ -574,7 +573,7 @@ impl<'s> ManagingNode<'s> {
         self.context.pending_nmt_commands.push((
             MnNmtCommandRequest::Managing(NmtManagingCommand::NmtFlushArpEntry),
             NodeId(crate::types::C_ADR_BROADCAST_NODE_ID), // Command is always broadcast
-            NmtCommandData::FlushArp(target), // Payload contains the target to flush
+            NmtCommandData::FlushArp(target),              // Payload contains the target to flush
         ));
     }
 

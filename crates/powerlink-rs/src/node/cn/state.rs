@@ -77,11 +77,7 @@ impl<'s> NodeContext<'s> for CnContext<'s> {
 impl<'s> CnContext<'s> {
     /// Internal helper to queue an NMT service request.
     /// Used by NmtNetHostNameSet handler to request an IdentResponse.
-    pub(super) fn queue_nmt_service_request(
-        &mut self,
-        service: NmtServiceRequest,
-        target: NodeId,
-    ) {
+    pub(super) fn queue_nmt_service_request(&mut self, service: NmtServiceRequest, target: NodeId) {
         info!(
             "Queueing NMT Service request: Service={:?}, Target={}",
             service, target.0
