@@ -1,13 +1,11 @@
-// crates/powerlink-rs-xdc/src/model/device_function.rs
-
 //! Contains model structs related to `<DeviceFunction>`.
+//!
 //! (Schema: `ProfileBody_Device_Powerlink.xsd`)
 
+use super::common::{Glabels, LabelChoice};
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
-// Import LabelChoice, as we will use it directly
-use super::common::{Glabels, LabelChoice};
 
 /// Represents the `<DeviceFunction>` element.
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -103,9 +101,6 @@ pub struct Characteristic {
 /// Represents `<characteristicName>`.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct CharacteristicName {
-    // FIX: Removed `#[serde(flatten)] pub labels: Glabels,`
-    // Replaced with the `items` field directly, as `t_characteristicName`
-    // extends `t_g_labels`, which is just the choice.
     #[serde(rename = "$value", default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<LabelChoice>,
 }
@@ -113,8 +108,6 @@ pub struct CharacteristicName {
 /// Represents `<characteristicContent>`.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct CharacteristicContent {
-    // FIX: Removed `#[serde(flatten)] pub labels: Glabels,`
-    // Replaced with the `items` field directly.
     #[serde(rename = "$value", default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<LabelChoice>,
 
@@ -223,7 +216,6 @@ pub struct Connector {
     pub pos_x: Option<String>,
     #[serde(rename = "@posY", default, skip_serializing_if = "Option::is_none")]
     pub pos_y: Option<String>,
-    // FIX: Restored the correct `positioning` field and removed the incorrect `position` field.
     #[serde(
         rename = "@positioning",
         default,

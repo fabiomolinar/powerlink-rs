@@ -1,14 +1,13 @@
-// crates/powerlink-rs-xdc/src/model/device_manager.rs
-
 //! Contains model structs related to `<DeviceManager>`.
+//!
 //! (Schema: `ProfileBody_Device_Powerlink.xsd`)
 
 use super::common::Glabels;
-use super::modular::ModuleManagementDevice; // Import modular struct
+use super::modular::ModuleManagementDevice;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
-use serde::{Deserialize, Serialize}; // Import for Display trait
+use serde::{Deserialize, Serialize};
 
 /// Represents the `<DeviceManager>` element.
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -19,8 +18,8 @@ pub struct DeviceManager {
         skip_serializing_if = "Option::is_none"
     )]
     pub indicator_list: Option<IndicatorList>,
+
     /// This field is only present in Modular Head device profiles.
-    /// (from `ProfileBody_Device_Powerlink_Modular_Head.xsd`)
     #[serde(
         rename = "moduleManagement",
         default,
@@ -67,7 +66,6 @@ impl fmt::Display for LEDcolors {
     }
 }
 
-// Fix: Add Default implementation
 impl Default for LEDcolors {
     fn default() -> Self {
         Self::Monocolor
@@ -129,7 +127,6 @@ impl fmt::Display for LEDstateEnum {
     }
 }
 
-// Fix: Add Default implementation
 impl Default for LEDstateEnum {
     fn default() -> Self {
         Self::Off
@@ -157,7 +154,6 @@ impl fmt::Display for LEDcolor {
     }
 }
 
-// Fix: Add Default implementation
 impl Default for LEDcolor {
     fn default() -> Self {
         Self::Green

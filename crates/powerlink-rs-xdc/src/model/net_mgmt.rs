@@ -1,14 +1,13 @@
-// crates/powerlink-rs-xdc/src/model/net_mgmt.rs
-
 //! Contains model structs related to `<NetworkManagement>`.
+//!
 //! (Schema: `ProfileBody_CommunicationNetwork_Powerlink.xsd`)
 
 use super::common::Glabels;
 use alloc::string::String;
 use alloc::vec::Vec;
-use serde::{Deserialize, Serialize}; // Import Glabels for Diagnostic types
+use serde::{Deserialize, Serialize};
 
-/// Represents `<NetworkManagement>` (from XSD `t_NetworkManagement`).
+/// Represents the `<NetworkManagement>` element.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct NetworkManagement {
     #[serde(rename = "GeneralFeatures")]
@@ -44,10 +43,8 @@ pub struct NetworkManagement {
 }
 
 /// Represents `<GeneralFeatures>` (from XSD `t_GeneralFeatures`).
-/// This struct now contains all attributes defined in the schema.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct GeneralFeatures {
-    // --- Attributes from schema `t_GeneralFeatures` ---
     #[serde(
         rename = "@CFMConfigManager",
         default,
@@ -72,9 +69,9 @@ pub struct GeneralFeatures {
         skip_serializing_if = "Option::is_none"
     )]
     pub dll_feature_cn: Option<bool>,
-    #[serde(rename = "@DLLFeatureMN")] // Required
+    #[serde(rename = "@DLLFeatureMN")]
     pub dll_feature_mn: bool,
-    #[serde(rename = "@NMTBootTimeNotActive")] // Required
+    #[serde(rename = "@NMTBootTimeNotActive")]
     pub nmt_boot_time_not_active: String, // xsd:unsignedInt
     #[serde(
         rename = "@NMTCycleTimeGranularity",
@@ -82,9 +79,9 @@ pub struct GeneralFeatures {
         skip_serializing_if = "Option::is_none"
     )]
     pub nmt_cycle_time_granularity: Option<String>, // xsd:unsignedInt
-    #[serde(rename = "@NMTCycleTimeMax")] // Required
+    #[serde(rename = "@NMTCycleTimeMax")]
     pub nmt_cycle_time_max: String, // xsd:unsignedInt
-    #[serde(rename = "@NMTCycleTimeMin")] // Required
+    #[serde(rename = "@NMTCycleTimeMin")]
     pub nmt_cycle_time_min: String, // xsd:unsignedInt
     #[serde(
         rename = "@NMTMinRedCycleTime",
@@ -98,7 +95,7 @@ pub struct GeneralFeatures {
         skip_serializing_if = "Option::is_none"
     )]
     pub nmt_emergency_queue_size: Option<String>, // xsd:unsignedInt
-    #[serde(rename = "@NMTErrorEntries")] // Required
+    #[serde(rename = "@NMTErrorEntries")]
     pub nmt_error_entries: String, // xsd:unsignedInt
     #[serde(
         rename = "@NMTExtNmtCmds",
@@ -465,7 +462,6 @@ pub struct GeneralFeatures {
 /// Represents `<MNFeatures>` (from XSD `t_MNFeatures`).
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct MnFeatures {
-    // --- Attributes from schema `t_MNFeatures` ---
     #[serde(
         rename = "@DLLErrMNMultipleMN",
         default,
@@ -490,7 +486,7 @@ pub struct MnFeatures {
         skip_serializing_if = "Option::is_none"
     )]
     pub dll_mn_feature_pres_tx: Option<bool>,
-    #[serde(rename = "@NMTMNASnd2SoC")] // Required
+    #[serde(rename = "@NMTMNASnd2SoC")]
     pub nmt_mn_asnd_2_soc: String, // xsd:unsignedInt
     #[serde(
         rename = "@NMTMNBasicEthernet",
@@ -504,17 +500,17 @@ pub struct MnFeatures {
         skip_serializing_if = "Option::is_none"
     )]
     pub nmt_mn_multipl_cyc_max: Option<String>, // xsd:unsignedByte
-    #[serde(rename = "@NMTMNPRes2PReq")] // Required
+    #[serde(rename = "@NMTMNPRes2PReq")]
     pub nmt_mn_pres_2_preq: String, // xsd:unsignedInt
-    #[serde(rename = "@NMTMNPRes2PRes")] // Required
+    #[serde(rename = "@NMTMNPRes2PRes")]
     pub nmt_mn_pres_2_pres: String, // xsd:unsignedInt
-    #[serde(rename = "@NMTMNPResRx2SoA")] // Required
+    #[serde(rename = "@NMTMNPResRx2SoA")]
     pub nmt_mn_pres_rx_2_soa: String, // xsd:unsignedInt
-    #[serde(rename = "@NMTMNPResTx2SoA")] // Required
+    #[serde(rename = "@NMTMNPResTx2SoA")]
     pub nmt_mn_pres_tx_2_soa: String, // xsd:unsignedInt
-    #[serde(rename = "@NMTMNSoA2ASndTx")] // Required
+    #[serde(rename = "@NMTMNSoA2ASndTx")]
     pub nmt_mn_soa_2_asnd_tx: String, // xsd:unsignedInt
-    #[serde(rename = "@NMTMNSoC2PReq")] // Required
+    #[serde(rename = "@NMTMNSoC2PReq")]
     pub nmt_mn_soc_2_preq: String, // xsd:unsignedInt
     #[serde(
         rename = "@NMTNetTime",
@@ -540,7 +536,7 @@ pub struct MnFeatures {
         skip_serializing_if = "Option::is_none"
     )]
     pub nmt_service_udp_ip: Option<bool>,
-    #[serde(rename = "@NMTSimpleBoot")] // Required
+    #[serde(rename = "@NMTSimpleBoot")]
     pub nmt_simple_boot: bool,
     #[serde(
         rename = "@PDOTPDOChannels",
@@ -573,13 +569,13 @@ pub struct MnFeatures {
 /// Represents the `NMTCNDNA` attribute enum (from XSD `t_CNFeaturesNMT_CN_DNA`).
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum CnFeaturesNmtCnDna {
-    /// "0" = Do not clear
+    /// "0" = Do not clear.
     #[serde(rename = "0")]
     DoNotClear,
-    /// "1" = Clear on PRE_OP1 -> PRE_OP2
+    /// "1" = Clear on PRE_OP1 -> PRE_OP2.
     #[serde(rename = "1")]
     ClearOnPreOp1ToPreOp2,
-    /// "2" = Clear on NMT_Reset_Node
+    /// "2" = Clear on NMT_Reset_Node.
     #[serde(rename = "2")]
     ClearOnNmtResetNode,
 }
@@ -587,7 +583,6 @@ pub enum CnFeaturesNmtCnDna {
 /// Represents `<CNFeatures>` (from XSD `t_CNFeatures`).
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct CnFeatures {
-    // --- Attributes from schema `t_CNFeatures` ---
     #[serde(
         rename = "@DLLCNFeatureMultiplex",
         default,
@@ -606,7 +601,7 @@ pub struct CnFeatures {
         skip_serializing_if = "Option::is_none"
     )]
     pub nmt_cn_pre_op2_to_ready2_op: Option<String>, // xsd:unsignedInt
-    #[serde(rename = "@NMTCNSoC2PReq")] // Required
+    #[serde(rename = "@NMTCNSoC2PReq")]
     pub nmt_cn_soc_2_preq: String, // xsd:unsignedInt
     #[serde(
         rename = "@NMTCNSetNodeNumberTime",
@@ -615,7 +610,6 @@ pub struct CnFeatures {
     )]
     pub nmt_cn_set_node_number_time: Option<String>, // xsd:unsignedInt
 
-    // This is the corrected field, using the enum instead of Option<bool>
     #[serde(rename = "@NMTCNDNA", default, skip_serializing_if = "Option::is_none")]
     pub nmt_cn_dna: Option<CnFeaturesNmtCnDna>,
 

@@ -1,13 +1,11 @@
-// crates/powerlink-rs-xdc/src/model/identity.rs
-
 //! Contains model structs related to `<DeviceIdentity>`.
+//!
 //! (Schema: `ProfileBody_Device_Powerlink.xsd`)
 
+use super::common::{bool_true, is_true, AttributedGlabels, InstanceName, ReadOnlyString};
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
-// Removed unused import `is_false`
-use super::common::{AttributedGlabels, InstanceName, ReadOnlyString, bool_true, is_true};
 
 /// Represents a `<version>` element within `<DeviceIdentity>`.
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -20,14 +18,16 @@ pub struct Version {
         default = "bool_true",
         skip_serializing_if = "is_true"
     )]
-    pub read_only: bool, // Added from schema
+    pub read_only: bool,
 
     #[serde(rename = "$value")]
     pub value: String,
 }
 
 /// Represents the `<DeviceIdentity>` block in the Device Profile.
-/// (Updated for Task 2)
+///
+/// This block contains attributes that uniquely identify the device, independent
+/// of the network or process.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DeviceIdentity {
     #[serde(rename = "vendorName")]
@@ -41,21 +41,21 @@ pub struct DeviceIdentity {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub vendor_text: Option<AttributedGlabels>, // New
+    pub vendor_text: Option<AttributedGlabels>,
 
     #[serde(
         rename = "deviceFamily",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub device_family: Option<AttributedGlabels>, // New
+    pub device_family: Option<AttributedGlabels>,
 
     #[serde(
         rename = "productFamily",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub product_family: Option<ReadOnlyString>, // New
+    pub product_family: Option<ReadOnlyString>,
 
     #[serde(rename = "productName")]
     pub product_name: ReadOnlyString,
@@ -68,28 +68,28 @@ pub struct DeviceIdentity {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub product_text: Option<AttributedGlabels>, // New
+    pub product_text: Option<AttributedGlabels>,
 
     #[serde(rename = "orderNumber", default, skip_serializing_if = "Vec::is_empty")]
-    pub order_number: Vec<ReadOnlyString>, // New
+    pub order_number: Vec<ReadOnlyString>,
 
     #[serde(rename = "version", default, skip_serializing_if = "Vec::is_empty")]
     pub version: Vec<Version>,
 
     #[serde(rename = "buildDate", default, skip_serializing_if = "Option::is_none")]
-    pub build_date: Option<String>, // xsd:date, New
+    pub build_date: Option<String>,
 
     #[serde(
         rename = "specificationRevision",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub specification_revision: Option<ReadOnlyString>, // New
+    pub specification_revision: Option<ReadOnlyString>,
 
     #[serde(
         rename = "instanceName",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub instance_name: Option<InstanceName>, // New
+    pub instance_name: Option<InstanceName>,
 }

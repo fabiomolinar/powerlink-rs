@@ -1,10 +1,7 @@
-// crates/powerlink-rs-xdc/src/model/modular.rs
-
 //! Contains model structs related to Modular Device Profiles.
-//! (Schemas: `CommonElements_Modular.xsd`, `ProfileBody_Device_Powerlink_Modular_Head.xsd`,
-//! `ProfileBody_Device_Powerlink_Modular_Child.xsd`,
-//! `ProfileBody_CommunicationNetwork_Powerlink_Modular_Head.xsd`,
-//! `ProfileBody_CommunicationNetwork_Powerlink_Modular_Child.xsd`)
+//!
+//! (Schemas: `CommonElements_Modular.xsd`, `ProfileBody_*_Modular_Head.xsd`,
+//! `ProfileBody_*_Modular_Child.xsd`)
 
 use super::app_layers::ObjectPdoMapping;
 use super::common::Glabels;
@@ -12,23 +9,23 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-// --- Common Modular Types (from CommonElements_Modular.xsd) ---
+// --- Common Modular Types ---
 
-/// Represents a `<file>` element.
+/// Represents a `<file>` element with a URI.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct File {
     #[serde(rename = "@URI")]
-    pub uri: String, // xsd:anyURI
+    pub uri: String,
 }
 
-/// Represents a `<fileList>` element.
+/// Represents a `<fileList>` containing multiple file references.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct FileList {
     #[serde(rename = "file", default, skip_serializing_if = "Vec::is_empty")]
     pub file: Vec<File>,
 }
 
-/// Represents a `<moduleType>` element.
+/// Represents a `<moduleType>` definition.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ModuleType {
     #[serde(rename = "@uniqueID")]
@@ -37,14 +34,14 @@ pub struct ModuleType {
     pub module_type: String, // xsd:NCName
 }
 
-/// Represents a `<moduleTypeList>` element.
+/// Represents a `<moduleTypeList>`.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ModuleTypeList {
     #[serde(rename = "moduleType", default, skip_serializing_if = "Vec::is_empty")]
     pub module_type: Vec<ModuleType>,
 }
 
-/// Represents the `@sortMode` attribute enum.
+/// Enum for the `@sortMode` attribute.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum SortMode {
     #[serde(rename = "index")]
@@ -53,14 +50,13 @@ pub enum SortMode {
     Subindex,
 }
 
-// Fix: Add Default implementation
 impl Default for SortMode {
     fn default() -> Self {
         Self::Index
     }
 }
 
-/// Represents the `@sortNumber` / `@addressingAttribute` attribute enum.
+/// Enum for the `@sortNumber` / `@addressingAttribute` attribute.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum AddressingAttribute {
     #[serde(rename = "continuous")]
@@ -69,14 +65,13 @@ pub enum AddressingAttribute {
     Address,
 }
 
-// Fix: Add Default implementation
 impl Default for AddressingAttribute {
     fn default() -> Self {
         Self::Continuous
     }
 }
 
-/// Represents the `@moduleAddressing` attribute enum for a modular child.
+/// Enum for the `@moduleAddressing` attribute on a child module interface.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleAddressingChild {
     #[serde(rename = "manual")]
@@ -87,14 +82,13 @@ pub enum ModuleAddressingChild {
     Next,
 }
 
-// Fix: Add Default implementation
 impl Default for ModuleAddressingChild {
     fn default() -> Self {
         Self::Position
     }
 }
 
-/// Represents the `@moduleAddressing` attribute enum for a modular head.
+/// Enum for the `@moduleAddressing` attribute on a head module interface.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleAddressingHead {
     #[serde(rename = "manual")]
@@ -103,7 +97,6 @@ pub enum ModuleAddressingHead {
     Position,
 }
 
-// Fix: Add Default implementation
 impl Default for ModuleAddressingHead {
     fn default() -> Self {
         Self::Position
@@ -155,7 +148,7 @@ pub struct ModuleInterface {
     pub max_count: Option<String>, // xsd:nonNegativeInteger
 }
 
-// --- Device Profile Modular Types (from ProfileBody_Device_Powerlink_Modular_...) ---
+// --- Device Profile Modular Types ---
 
 /// Represents a `<connectedModule>` element.
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -243,9 +236,9 @@ pub struct ModuleManagementDevice {
     pub module_interface: Option<ModuleInterface>,
 }
 
-// --- Comm Network Profile Modular Types (from ProfileBody_CommunicationNetwork_Modular_...) ---
+// --- Communication Profile Modular Types ---
 
-/// Represents a `<range>` element.
+/// Represents a `<range>` element defining an Object Dictionary index range.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Range {
     #[serde(rename = "@name")]

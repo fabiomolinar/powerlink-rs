@@ -1,14 +1,13 @@
-// crates/powerlink-rs-xdc/src/model/app_layers.rs
-
 //! Contains model structs related to `<ApplicationLayers>`.
+//!
 //! (Schema: `ProfileBody_CommunicationNetwork_Powerlink.xsd`)
 
 use super::modular::ModuleManagementComm;
 use alloc::string::String;
 use alloc::vec::Vec;
-use serde::{Deserialize, Serialize}; // Added import
+use serde::{Deserialize, Serialize};
 
-/// Contains the ObjectList and DataTypeList.
+/// Contains the Object Dictionary definition (`ObjectList`) and Data Type definitions (`DataTypeList`).
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ApplicationLayers {
     /// This optional list defines the mapping from hex ID to type name.
@@ -42,7 +41,8 @@ pub struct ObjectList {
 
 // --- Enums for Object/SubObject Attributes ---
 
-/// Access types of an object / subobject (from XSD `t_ObjectAccessType`).
+/// Access types of an object / subobject.
+/// (from XSD `t_ObjectAccessType`)
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectAccessType {
     #[serde(rename = "ro")]
@@ -55,7 +55,8 @@ pub enum ObjectAccessType {
     Constant,
 }
 
-/// Ability to map an object / subobject to a PDO (from XSD `t_ObjectPDOMapping`).
+/// Ability to map an object / subobject to a PDO.
+/// (from XSD `t_ObjectPDOMapping`)
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum ObjectPdoMapping {
     #[serde(rename = "no")]
@@ -70,8 +71,9 @@ pub enum ObjectPdoMapping {
     Rpdo,
 }
 
-/// Represents an Object Dictionary index (e.g., <Object index="1F22"...>).
-/// This struct includes attributes from the `ag_Powerlink_Object` group.
+/// Represents an Object Dictionary index.
+///
+/// This struct includes attributes from the `ag_Powerlink_Object` attribute group.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Object {
     /// The OD index as a hex string (e.g., "1F22").
@@ -79,23 +81,21 @@ pub struct Object {
     pub index: String,
 
     // --- Fields from ag_Powerlink_Object ---
-    /// The name of the object.
+
     #[serde(rename = "@name")]
     pub name: String,
 
-    /// The object type (e.g., "9" for RECORD).
+    /// The object type (e.g., "7" for VAR, "8" for ARRAY, "9" for RECORD).
     #[serde(rename = "@objectType")]
     pub object_type: String,
 
-    /// The POWERLINK data type (e.g., "0006" for Unsigned16).
+    /// The POWERLINK data type ID (e.g., "0006" for Unsigned16).
     #[serde(rename = "@dataType", default, skip_serializing_if = "Option::is_none")]
     pub data_type: Option<String>,
 
-    /// The lower limit of the object's value.
     #[serde(rename = "@lowLimit", default, skip_serializing_if = "Option::is_none")]
     pub low_limit: Option<String>,
 
-    /// The upper limit of the object's value.
     #[serde(
         rename = "@highLimit",
         default,
@@ -103,7 +103,6 @@ pub struct Object {
     )]
     pub high_limit: Option<String>,
 
-    /// The access type (e.g., "ro", "rw").
     #[serde(
         rename = "@accessType",
         default,
@@ -111,7 +110,7 @@ pub struct Object {
     )]
     pub access_type: Option<ObjectAccessType>,
 
-    /// The default value of the object.
+    /// The default value of the object. Used primarily in Device Description (XDD) files.
     #[serde(
         rename = "@defaultValue",
         default,
@@ -119,7 +118,7 @@ pub struct Object {
     )]
     pub default_value: Option<String>,
 
-    /// The actual value of the object (used in XDC).
+    /// The actual value of the object. Used primarily in Configuration (XDC) files.
     #[serde(
         rename = "@actualValue",
         default,
@@ -127,7 +126,6 @@ pub struct Object {
     )]
     pub actual_value: Option<String>,
 
-    /// A denotation for the object.
     #[serde(
         rename = "@denotation",
         default,
@@ -135,7 +133,6 @@ pub struct Object {
     )]
     pub denotation: Option<String>,
 
-    /// The PDO mapping capability of the object.
     #[serde(
         rename = "@PDOmapping",
         default,
@@ -143,11 +140,10 @@ pub struct Object {
     )]
     pub pdo_mapping: Option<ObjectPdoMapping>,
 
-    /// Object flags.
     #[serde(rename = "@objFlags", default, skip_serializing_if = "Option::is_none")]
     pub obj_flags: Option<String>,
 
-    /// This attribute references a Parameter's uniqueID in the ApplicationProcess.
+    /// References a Parameter's `uniqueID` in the `ApplicationProcess`.
     #[serde(
         rename = "@uniqueIDRef",
         default,
@@ -156,6 +152,7 @@ pub struct Object {
     pub unique_id_ref: Option<String>,
 
     // --- End of fields from ag_Powerlink_Object ---
+
     /// This attribute is used by modular devices to reference an index range.
     /// (from `t_Object_Extension_Head` and `t_Object_Extension`)
     #[serde(
@@ -165,13 +162,12 @@ pub struct Object {
     )]
     pub range_selector: Option<String>,
 
-    /// A list of SubObjects (e.g., <SubObject subIndex="01"...>).
+    /// A list of SubObjects (e.g., `<SubObject subIndex="01"...>`).
     #[serde(rename = "SubObject", default)]
     pub sub_object: Vec<SubObject>,
 }
 
 /// Represents an Object Dictionary sub-index.
-/// This struct includes attributes from the `ag_Powerlink_Object` group.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct SubObject {
     /// The OD sub-index as a hex string (e.g., "01").
@@ -179,23 +175,19 @@ pub struct SubObject {
     pub sub_index: String,
 
     // --- Fields from ag_Powerlink_Object ---
-    /// The name of the sub-object.
+
     #[serde(rename = "@name")]
     pub name: String,
 
-    /// The object type (e.t., "7" for VAR).
     #[serde(rename = "@objectType")]
     pub object_type: String,
 
-    /// The POWERLINK data type (e.g., "0006" for Unsigned16).
     #[serde(rename = "@dataType", default, skip_serializing_if = "Option::is_none")]
     pub data_type: Option<String>,
 
-    /// The lower limit of the sub-object's value.
     #[serde(rename = "@lowLimit", default, skip_serializing_if = "Option::is_none")]
     pub low_limit: Option<String>,
 
-    /// The upper limit of the sub-object's value.
     #[serde(
         rename = "@highLimit",
         default,
@@ -203,7 +195,6 @@ pub struct SubObject {
     )]
     pub high_limit: Option<String>,
 
-    /// The access type (e.g., "ro", "rw").
     #[serde(
         rename = "@accessType",
         default,
@@ -211,7 +202,6 @@ pub struct SubObject {
     )]
     pub access_type: Option<ObjectAccessType>,
 
-    /// The `defaultValue` is the key data for an XDD file.
     #[serde(
         rename = "@defaultValue",
         default,
@@ -219,7 +209,6 @@ pub struct SubObject {
     )]
     pub default_value: Option<String>,
 
-    /// The `actualValue` is the key data for an XDC file.
     #[serde(
         rename = "@actualValue",
         default,
@@ -227,7 +216,6 @@ pub struct SubObject {
     )]
     pub actual_value: Option<String>,
 
-    /// A denotation for the sub-object.
     #[serde(
         rename = "@denotation",
         default,
@@ -235,7 +223,6 @@ pub struct SubObject {
     )]
     pub denotation: Option<String>,
 
-    /// The PDO mapping capability of the sub-object.
     #[serde(
         rename = "@PDOmapping",
         default,
@@ -243,21 +230,18 @@ pub struct SubObject {
     )]
     pub pdo_mapping: Option<ObjectPdoMapping>,
 
-    /// Object flags.
     #[serde(rename = "@objFlags", default, skip_serializing_if = "Option::is_none")]
     pub obj_flags: Option<String>,
 
-    /// This attribute references a Parameter's uniqueID in the ApplicationProcess.
     #[serde(
         rename = "@uniqueIDRef",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub unique_id_ref: Option<String>,
-    // --- End of fields from ag_Powerlink_Object ---
 }
 
-// --- STRUCTS for DataTypeList (Comm Profile) ---
+// --- STRUCTS for DataTypeList ---
 
 /// Represents `<DataTypeList>` (EPSG 311, 7.5.4.3).
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -278,7 +262,7 @@ pub struct DefType {
     pub type_name: DataTypeName,
 }
 
-/// Represents the tag name of the child of `<defType>`.
+/// Enumeration of standard POWERLINK data type tags.
 /// (Based on EPSG 311, Table 56).
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum DataTypeName {

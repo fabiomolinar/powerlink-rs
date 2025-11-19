@@ -1,17 +1,15 @@
-// crates/powerlink-rs-xdc/src/model/app_process.rs
-
 //! Contains model structs related to `<ApplicationProcess>`.
+//!
 //! (Schema: `ProfileBody_Device_Powerlink.xsd`)
 
-use super::common::{DataTypeIDRef, Glabels, bool_false, is_false};
+use super::common::{bool_false, is_false, DataTypeIDRef, Glabels};
 use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-// --- STRUCTS for ApplicationProcess (Task 5) ---
-
-/// Represents the `<ApplicationProcess>` block (EPSG 311, 7.4.7).
-/// This contains the device parameters, which are the source of default values.
+/// Represents the `<ApplicationProcess>` block.
+///
+/// This contains the device parameters, which serve as the source of default values.
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct ApplicationProcess {
     /// Contains user-defined data types (EPSG 311, 7.4.7.2).
@@ -47,7 +45,7 @@ pub struct ApplicationProcess {
     pub template_list: Option<TemplateList>,
 
     /// Contains parameter definitions (EPSG 311, 7.4.7.7).
-    #[serde(rename = "parameterList")] // Required
+    #[serde(rename = "parameterList")]
     pub parameter_list: ParameterList,
 
     /// Contains parameter groupings (EPSG 311, 7.4.7.8).
@@ -67,7 +65,7 @@ pub struct TemplateList {
         default,
         skip_serializing_if = "Vec::is_empty"
     )]
-    pub parameter_template: Vec<Parameter>, // Use Parameter struct, as it's identical
+    pub parameter_template: Vec<Parameter>, // Identical to Parameter structure
 
     #[serde(
         rename = "allowedValuesTemplate",
@@ -168,10 +166,9 @@ pub struct MemberRef {
 }
 
 /// Represents the choice of data type for a Parameter.
-/// (Fix for serde `flatten` on enum variant error)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ParameterDataType {
-    // Variants from GSimple (inlined)
+    // Simple types from GSimple (inlined)
     BOOL,
     BITSTRING,
     BYTE,
@@ -192,14 +189,13 @@ pub enum ParameterDataType {
     STRING,
     WSTRING,
 
-    // Other choices
-    #[serde(rename = "dataTypeIDRef")] // Fix: Add rename attribute
+    // Complex choices
+    #[serde(rename = "dataTypeIDRef")]
     DataTypeIDRef(DataTypeIDRef),
-    #[serde(rename = "variableRef")] // Fix: Add rename attribute
+    #[serde(rename = "variableRef")]
     VariableRef(VariableRef),
 }
 
-// Add Default implementation
 impl Default for ParameterDataType {
     fn default() -> Self {
         ParameterDataType::BOOL
@@ -273,10 +269,9 @@ pub struct Property {
 }
 
 /// Represents a `<parameter>` (EPSG 311, 7.4.7.7.2).
-/// (Updated for Task 5)
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Parameter {
-    /// The unique ID (e.g., "Param1_Vendor_Specific") that `uniqueIDRef` points to.
+    /// The unique ID (e.g., "Param1_Vendor_Specific").
     #[serde(rename = "@uniqueID")]
     pub unique_id: String,
 
@@ -332,7 +327,7 @@ pub struct Parameter {
     )]
     pub denotation: Option<Denotation>,
 
-    /// The `actualValue` element, if present (less common for defaults).
+    /// The `actualValue` element (prioritized in XDC).
     #[serde(
         rename = "actualValue",
         default,
@@ -340,7 +335,7 @@ pub struct Parameter {
     )]
     pub actual_value: Option<Value>,
 
-    /// The `defaultValue` element, if present.
+    /// The `defaultValue` element (prioritized in XDD).
     #[serde(
         rename = "defaultValue",
         default,
@@ -371,7 +366,6 @@ pub struct Parameter {
 
 /// Represents a simple value-holding element like `<defaultValue value="0x01"/>`.
 /// (EPSG 311, 7.4.7.7.2.4, 7.4.7.7.2.5).
-/// (Updated for Task 5 to `t_value`)
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Value {
     #[serde(flatten, default, skip_serializing_if = "Option::is_none")]
@@ -528,7 +522,7 @@ pub struct Count {
     #[serde(rename = "@uniqueID")]
     pub unique_id: String,
     #[serde(rename = "@access", default, skip_serializing_if = "Option::is_none")]
-    pub access: Option<ParameterAccess>, // Simplified from schema's subset
+    pub access: Option<ParameterAccess>,
     #[serde(flatten)]
     pub labels: Glabels,
     #[serde(rename = "defaultValue")]
