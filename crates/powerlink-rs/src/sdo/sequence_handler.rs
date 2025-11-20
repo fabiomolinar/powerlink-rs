@@ -294,13 +294,31 @@ impl SdoSequenceHandler {
                     command: response_command,
                 });
             }
-            // If Opening and empty payload, something is wrong, fall through to error
-            error!("Received empty command payload during Opening state.");
+            // In Opening state with empty payload:
+            // This is the "Init" handshake response.
+            // We are already in Opening state (set by process_sequence_layer).
+            // We just need to return the Sequence Header ACK.
+            if self.state() == &SdoServerState::Opening {
+                // Return dummy/empty command
+                let response_command = SdoCommand {
+                    header: CommandLayerHeader::default(),
+                    data_size: None,
+                    payload: Vec::new(),
+                };
+                return Ok(SdoResponseData {
+                    client_info: self.client_info,
+                    seq_header: response_header,
+                    command: response_command,
+                });
+            }
+
+            // If empty payload in other states, it might be an error
+            error!("Received empty command payload in unexpected state.");
             return Err(PowerlinkError::SdoInvalidCommandPayload); // Treat as error
         }
 
         if command_payload.is_empty() {
-            error!("Received empty command payload in unexpected state.");
+            error!("Received empty command payload.");
             return Err(PowerlinkError::SdoInvalidCommandPayload);
         }
 
@@ -645,5 +663,208 @@ impl SdoSequenceHandler {
             }
         }
         Ok(response) // Return the calculated response header
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::basic::MacAddress;
+    use crate::od::{ObjectEntry, ObjectValue};
+    use crate::sdo::command::{CommandLayerHeader, Segmentation};
+    use crate::types::NodeId;
+    use alloc::vec;
+
+    // --- Mock Command Handler ---
+    struct MockCommandHandler {
+        last_processed_tid: Option<u8>,
+    }
+
+    impl SdoCommandHandler for MockCommandHandler {
+        fn handle_write_all_by_index(
+            &mut self,
+            command: SdoCommand,
+            _od: &mut ObjectDictionary,
+        ) -> SdoCommand {
+            self.last_processed_tid = Some(command.header.transaction_id);
+            // Echo back a dummy response
+            SdoCommand {
+                header: CommandLayerHeader {
+                    transaction_id: command.header.transaction_id,
+                    is_response: true,
+                    ..Default::default()
+                },
+                data_size: None,
+                payload: Vec::new(),
+            }
+        }
+        // Implement others as no-ops
+        fn handle_write_multiple_params(
+            &mut self,
+            _c: SdoCommand,
+            _o: &mut ObjectDictionary,
+        ) -> SdoCommand {
+            unimplemented!()
+        }
+        fn handle_file_read(
+            &mut self,
+            _c: SdoCommand,
+            _o: &mut ObjectDictionary,
+        ) -> SdoCommand {
+            unimplemented!()
+        }
+        fn handle_file_write(
+            &mut self,
+            _c: SdoCommand,
+            _o: &mut ObjectDictionary,
+        ) -> SdoCommand {
+            unimplemented!()
+        }
+    }
+
+    fn create_handler() -> SdoSequenceHandler {
+        SdoSequenceHandler::new(SdoClientInfo::Asnd {
+            source_node_id: NodeId(1),
+            source_mac: MacAddress::default(),
+        })
+    }
+
+    fn create_od() -> ObjectDictionary<'static> {
+        let mut od = ObjectDictionary::new(None);
+        // Add a readable object for testing standard commands
+        od.insert(
+            0x1000,
+            ObjectEntry {
+                object: crate::od::Object::Variable(ObjectValue::Unsigned32(0x12345678)),
+                ..Default::default()
+            },
+        );
+        od
+    }
+
+    #[test]
+    fn test_initialization_handshake() {
+        let mut handler = create_handler();
+        let mut od = create_od();
+        let mut cmd_handler = MockCommandHandler {
+            last_processed_tid: None,
+        };
+
+        // 1. Client sends Init (SendCon = Init, SendSeq = 0)
+        // Send NO command payload (length 4 total).
+        // The logic checks for empty payload to detect "ACK-only" frames in Opening state.
+        // This simulates the Init Handshake properly per Spec 6.3.2.3.1.1 which says "No command shall be transferred"
+        let init_req = [
+            // Seq Header: RcvSeq=0, RcvCon=0, SndSeq=0, SndCon=Init(1)
+            // Byte 0: (0<<2)|0 = 0. Byte 1: (0<<2)|1 = 1.
+            0x00, 0x01, 0x00, 0x00,
+        ];
+
+        let response = handler
+            .handle_request(&init_req, &mut od, 0, &mut cmd_handler)
+            .expect("Handling init request failed");
+
+        // Expect Server to be in Opening.
+        // Response Header: RcvCon=Init(1), RcvSeq=0 (echo client's), SndCon=Init(1), SndSeq=0
+        assert_eq!(response.seq_header.receive_con, ReceiveConnState::Initialization);
+        assert_eq!(response.seq_header.receive_sequence_number, 0);
+        assert_eq!(response.seq_header.send_con, SendConnState::Initialization);
+        assert_eq!(response.seq_header.send_sequence_number, 0);
+
+        assert!(matches!(handler.state(), SdoServerState::Opening));
+    }
+
+    #[test]
+    fn test_established_transfer() {
+        let mut handler = create_handler();
+        let mut od = create_od();
+        let mut cmd_handler = MockCommandHandler {
+            last_processed_tid: None,
+        };
+
+        // Force state to Established
+        *handler.state_mut() = SdoServerState::Established;
+
+        // Client sends Command (SendCon = Valid(2), SendSeq = 0)
+        let req = [
+            // Seq Header: RcvSeq=0, RcvCon=Valid(2), SndSeq=0, SndCon=Valid(2)
+            0x02, 0x02, 0x00, 0x00, 
+            // Command Layer (Read 0x1000/0)
+            // Byte 4: SegmentSize = 4 (0x04, 0x00) - CRITICAL FIX
+            0x00, 0x01, 0x00, 0x02, 0x04, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+        ];
+
+        let response = handler
+            .handle_request(&req, &mut od, 0, &mut cmd_handler)
+            .expect("Request failed");
+
+        // Response Header:
+        // RcvSeq = 0 (Client's just sent).
+        // SndSeq = 1 (Server increments).
+        assert_eq!(response.seq_header.receive_sequence_number, 0);
+        assert_eq!(response.seq_header.send_sequence_number, 1);
+        assert_eq!(response.seq_header.send_con, SendConnState::ConnectionValid);
+    }
+
+    #[test]
+    fn test_duplicate_frame_handling() {
+        let mut handler = create_handler();
+        let mut od = create_od();
+        let mut cmd_handler = MockCommandHandler {
+            last_processed_tid: None,
+        };
+
+        *handler.state_mut() = SdoServerState::Established;
+        // 1. Send first request (Seq 0)
+        // CORRECTED: Set Segment Size to 4
+        let _ = handler.handle_request(
+            &[
+                0x02, 0x02, 0x00, 0x00, // Seq 0
+                // Command (Read, SegSize=4)
+                0x00, 0x01, 0x00, 0x02, 0x04, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+            ],
+            &mut od,
+            0,
+            &mut cmd_handler,
+        );
+
+        // 2. Send Seq 0 AGAIN
+        // CORRECTED: Set Segment Size to 4
+        let req_duplicate = [
+            0x02, 0x02, 0x00, 0x00, // Seq 0 again
+            // Different TID (2) and SegSize=4
+            0x00, 0x02, 0x00, 0x02, 0x04, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+        ];
+
+        let response = handler
+            .handle_request(&req_duplicate, &mut od, 0, &mut cmd_handler)
+            .expect("Duplicate handling failed");
+
+        // The handler should ACK the duplicate but NOT process the command.
+        // Since the first request successfully incremented SndSeq to 1, 
+        // this duplicate response should also send SndSeq 1.
+        assert_eq!(response.seq_header.send_sequence_number, 1);
+    }
+
+    #[test]
+    fn test_sequence_gap_handling() {
+        let mut handler = create_handler();
+        let mut od = create_od();
+        let mut cmd_handler = MockCommandHandler {
+            last_processed_tid: None,
+        };
+
+        *handler.state_mut() = SdoServerState::Established;
+        // Expecting Seq 0. Send Seq 5.
+        let req_gap = [
+            // SndSeq=5 (0x05) -> Byte 1: (5<<2)|2 = 22 (0x16)
+            0x02, 0x16, 0x00, 0x00,
+            // Command
+            0x00, 0x01, 0x00, 0x02, 0x04, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+        ];
+
+        let result = handler.handle_request(&req_gap, &mut od, 0, &mut cmd_handler);
+
+        assert!(result.is_err());
     }
 }

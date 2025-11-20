@@ -219,3 +219,165 @@ impl SdoTransferState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::od::{ObjectEntry, ObjectValue};
+    use alloc::vec;
+
+    fn create_od() -> ObjectDictionary<'static> {
+        let mut od = ObjectDictionary::new(None);
+        // Set timeout/retry params to avoid defaults affecting tests
+        od.insert(
+            OD_IDX_SDO_TIMEOUT,
+            ObjectEntry {
+                object: crate::od::Object::Variable(ObjectValue::Unsigned32(5000)),
+                ..Default::default()
+            },
+        );
+        od
+    }
+
+    #[test]
+    fn test_upload_segmentation_initiate() {
+        let od = create_od();
+        let large_data = vec![0xAAu8; 2000]; // > 1452 bytes
+        
+        let mut state = SdoTransferState {
+            transaction_id: 1,
+            total_size: large_data.len(),
+            data_buffer: large_data,
+            offset: 0,
+            index: 0x2000,
+            sub_index: 0,
+            deadline_us: None,
+            retransmissions_left: 0,
+            last_sent_segment: None,
+        };
+
+        // 1. Get Initiate Frame
+        let (cmd, is_last) = state.get_next_upload_segment(&od, 1000);
+        
+        assert!(!is_last);
+        assert_eq!(cmd.header.segmentation, Segmentation::Initiate);
+        assert_eq!(cmd.data_size, Some(2000));
+        // Initiate frame carries max payload (1452)
+        assert_eq!(cmd.payload.len(), 1452);
+        assert_eq!(cmd.payload[0], 0xAA);
+        
+        // Offset should have advanced
+        assert_eq!(state.offset, 1452);
+        assert!(state.deadline_us.is_some()); // Timeout set for ACK
+    }
+
+    #[test]
+    fn test_upload_segmentation_complete() {
+        let od = create_od();
+        let large_data = vec![0xAAu8; 2000];
+        
+        let mut state = SdoTransferState {
+            transaction_id: 1,
+            total_size: large_data.len(),
+            data_buffer: large_data,
+            offset: 1452, // Setup as if first segment sent
+            index: 0x2000,
+            sub_index: 0,
+            deadline_us: None,
+            retransmissions_left: 0,
+            last_sent_segment: None,
+        };
+
+        // 2. Get Next (and Last) Segment
+        let (cmd, is_last) = state.get_next_upload_segment(&od, 2000);
+        
+        assert!(is_last);
+        assert_eq!(cmd.header.segmentation, Segmentation::Complete);
+        // Remaining: 2000 - 1452 = 548 bytes
+        assert_eq!(cmd.payload.len(), 548);
+        assert_eq!(cmd.payload[0], 0xAA);
+        
+        assert_eq!(state.offset, 2000);
+        assert!(state.deadline_us.is_none()); // No timeout needed for final frame
+    }
+    
+    #[test]
+    fn test_download_segment_process_overflow() {
+        let mut od = create_od();
+        let mut state = SdoTransferState {
+            transaction_id: 1,
+            total_size: 100,
+            data_buffer: Vec::new(),
+            offset: 0,
+            index: 0x2000,
+            sub_index: 0,
+            deadline_us: None,
+            retransmissions_left: 0,
+            last_sent_segment: None,
+        };
+
+        // Try to feed 150 bytes
+        let cmd = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: 1,
+                segmentation: Segmentation::Complete,
+                ..Default::default()
+            },
+            data_size: None,
+            payload: vec![0xBB; 150],
+        };
+
+        let result = state.process_download_segment(&cmd, &mut od, 1000);
+        
+        // Should fail with Abort Code (Length too high 0x06070010)
+        assert_eq!(result, Err(0x0607_0010));
+    }
+
+    #[test]
+    fn test_download_segment_process_success() {
+        let mut od = create_od();
+        // Mock the OD entry so write succeeds
+        od.insert(0x2000, crate::od::ObjectEntry {
+             object: crate::od::Object::Variable(ObjectValue::OctetString(vec![])),
+             access: Some(crate::od::AccessType::ReadWrite),
+             ..Default::default()
+        });
+
+        let mut state = SdoTransferState {
+            transaction_id: 2,
+            total_size: 10,
+            data_buffer: Vec::new(),
+            offset: 0,
+            index: 0x2000,
+            sub_index: 0,
+            deadline_us: None,
+            retransmissions_left: 0,
+            last_sent_segment: None,
+        };
+
+        // Feed all 10 bytes
+        let cmd = SdoCommand {
+            header: CommandLayerHeader {
+                transaction_id: 2,
+                segmentation: Segmentation::Complete,
+                ..Default::default()
+            },
+            data_size: None,
+            payload: vec![0xFF; 10],
+        };
+
+        let result = state.process_download_segment(&cmd, &mut od, 1000);
+        
+        assert_eq!(result, Ok(true)); // True = Complete
+        assert_eq!(state.offset, 10);
+        assert_eq!(state.data_buffer.len(), 10);
+        
+        // Verify OD write
+        let val = od.read(0x2000, 0).unwrap();
+        if let ObjectValue::OctetString(v) = &*val {
+            assert_eq!(v.len(), 10);
+        } else {
+            panic!("OD write failed");
+        }
+    }
+}
