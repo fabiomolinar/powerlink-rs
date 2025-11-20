@@ -1,6 +1,7 @@
 // crates/powerlink-rs/src/node/mn/scheduler.rs
 use super::payload;
 use super::state::{CnInfo, CnState, MnContext};
+use super::validation; // <-- Use the new validation module
 use crate::frame::basic::MacAddress;
 use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId};
 use crate::nmt::events::{MnNmtCommandRequest, NmtEvent, NmtStateCommand};
@@ -11,6 +12,7 @@ use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use log::{debug, info, trace};
 
 /// Looks up a CN's MAC address from the dynamic ARP cache.
+// ... [get_cn_mac_address unchanged] ...
 /// The cache is populated passively by `IdentResponse` frames.
 pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option<MacAddress> {
     // 1. Derive the IP address from the Node ID.
@@ -32,6 +34,7 @@ pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option
 }
 
 /// Determines the highest priority asynchronous action to be taken.
+// ... [determine_next_async_action unchanged] ...
 pub(super) fn determine_next_async_action(
     context: &mut MnContext,
 ) -> (RequestedServiceId, NodeId, bool) {
@@ -163,21 +166,15 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
 
     if current_mn_state == NmtState::NmtPreOperational1 {
         // Check if all mandatory nodes are Identified or further, but not Missing or Stopped
-        let all_mandatory_identified = context.mandatory_nodes.iter().all(|node_id| {
-            let state = context
-                .node_info
-                .get(node_id)
-                .map_or(CnState::Unknown, |info| info.state);
-            // Updated condition: >= Identified AND <= Operational
-            state >= CnState::Identified && state <= CnState::Operational
-        });
-
-        if all_mandatory_identified {
+        if validation::check_all_mandatory_identified(&context.mandatory_nodes, &context.node_info) {
             info!("[MN] All mandatory nodes identified. Triggering NMT transition to PreOp2.");
             context
                 .nmt_state_machine
                 .process_event(NmtEvent::AllCnsIdentified, &mut context.core.od);
 
+            // --- Phase 1.4: BOOT_STEP2 ---
+            // Queue NMTEnableReadyToOperate for all identified CNs.
+            // (Iterate all nodes, not just mandatory)
             for (node_id, info) in context.node_info.iter() {
                 if info.state == CnState::Identified {
                     info!(
@@ -193,15 +190,8 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             }
         }
     } else if current_mn_state == NmtState::NmtPreOperational2 {
-        let all_mandatory_preop = context.mandatory_nodes.iter().all(|node_id| {
-            let state = context
-                .node_info
-                .get(node_id)
-                .map_or(CnState::Unknown, |info| info.state);
-            state >= CnState::PreOperational && state <= CnState::Operational
-        });
-
-        if all_mandatory_preop {
+        // Check if all mandatory nodes are PreOperational or further
+        if validation::check_all_mandatory_preop(&context.mandatory_nodes, &context.node_info) {
             if context.nmt_state_machine.startup_flags & (1 << 8) == 0 {
                 info!(
                     "[MN] All mandatory nodes PreOperational/ReadyToOp. Triggering NMT transition to ReadyToOp."
@@ -217,14 +207,11 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             }
         }
     } else if current_mn_state == NmtState::NmtReadyToOperate {
-        let all_mandatory_comm_checked = context.mandatory_nodes.iter().all(|node_id| {
-            context
-                .node_info
-                .get(node_id)
-                .is_some_and(|info| info.communication_ok)
-        });
-
-        if all_mandatory_comm_checked {
+        // Check if all mandatory nodes have passed communication checks
+        if validation::check_all_mandatory_comm_verified(
+            &context.mandatory_nodes,
+            &context.node_info,
+        ) {
             if context.nmt_state_machine.startup_flags & (1 << 2) == 0 {
                 info!(
                     "[MN] CHECK_COMMUNICATION passed for all mandatory nodes. Triggering NMT transition to Operational."
@@ -242,6 +229,7 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
 }
 
 /// Finds the next configured CN that has not been identified yet for polling.
+// ... [find_next_node_to_identify unchanged] ...
 pub(super) fn find_next_node_to_identify(context: &mut MnContext) -> Option<NodeId> {
     let start_node_id_val = context.last_ident_poll_node_id.0.wrapping_add(1);
 
@@ -289,6 +277,7 @@ pub(super) fn find_next_node_to_identify(context: &mut MnContext) -> Option<Node
 }
 
 /// Finds the next async-only CN that needs a status poll.
+// ... [find_next_async_only_to_poll unchanged] ...
 pub(super) fn find_next_async_only_to_poll(context: &mut MnContext) -> Option<NodeId> {
     if context.async_only_nodes.is_empty() {
         return None;
@@ -321,6 +310,7 @@ pub(super) fn find_next_async_only_to_poll(context: &mut MnContext) -> Option<No
 }
 
 /// Gets the Node ID of the next isochronous node to poll for the given multiplex cycle.
+// ... [get_next_isochronous_node_to_poll unchanged] ...
 pub(super) fn get_next_isochronous_node_to_poll(
     context: &mut MnContext,
     current_multiplex_cycle: u8,
@@ -368,6 +358,7 @@ pub(super) fn get_next_isochronous_node_to_poll(
 }
 
 /// Helper to check if there are more isochronous nodes to poll in the current cycle.
+// ... [has_more_isochronous_nodes unchanged] ...
 pub(super) fn has_more_isochronous_nodes(context: &MnContext, current_multiplex_cycle: u8) -> bool {
     // Check remaining nodes in the list from the current index
     for idx in context.next_isoch_node_idx..context.isochronous_nodes.len() {
@@ -392,6 +383,7 @@ pub(super) fn has_more_isochronous_nodes(context: &MnContext, current_multiplex_
 }
 
 /// Schedules a timeout check.
+// ... [schedule_timeout unchanged] ...
 pub(super) fn schedule_timeout(context: &mut MnContext, deadline_us: u64, event: DllMsEvent) {
     trace!(
         "[MN] Scheduling timeout event {:?} for {}us",

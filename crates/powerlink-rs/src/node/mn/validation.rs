@@ -8,6 +8,10 @@ use crate::od::constants;
 use crate::types::NodeId;
 use log::{error, info, trace, warn};
 
+// Added imports for boot-up checks
+use super::state::{CnInfo, CnState};
+use alloc::collections::BTreeMap;
+
 /// Validates a CN's IdentResponse payload against the MN's OD configuration.
 /// (EPSG DS 301, Section 7.4.2.2.1.1, 7.4.2.2.1.2, 7.4.2.2.1.3)
 ///
@@ -23,6 +27,7 @@ pub(super) fn validate_boot_step1_checks(
     payload: &IdentResponsePayload,
     current_time_us: u64,
 ) -> bool {
+    // ... existing code ...
     // 1. Read received values from IdentResponse payload (already deserialized)
     let received_device_type = payload.device_type;
     let received_vendor_id = payload.vendor_id;
@@ -209,6 +214,54 @@ pub(super) fn validate_boot_step1_checks(
     true
 }
 
+// --- New Boot-Up Check Functions ---
+
+/// Checks if all mandatory nodes have successfully completed identification (BOOT_STEP1).
+///
+/// Returns `true` if every mandatory node is in state `Identified` or higher (but not `Missing` or `Stopped`).
+pub fn check_all_mandatory_identified(
+    mandatory_nodes: &[NodeId],
+    node_info: &BTreeMap<NodeId, CnInfo>,
+) -> bool {
+    mandatory_nodes.iter().all(|node_id| {
+        let state = node_info
+            .get(node_id)
+            .map_or(CnState::Unknown, |info| info.state);
+        // Node must be at least identified, and still active (not missing/stopped).
+        state >= CnState::Identified && state <= CnState::Operational
+    })
+}
+
+/// Checks if all mandatory nodes have successfully reached `PreOperational` state (BOOT_STEP2 complete).
+///
+/// Returns `true` if every mandatory node is in state `PreOperational` or higher (but not `Missing` or `Stopped`).
+pub fn check_all_mandatory_preop(
+    mandatory_nodes: &[NodeId],
+    node_info: &BTreeMap<NodeId, CnInfo>,
+) -> bool {
+    mandatory_nodes.iter().all(|node_id| {
+        let state = node_info
+            .get(node_id)
+            .map_or(CnState::Unknown, |info| info.state);
+        // CN reports PreOp2 or ReadyToOp, MN maps this to CnState::PreOperational
+        state >= CnState::PreOperational && state <= CnState::Operational
+    })
+}
+
+/// Checks if all mandatory nodes have successfully passed `CHECK_COMMUNICATION`.
+///
+/// Returns `true` if every mandatory node has the `communication_ok` flag set.
+pub fn check_all_mandatory_comm_verified(
+    mandatory_nodes: &[NodeId],
+    node_info: &BTreeMap<NodeId, CnInfo>,
+) -> bool {
+    mandatory_nodes.iter().all(|node_id| {
+        node_info
+            .get(node_id)
+            .is_some_and(|info| info.communication_ok)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,6 +283,8 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
+    // ... [Existing tests like test_identity_check_pass remain unchanged] ...
+    // ... [MockConfigInterface struct remains unchanged] ...
     // --- Mock Configuration Interface ---
     struct MockConfigInterface {
         should_update_sw: bool,
@@ -493,8 +548,98 @@ mod tests {
 
         // Assert
         assert!(!result, "Should return false to pause boot-up");
-        // Verify SDO logic triggered (we can check if a connection exists)
-        // This is tricky to check deeply without exposing SDO internals, but returning false with config interface present
-        // implies the download path was taken.
+    }
+
+    // --- TABLE DRIVEN TESTS for Boot Logic ---
+
+    struct BootCheckTestCase {
+        desc: &'static str,
+        mandatory_nodes: Vec<NodeId>,
+        node_states: Vec<(NodeId, CnState)>,
+        expected_identified: bool,
+        expected_preop: bool,
+    }
+
+    #[test]
+    fn test_boot_check_logic() {
+        let tests = vec![
+            BootCheckTestCase {
+                desc: "All Mandatory Operational -> Identified=True, PreOp=True",
+                mandatory_nodes: vec![NodeId(1), NodeId(2)],
+                node_states: vec![
+                    (NodeId(1), CnState::Operational),
+                    (NodeId(2), CnState::Operational),
+                ],
+                expected_identified: true,
+                expected_preop: true,
+            },
+            BootCheckTestCase {
+                desc: "One Mandatory Missing -> Identified=False, PreOp=False",
+                mandatory_nodes: vec![NodeId(1), NodeId(2)],
+                node_states: vec![
+                    (NodeId(1), CnState::Operational),
+                    (NodeId(2), CnState::Missing),
+                ],
+                expected_identified: false,
+                expected_preop: false,
+            },
+            BootCheckTestCase {
+                desc: "One Mandatory Unknown -> Identified=False",
+                mandatory_nodes: vec![NodeId(1)],
+                node_states: vec![(NodeId(1), CnState::Unknown)],
+                expected_identified: false,
+                expected_preop: false,
+            },
+            BootCheckTestCase {
+                desc: "All Mandatory Identified -> Identified=True, PreOp=False",
+                mandatory_nodes: vec![NodeId(1)],
+                node_states: vec![(NodeId(1), CnState::Identified)],
+                expected_identified: true,
+                expected_preop: false,
+            },
+            BootCheckTestCase {
+                desc: "All Mandatory PreOp -> Identified=True, PreOp=True",
+                mandatory_nodes: vec![NodeId(1)],
+                node_states: vec![(NodeId(1), CnState::PreOperational)],
+                expected_identified: true,
+                expected_preop: true,
+            },
+        ];
+
+        for t in tests {
+            let mut node_info = BTreeMap::new();
+            for (id, state) in t.node_states {
+                node_info.insert(id, CnInfo { state, ..Default::default() });
+            }
+
+            let identified = check_all_mandatory_identified(&t.mandatory_nodes, &node_info);
+            assert_eq!(
+                identified, t.expected_identified,
+                "{}: check_all_mandatory_identified failed",
+                t.desc
+            );
+
+            let preop = check_all_mandatory_preop(&t.mandatory_nodes, &node_info);
+            assert_eq!(
+                preop, t.expected_preop,
+                "{}: check_all_mandatory_preop failed",
+                t.desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_comm_check_logic() {
+        // Simple test for communication check
+        let mandatory = vec![NodeId(1)];
+        let mut info = BTreeMap::new();
+        
+        // Case 1: Comm OK
+        info.insert(NodeId(1), CnInfo { communication_ok: true, ..Default::default() });
+        assert!(check_all_mandatory_comm_verified(&mandatory, &info));
+
+        // Case 2: Comm Fail
+        info.insert(NodeId(1), CnInfo { communication_ok: false, ..Default::default() });
+        assert!(!check_all_mandatory_comm_verified(&mandatory, &info));
     }
 }
