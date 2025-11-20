@@ -19,7 +19,6 @@ use crate::nmt::events::{NmtManagingCommand, NmtServiceRequest, NmtStateCommand}
 use crate::od::ObjectValue;
 use alloc::string::String;
 // --- END IMPORTS ---
-use alloc::vec::Vec; // Import Vec
 use log::{debug, error, info, trace, warn};
 
 /// Processes a deserialized `PowerlinkFrame`.
@@ -116,16 +115,14 @@ pub(super) fn process_frame(
                 .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
                 .unwrap_or(0);
             let new_err_reg = current_err_reg & !0b1;
-            context
-                .core
-                .od
-                .write_internal(
-                    constants::IDX_NMT_ERROR_REGISTER_U8,
-                    0,
-                    crate::od::ObjectValue::Unsigned8(new_err_reg),
-                    false,
-                )
-                .unwrap_or_else(|e| error!("[CN] Failed to clear Error Register: {:?}", e));
+            if let Err(e) = context.core.od.write_internal(
+                constants::IDX_NMT_ERROR_REGISTER_U8,
+                0,
+                crate::od::ObjectValue::Unsigned8(new_err_reg),
+                false,
+            ) {
+                error!("[CN] Failed to clear Error Register: {:?}", e);
+            }
             context.error_status_changed = true;
             // Increment Static Error Bit Field Changed counter
             context.core.od.increment_counter(
@@ -407,16 +404,14 @@ pub(super) fn process_frame(
                         constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
                     );
                 }
-                context
-                    .core
-                    .od
-                    .write_internal(
-                        constants::IDX_NMT_ERROR_REGISTER_U8,
-                        0,
-                        crate::od::ObjectValue::Unsigned8(new_err_reg),
-                        false,
-                    )
-                    .unwrap_or_else(|e| error!("[CN] Failed to update Error Register: {:?}", e));
+                if let Err(e) = context.core.od.write_internal(
+                    constants::IDX_NMT_ERROR_REGISTER_U8,
+                    0,
+                    crate::od::ObjectValue::Unsigned8(new_err_reg),
+                    false,
+                ) {
+                    error!("[CN] Failed to update Error Register: {:?}", e)
+                }
 
                 let error_entry = ErrorEntry {
                     entry_type: EntryType {
@@ -636,257 +631,4 @@ pub(super) fn process_frame(
     }
 
     NodeAction::NoAction
-}
-
-/// Processes a timeout or other periodic check.
-pub(super) fn process_tick(context: &mut CnContext, current_time_us: u64) -> NodeAction {
-    // --- SDO Server Tick (handles timeouts/retransmissions) ---
-    match context
-        .core
-        .sdo_server
-        .tick(current_time_us, &context.core.od)
-    {
-        Ok(Some(response_data)) => {
-            // SDO server generated a response (e.g., abort). Build the action.
-            let build_result = match response_data.client_info {
-                SdoClientInfo::Asnd { .. } => {
-                    // *** INCREMENT SDO TX COUNTER (ASnd Abort) ***
-                    context.core.od.increment_counter(
-                        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
-                        constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
-                    );
-                    context
-                        .asnd_transport
-                        .build_response(response_data, context)
-                }
-                #[cfg(feature = "sdo-udp")]
-                SdoClientInfo::Udp { .. } => {
-                    // *** INCREMENT SDO TX COUNTER (UDP Abort) ***
-                    context.core.od.increment_counter(
-                        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
-                        constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
-                    );
-                    context.udp_transport.build_response(response_data, context)
-                }
-            };
-            match build_result {
-                Ok(action) => return action,
-                Err(e) => error!("[CN] Failed to build SDO Abort frame: {:?}", e),
-            }
-            // If building the abort frame failed, fall through to other tick logic.
-        }
-        Err(e) => error!("[CN] SDO Server tick error: {:?}", e),
-        _ => {} // No action or no error
-    }
-
-    let current_nmt_state = context.nmt_state_machine.current_state();
-
-    // --- Heartbeat Consumer Check ---
-    if current_nmt_state >= NmtState::NmtPreOperational2 {
-        let mut timed_out_nodes = Vec::new();
-        for (node_id, (timeout_us, last_seen_us)) in &mut context.heartbeat_consumers {
-            if *last_seen_us == 0 {
-                // First tick in a valid state, initialize last_seen_us to now
-                *last_seen_us = current_time_us;
-            } else if *timeout_us > 0 && (current_time_us - *last_seen_us > *timeout_us) {
-                // Timeout detected!
-                warn!(
-                    "[CN] Heartbeat timeout for Node {}! Last seen {}us ago (timeout is {}us).",
-                    node_id.0,
-                    current_time_us - *last_seen_us,
-                    *timeout_us
-                );
-                timed_out_nodes.push(*node_id);
-                // Reset last_seen to prevent continuous error reporting every tick
-                *last_seen_us = current_time_us;
-            }
-        }
-
-        // Handle errors outside the mutable borrow
-        for node_id in timed_out_nodes {
-            // We report the error, which will trigger the threshold counter
-            let (nmt_action, signaled) = context
-                .dll_error_manager
-                .handle_error(DllError::HeartbeatTimeout { node_id });
-
-            if signaled {
-                context.error_status_changed = true;
-                // Update Error Register (0x1001)
-                let current_err_reg = context
-                    .core
-                    .od
-                    .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
-                    .unwrap_or(0);
-                let new_err_reg = current_err_reg | 0b1; // Set Generic Error
-                if current_err_reg != new_err_reg {
-                    // Increment static error change counter
-                    context.core.od.increment_counter(
-                        constants::IDX_DIAG_ERR_STATISTICS_REC,
-                        constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
-                    );
-                }
-                context
-                    .core
-                    .od
-                    .write_internal(
-                        constants::IDX_NMT_ERROR_REGISTER_U8,
-                        0,
-                        crate::od::ObjectValue::Unsigned8(new_err_reg),
-                        false,
-                    )
-                    .unwrap_or_else(|e| error!("[CN] Failed to update Error Register: {:?}", e));
-            }
-            if nmt_action != NmtAction::None {
-                context
-                    .nmt_state_machine
-                    .process_event(NmtEvent::Error, &mut context.core.od);
-                context.soc_timeout_check_active = false;
-                // If an NMT reset is triggered, stop further tick processing.
-                return NodeAction::NoAction;
-            }
-        }
-    }
-
-    // Check if a deadline is set and if it has passed
-    let deadline_passed = context
-        .next_tick_us
-        .is_some_and(|deadline| current_time_us >= deadline);
-
-    // --- Handle NmtNotActive Timeout Setup ---
-    if current_nmt_state == NmtState::NmtNotActive && context.next_tick_us.is_none() {
-        let timeout_us = context.nmt_state_machine.basic_ethernet_timeout as u64;
-        if timeout_us > 0 {
-            let deadline = current_time_us + timeout_us;
-            context.next_tick_us = Some(deadline);
-            debug!(
-                "No SoC/SoA seen, starting BasicEthernet timeout check ({}us). Deadline: {}us",
-                timeout_us, deadline
-            );
-        } else {
-            debug!("BasicEthernet timeout is 0, check disabled.");
-        }
-        return NodeAction::NoAction; // Don't act on this first call, just set the timer.
-    }
-
-    // If no deadline has passed, do nothing else this tick.
-    if !deadline_passed {
-        return NodeAction::NoAction;
-    }
-
-    // --- A deadline has passed ---
-    trace!(
-        "Tick deadline reached at {}us (Deadline was {:?})",
-        current_time_us, context.next_tick_us
-    );
-    context.next_tick_us = None; // Consume the deadline
-
-    // --- Handle Specific Timeouts ---
-    // NmtNotActive -> BasicEthernet
-    if current_nmt_state == NmtState::NmtNotActive {
-        let timeout_us = context.nmt_state_machine.basic_ethernet_timeout as u64;
-        if timeout_us > 0 {
-            warn!("BasicEthernet timeout expired. Transitioning state.");
-            context
-                .nmt_state_machine
-                .process_event(NmtEvent::Timeout, &mut context.core.od);
-            context.soc_timeout_check_active = false;
-        }
-        return NodeAction::NoAction; // No further action this tick
-    }
-    // SoC Timeout Check
-    else if context.soc_timeout_check_active {
-        warn!(
-            "SoC timeout detected at {}us! Last SoC was at {}us.",
-            current_time_us, context.last_soc_reception_time_us
-        );
-        if let Some(errors) = context
-            .dll_state_machine
-            .process_event(DllCsEvent::SocTimeout, current_nmt_state)
-        {
-            for error in errors {
-                // Increment history write counter
-                context.core.od.increment_counter(
-                    constants::IDX_DIAG_ERR_STATISTICS_REC,
-                    constants::SUBIDX_DIAG_ERR_STATS_HIST_WRITE,
-                );
-                let (nmt_action, signaled) = context.dll_error_manager.handle_error(error);
-                if signaled {
-                    context.error_status_changed = true;
-                    // Update Error Register (0x1001)
-                    let current_err_reg = context
-                        .core
-                        .od
-                        .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
-                        .unwrap_or(0);
-                    let new_err_reg = current_err_reg | 0b1; // Set Generic Error
-                    if current_err_reg != new_err_reg {
-                        // Increment static error change counter
-                        context.core.od.increment_counter(
-                            constants::IDX_DIAG_ERR_STATISTICS_REC,
-                            constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
-                        );
-                    }
-                    context
-                        .core
-                        .od
-                        .write_internal(
-                            constants::IDX_NMT_ERROR_REGISTER_U8,
-                            0,
-                            crate::od::ObjectValue::Unsigned8(new_err_reg),
-                            false,
-                        )
-                        .unwrap_or_else(|e| {
-                            error!("[CN] Failed to update Error Register: {:?}", e)
-                        });
-                }
-                if nmt_action != NmtAction::None {
-                    context
-                        .nmt_state_machine
-                        .process_event(NmtEvent::Error, &mut context.core.od);
-                    context.soc_timeout_check_active = false;
-                    return NodeAction::NoAction; // Stop processing after NMT reset
-                }
-            }
-        }
-        // Reschedule next check if still active
-        if context.soc_timeout_check_active {
-            let cycle_time_opt = context
-                .core
-                .od
-                .read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0)
-                .map(|v| v as u64);
-            let tolerance_opt = context
-                .core
-                .od
-                .read_u32(constants::IDX_DLL_CN_LOSS_OF_SOC_TOL_U32, 0)
-                .map(|v| v as u64);
-
-            if let (Some(cycle_time_us), Some(tolerance_ns)) = (cycle_time_opt, tolerance_opt) {
-                if cycle_time_us > 0 {
-                    let cycles_missed = ((current_time_us - context.last_soc_reception_time_us)
-                        / cycle_time_us)
-                        + 1;
-                    let next_expected_soc_time =
-                        context.last_soc_reception_time_us + cycles_missed * cycle_time_us;
-                    let next_deadline = next_expected_soc_time + (tolerance_ns / 1000);
-                    context.next_tick_us = Some(next_deadline);
-                    trace!(
-                        "SoC timeout occurred, scheduling next check at {}us",
-                        next_deadline
-                    );
-                } else {
-                    context.soc_timeout_check_active = false;
-                }
-            } else {
-                context.soc_timeout_check_active = false;
-            }
-        }
-    } else {
-        trace!(
-            "Tick deadline reached, but no specific timeout active (State: {:?}).",
-            current_nmt_state
-        );
-    }
-
-    NodeAction::NoAction // Default return if no frame needs sending
 }

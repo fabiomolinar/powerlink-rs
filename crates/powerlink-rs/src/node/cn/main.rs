@@ -207,18 +207,14 @@ impl<'s> ControlledNode<'s> {
                         .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
                         .unwrap_or(0);
                     let new_err_reg = current_err_reg | 0b1;
-                    self.context
-                        .core
-                        .od
-                        .write_internal(
-                            constants::IDX_NMT_ERROR_REGISTER_U8,
-                            0,
-                            crate::od::ObjectValue::Unsigned8(new_err_reg),
-                            false,
-                        )
-                        .unwrap_or_else(|e| {
-                            error!("[CN] Failed to update Error Register: {:?}", e)
-                        });
+                    if let Err(e) = self.context.core.od.write_internal(
+                        constants::IDX_NMT_ERROR_REGISTER_U8,
+                        0,
+                        crate::od::ObjectValue::Unsigned8(new_err_reg),
+                        false,
+                    ) {
+                        error!("[CN] Failed to update Error Register: {:?}", e);
+                    }
                 }
                 // Trigger NMT error handling if required
                 if nmt_action != NmtAction::None {
@@ -307,7 +303,8 @@ impl<'s> ControlledNode<'s> {
 
     /// Internal tick handler, moved from the trait implementation.
     fn tick(&mut self, current_time_us: u64) -> NodeAction {
-        events::process_tick(&mut self.context, current_time_us)
+        // Call the new tick module
+        super::tick::process_tick(&mut self.context, current_time_us)
     }
 }
 
