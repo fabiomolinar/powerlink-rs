@@ -1,4 +1,5 @@
 // crates/powerlink-rs/src/node/mn/mod.rs
+pub(crate) mod config; // <-- ADDED
 mod cycle;
 mod events;
 mod main;

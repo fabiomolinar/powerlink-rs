@@ -1,98 +1,26 @@
 // crates/powerlink-rs/src/node/mn/cycle.rs
-use super::state::{CnInfo, CyclePhase, MnContext};
-use crate::PowerlinkError;
-use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId};
+use super::state::{CyclePhase, MnContext};
+use crate::frame::{DllMsEvent, PowerlinkFrame};
 use crate::nmt::NmtStateMachine;
-use crate::nmt::events::{MnNmtCommandRequest, NmtStateCommand}; // Updated imports
+use crate::nmt::events::{MnNmtCommandRequest, NmtStateCommand};
 use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, serialize_frame_action};
-use crate::od::{Object, ObjectDictionary, ObjectValue, constants};
+use crate::od::constants;
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
 use log::{debug, error, info, trace};
 
-use super::events; // Import events
+use super::events;
 use super::payload;
 use super::scheduler;
-use crate::frame::ASndFrame; // Import ASndFrame
+use crate::frame::ASndFrame;
 use crate::frame::ServiceId;
-use crate::node::mn::state::NmtCommandData; // Import NmtCommandData
-use crate::sdo::asnd::serialize_sdo_asnd_payload; // Import SDO ASnd serializer
-use crate::sdo::command::SdoCommand; // Import SdoCommand
-use crate::sdo::sequence::SequenceLayerHeader; // Import SequenceLayerHeader // Import ServiceId
+use crate::node::mn::state::NmtCommandData;
+use crate::sdo::asnd::serialize_sdo_asnd_payload;
+use crate::sdo::command::SdoCommand;
+use crate::sdo::sequence::SequenceLayerHeader;
+use crate::PowerlinkError;
 
-/// Parses the MN's OD configuration to build its internal node lists.
-/// This function was missing from the provided context.
-pub(super) fn parse_mn_node_lists(
-    od: &ObjectDictionary,
-) -> Result<
-    (
-        BTreeMap<NodeId, CnInfo>,
-        Vec<NodeId>,
-        Vec<NodeId>,
-        Vec<NodeId>,
-        BTreeMap<NodeId, u8>,
-    ),
-    PowerlinkError,
-> {
-    let mut node_info = BTreeMap::new();
-    let mut mandatory_nodes = Vec::new();
-    let mut isochronous_nodes = Vec::new();
-    let mut async_only_nodes = Vec::new();
-    let mut multiplex_assign = BTreeMap::new();
-
-    if let Some(Object::Array(entries)) = od.read_object(constants::IDX_NMT_NODE_ASSIGNMENT_AU32) {
-        // Sub-index 0 is NumberOfEntries. Real entries start at 1.
-        for (i, entry) in entries.iter().enumerate() {
-            let sub_index = i as u8 + 1;
-            if let ObjectValue::Unsigned32(assignment) = entry {
-                if (assignment & 1) != 0 {
-                    // Bit 0: Node exists
-                    if let Ok(node_id) = NodeId::try_from(sub_index) {
-                        node_info.insert(node_id, CnInfo::default());
-                        if (assignment & (1 << 3)) != 0 {
-                            // Bit 3: Node is mandatory
-                            mandatory_nodes.push(node_id);
-                        }
-                        if (assignment & (1 << 8)) == 0 {
-                            // Bit 8: 0=Isochronous
-                            isochronous_nodes.push(node_id);
-                            let mux_cycle_no = od
-                                .read_u8(constants::IDX_NMT_MULTIPLEX_ASSIGN_REC, node_id.0)
-                                .unwrap_or(0);
-                            multiplex_assign.insert(node_id, mux_cycle_no);
-                        } else {
-                            // 1=Async-only
-                            async_only_nodes.push(node_id);
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        error!("Failed to read NMT_NodeAssignment_AU32 (0x1F81)");
-        return Err(PowerlinkError::ValidationError(
-            "Missing 0x1F81 NMT_NodeAssignment_AU32",
-        ));
-    }
-
-    info!(
-        "MN configured to manage {} nodes ({} mandatory, {} isochronous, {} async-only).",
-        node_info.len(),
-        mandatory_nodes.len(),
-        isochronous_nodes.len(),
-        async_only_nodes.len(),
-    );
-
-    Ok((
-        node_info,
-        mandatory_nodes,
-        isochronous_nodes,
-        async_only_nodes,
-        multiplex_assign,
-    ))
-}
+// parse_mn_node_lists has been moved to config.rs
 
 /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
 pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64) -> NodeAction {
@@ -152,7 +80,7 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
             constants::SUBIDX_DIAG_NMT_COUNT_ASYNC_TX,
         );
 
-        // Call the new payload builder
+        // Call the payload builder
         let frame = payload::build_nmt_info_frame(context, service_id);
         return serialize_frame_action(frame, context).unwrap_or(NodeAction::NoAction);
     }
@@ -191,7 +119,7 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
     );
 
     // Increment StatusRequest counter if applicable
-    if req_service == RequestedServiceId::StatusRequest {
+    if req_service == crate::frame::RequestedServiceId::StatusRequest {
         context.core.od.increment_counter(
             constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
             constants::SUBIDX_DIAG_NMT_COUNT_STATUS_REQ,
@@ -250,7 +178,6 @@ pub(super) fn start_cycle(context: &mut MnContext, current_time_us: u64) -> Node
 }
 
 /// The MN's main scheduler tick for non-cycle-start events.
-/// Renamed from run_scheduler.
 pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     let current_nmt_state = context.nmt_state_machine.current_state();
 
@@ -294,7 +221,6 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
         CyclePhase::AwaitingMnAsyncSend => {
             // MN has invited itself. Check what to send.
             // Priority: NMT Commands > SDO Client > Generic Queue
-            // This logic was missing.
             context.current_phase = CyclePhase::Idle; // Consume the phase
 
             if let Some((command_req, target_node_id, command_data)) =
@@ -365,7 +291,6 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
 }
 
 /// Builds an ASnd(SDO Request) frame for the SdoClientManager.
-/// This function was missing and is required by main.rs.
 pub(super) fn build_sdo_asnd_request(
     context: &MnContext,
     target_node_id: NodeId,
