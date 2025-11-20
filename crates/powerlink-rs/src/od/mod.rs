@@ -63,19 +63,19 @@ impl<'a> ObjectDictionary<'a> {
         predefined::validate_mandatory_objects(self, is_mn)
     }
 
-    // ... rest of the file (get_configured_cns, insert, read, write, etc.) remains unchanged ...
     /// Gets a list of configured isochronous CNs from object 0x1F81.
     pub fn get_configured_cns(&self) -> Vec<NodeId> {
         let mut cn_list = Vec::new();
         if let Some(entry) = self.entries.get(&0x1F81) {
             if let Object::Array(values) = &entry.object {
-                // Sub-index 0 holds the count, so we iterate from the actual data.
-                for (i, value) in values.iter().enumerate().skip(1) {
+                // The vector `values` contains data for Sub-Indices 1..N.
+                // Index `i` corresponds to Node ID `i + 1`.
+                for (i, value) in values.iter().enumerate() {
                     if let ObjectValue::Unsigned32(assignment) = value {
                         // Bit 0: Node exists
                         // Bit 8: Node is isochronous
                         if (assignment & (1 << 0)) != 0 && (assignment & (1 << 8)) == 0 {
-                            cn_list.push(NodeId(i as u8));
+                            cn_list.push(NodeId((i + 1) as u8));
                         }
                     }
                 }
@@ -109,6 +109,7 @@ impl<'a> ObjectDictionary<'a> {
                         let count = values.len().min(254) as u8;
                         Some(Cow::Owned(ObjectValue::Unsigned8(count)))
                     } else {
+                        // Access actual data at index = sub_index - 1
                         values.get(sub_index as usize - 1).map(Cow::Borrowed)
                     }
                 }

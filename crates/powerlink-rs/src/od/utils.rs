@@ -2,11 +2,11 @@
 //! Utility functions for creating default Object Dictionaries.
 
 use super::{
-    ObjectDictionary,
     entry::ObjectEntry,
+    ObjectDictionary,
     {AccessType, Category, Object, ObjectValue, PdoMapping},
 };
-use crate::{PowerlinkError, nmt::flags::FeatureFlags, types::NodeId};
+use crate::{nmt::flags::FeatureFlags, types::NodeId, PowerlinkError};
 use alloc::vec;
 
 /// Creates a minimal, compliant Object Dictionary for a POWERLINK
@@ -35,8 +35,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         },
     );
 
-    // 0x1001: NMT_ErrorRegister_U8 (MISSING IN PREVIOUS VERSION)
-    // Bit 0: Generic Error (Active if any other bit is set)
+    // 0x1001: NMT_ErrorRegister_U8
     od.insert(
         0x1001,
         ObjectEntry {
@@ -83,7 +82,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         0x1010,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(4),  // Max sub-index
+                // Sub-index 0 (Count) is implicit. Vector starts at Sub 1.
                 ObjectValue::Unsigned32(0), // 1: All parameters
                 ObjectValue::Unsigned32(0), // 2: Communication
                 ObjectValue::Unsigned32(0), // 3: Application
@@ -103,7 +102,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         0x1011,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(4),  // Max sub-index
+                // Sub-index 0 (Count) is implicit.
                 ObjectValue::Unsigned32(0), // 1: All parameters
                 ObjectValue::Unsigned32(0), // 2: Communication
                 ObjectValue::Unsigned32(0), // 3: Application
@@ -123,11 +122,11 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         0x1018,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(4),
-                ObjectValue::Unsigned32(0x12345678), // VendorId
-                ObjectValue::Unsigned32(0x00000001), // ProductCode
-                ObjectValue::Unsigned32(0x00010000), // RevisionNo
-                ObjectValue::Unsigned32(0xABCDEF01), // SerialNo
+                // Sub-index 0 (Count) is implicit.
+                ObjectValue::Unsigned32(0x12345678), // 1: VendorId
+                ObjectValue::Unsigned32(0x00000001), // 2: ProductCode
+                ObjectValue::Unsigned32(0x00010000), // 3: RevisionNo
+                ObjectValue::Unsigned32(0xABCDEF01), // 4: SerialNo
             ]),
             name: "NMT_IdentityObject_REC",
             category: Category::Mandatory,
@@ -137,9 +136,6 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
             pdo_mapping: None,
         },
     );
-
-    // ... (Rest of the function: 0x1F82, 0x1F93, 0x1C14, Diagnostic) ...
-    // Ensure you keep 0x1F82, 0x1F93, 0x1C14 and add_diagnostic_objects call!
 
     let cn_flags = FeatureFlags::ISOCHRONOUS | FeatureFlags::SDO_ASND;
     od.insert(
@@ -160,9 +156,9 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         0x1F93,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(2),
-                ObjectValue::Unsigned8(node_id.0),
-                ObjectValue::Boolean(0),
+                // Sub-index 0 (Count) is implicit.
+                ObjectValue::Unsigned8(node_id.0), // 1: NodeID
+                ObjectValue::Boolean(0),           // 2: NodeIDByHW
             ]),
             name: "NMT_EPLNodeID_REC",
             category: Category::Mandatory,
@@ -187,7 +183,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         },
     );
 
-    // *** FIXED: Add missing mandatory object 0x1F99 (NMT_CNBasicEthernetTimeout_U32) ***
+    // 0x1F99: NMT_CNBasicEthernetTimeout_U32
     od.insert(
         0x1F99,
         ObjectEntry {
@@ -208,9 +204,6 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
 
 /// Creates a minimal, compliant Object Dictionary for a POWERLINK
 /// Managing Node (MN).
-///
-/// This populates the OD with all mandatory objects required for an MN,
-/// including the node management lists (0x1F8x) and diagnostic counters.
 pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, PowerlinkError> {
     // Start with a CN default OD
     let mut od = new_cn_default(node_id)?;
@@ -250,11 +243,12 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         },
     );
 
-    // *** FIXED: Add missing mandatory object 0x1F81 (NMT_NodeAssignment_AU32) ***
+    // 0x1F81: NMT_NodeAssignment_AU32
+    // 254 entries (Node 1..254). Sub 0 is implicit.
     od.insert(
         0x1F81,
         ObjectEntry {
-            object: Object::Array(vec![ObjectValue::Unsigned32(0); 255]), // 254 entries + sub0
+            object: Object::Array(vec![ObjectValue::Unsigned32(0); 254]),
             name: "NMT_NodeAssignment_AU32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),
@@ -264,21 +258,21 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         },
     );
 
-    // *** FIXED: Add missing mandatory object 0x1F89 (NMT_BootTime_REC) ***
+    // 0x1F89: NMT_BootTime_REC
     od.insert(
         0x1F89,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(9),           // NumberOfEntries
-                ObjectValue::Unsigned32(1_000_000), // MNWaitNotAct_U32
-                ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp1_U32
-                ObjectValue::Unsigned32(500_000),   // MNWaitPreOp1_U32
-                ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp2_U32
-                ObjectValue::Unsigned32(500_000),   // MNTimeoutReadyToOp_U32
-                ObjectValue::Unsigned32(500_000),   // MNIdentificationTimeout_U32
-                ObjectValue::Unsigned32(500_000),   // MNSoftwareTimeout_U32
-                ObjectValue::Unsigned32(500_000),   // MNConfigurationTimeout_U32
-                ObjectValue::Unsigned32(500_000),   // MNStartCNTimeout_U32
+                // Sub-index 0 (Count) is implicit.
+                ObjectValue::Unsigned32(1_000_000), // 1: MNWaitNotAct_U32
+                ObjectValue::Unsigned32(500_000),   // 2: MNTimeoutPreOp1_U32
+                ObjectValue::Unsigned32(500_000),   // 3: MNWaitPreOp1_U32
+                ObjectValue::Unsigned32(500_000),   // 4: MNTimeoutPreOp2_U32
+                ObjectValue::Unsigned32(500_000),   // 5: MNTimeoutReadyToOp_U32
+                ObjectValue::Unsigned32(500_000),   // 6: MNIdentificationTimeout_U32
+                ObjectValue::Unsigned32(500_000),   // 7: MNSoftwareTimeout_U32
+                ObjectValue::Unsigned32(500_000),   // 8: MNConfigurationTimeout_U32
+                ObjectValue::Unsigned32(500_000),   // 9: MNStartCNTimeout_U32
             ]),
             name: "NMT_BootTime_REC",
             category: Category::Mandatory,
@@ -293,7 +287,7 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
     od.insert(
         0x1F84,
         ObjectEntry {
-            object: Object::Array(vec![ObjectValue::Unsigned32(0)]),
+            object: Object::Array(vec![ObjectValue::Unsigned32(0); 254]),
             name: "NMT_MNNodeList_AU32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),
@@ -307,7 +301,7 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
     od.insert(
         0x1F85,
         ObjectEntry {
-            object: Object::Array(vec![ObjectValue::Unsigned32(0)]),
+            object: Object::Array(vec![ObjectValue::Unsigned32(0); 254]),
             name: "NMT_MNVendorIdList_AU32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),
@@ -321,7 +315,7 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
     od.insert(
         0x1F86,
         ObjectEntry {
-            object: Object::Array(vec![ObjectValue::Unsigned32(0)]),
+            object: Object::Array(vec![ObjectValue::Unsigned32(0); 254]),
             name: "NMT_MNProductCodeList_AU32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),
@@ -335,7 +329,7 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
     od.insert(
         0x1F87,
         ObjectEntry {
-            object: Object::Array(vec![ObjectValue::Unsigned32(0)]),
+            object: Object::Array(vec![ObjectValue::Unsigned32(0); 254]),
             name: "NMT_MNRevisionNoList_AU32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),
@@ -349,7 +343,7 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
     od.insert(
         0x1F8D,
         ObjectEntry {
-            object: Object::Array(vec![ObjectValue::Unsigned16(0)]),
+            object: Object::Array(vec![ObjectValue::Unsigned16(0); 254]),
             name: "DLL_MNPResPayloadLimitList_AU16",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),
@@ -363,7 +357,7 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
     od.insert(
         0x1F92,
         ObjectEntry {
-            object: Object::Array(vec![ObjectValue::Unsigned32(100000)]), // 100ms
+            object: Object::Array(vec![ObjectValue::Unsigned32(100000); 254]), // 100ms
             name: "DLL_MNPResTimeOut_AU32",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),
@@ -383,12 +377,15 @@ fn add_diagnostic_objects(od: &mut ObjectDictionary<'static>) -> Result<(), Powe
         0x1101,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(5),  // Max sub-index
+                // Sub-index 0 (Count) is implicit.
                 ObjectValue::Unsigned32(0), // 1: IsochrCyc_U32
                 ObjectValue::Unsigned32(0), // 2: IsochrRx_U32
                 ObjectValue::Unsigned32(0), // 3: IsochrTx_U32
                 ObjectValue::Unsigned32(0), // 4: AsyncRx_U32
                 ObjectValue::Unsigned32(0), // 5: AsyncTx_U32
+                ObjectValue::Unsigned32(0), // 6: SdoRx_U32
+                ObjectValue::Unsigned32(0), // 7: SdoTx_U32
+                ObjectValue::Unsigned32(0), // 8: Status_U32
             ]),
             name: "DIA_NMTTelegrCount_REC",
             category: Category::Optional,
@@ -404,9 +401,14 @@ fn add_diagnostic_objects(od: &mut ObjectDictionary<'static>) -> Result<(), Powe
         0x1102,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(2),  // Max sub-index
+                // Sub-index 0 (Count) is implicit.
                 ObjectValue::Unsigned32(0), // 1: HistoryEntryWrite_U32
-                ObjectValue::Unsigned32(0), // 2: EmergencyQueueOverflow_U32
+                ObjectValue::Unsigned32(0), // 2: EmergencyQueueWrite_U32
+                ObjectValue::Unsigned32(0), // 3: EmergencyQueueOverflow_U32
+                ObjectValue::Unsigned32(0), // 4: StatusEntryChanged_U32
+                ObjectValue::Unsigned32(0), // 5: StaticErrorBitFieldChanged_U32
+                ObjectValue::Unsigned32(0), // 6: ExceptionResetEdgePos_U32
+                ObjectValue::Unsigned32(0), // 7: ExceptionNewEdge_U32
             ]),
             name: "DIA_ERRStatistics_REC",
             category: Category::Optional,
