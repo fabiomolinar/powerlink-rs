@@ -277,7 +277,7 @@ impl IdentResponsePayload {
         let app_sw_time = u32::from_le_bytes(buffer[62..66].try_into()?);
         let ip_address = buffer[66..70].try_into()?;
         let subnet_mask = buffer[70..74].try_into()?;
-        let default_gateway = buffer[74..78].try_into()?;        
+        let default_gateway = buffer[74..78].try_into()?;
 
         // Parse HostName
         let hostname_slice = &buffer[HOSTNAME_OFFSET..HOSTNAME_OFFSET + HOSTNAME_SIZE];
@@ -318,58 +318,91 @@ impl IdentResponsePayload {
 mod tests {
     use super::*;
     use crate::od::{Object, ObjectDictionary, ObjectEntry, ObjectValue};
-    use crate::types::{NodeId, EPLVersion};
+    use crate::types::EPLVersion;
     use alloc::vec;
 
     fn create_test_od() -> ObjectDictionary<'static> {
         let mut od = ObjectDictionary::new(None);
-        od.insert(constants::IDX_NMT_CURR_NMT_STATE_U8, ObjectEntry { object: Object::Variable(ObjectValue::Unsigned8(0x6D)), ..Default::default() }); 
-        od.insert(constants::IDX_NMT_EPL_VERSION_U8, ObjectEntry { object: Object::Variable(ObjectValue::Unsigned8(0x20)), ..Default::default() });
-        od.insert(constants::IDX_NMT_DEVICE_TYPE_U32, ObjectEntry { object: Object::Variable(ObjectValue::Unsigned32(0x12345678)), ..Default::default() });
-        
-        od.insert(constants::IDX_NMT_IDENTITY_OBJECT_REC, ObjectEntry { 
-            object: Object::Record(vec![
-                ObjectValue::Unsigned32(0), 
-                ObjectValue::Unsigned32(0x11), 
-                ObjectValue::Unsigned32(0x22), 
-                ObjectValue::Unsigned32(0x33), 
-                ObjectValue::Unsigned32(0x44)
-            ]), 
-            ..Default::default() 
-        });
+        od.insert(
+            constants::IDX_NMT_CURR_NMT_STATE_U8,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned8(0x6D)),
+                ..Default::default()
+            },
+        );
+        od.insert(
+            constants::IDX_NMT_EPL_VERSION_U8,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned8(0x20)),
+                ..Default::default()
+            },
+        );
+        od.insert(
+            constants::IDX_NMT_DEVICE_TYPE_U32,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned32(0x12345678)),
+                ..Default::default()
+            },
+        );
 
-        od.insert(constants::IDX_NMT_HOST_NAME_VSTR, ObjectEntry { object: Object::Variable(ObjectValue::VisibleString("PowerlinkRS".into())), ..Default::default() });
-        
+        od.insert(
+            constants::IDX_NMT_IDENTITY_OBJECT_REC,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned32(0),
+                    ObjectValue::Unsigned32(0x11),
+                    ObjectValue::Unsigned32(0x22),
+                    ObjectValue::Unsigned32(0x33),
+                    ObjectValue::Unsigned32(0x44),
+                ]),
+                ..Default::default()
+            },
+        );
+
+        od.insert(
+            constants::IDX_NMT_HOST_NAME_VSTR,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::VisibleString("PowerlinkRS".into())),
+                ..Default::default()
+            },
+        );
+
         // 0x1E40 Network Configuration
         // Sub-Index mapping for Record:
         // Vector Index 0 -> Sub-Index 1: IfIndex (U16)
         // Vector Index 1 -> Sub-Index 2: Addr_IPAD (IP_ADDRESS/U32) - THIS IS THE TARGET
         // Vector Index 2 -> Sub-Index 3: NetMask_IPAD (IP_ADDRESS/U32)
         // ...
-        od.insert(constants::IDX_NWL_IP_ADDR_TABLE_REC, ObjectEntry {
-             object: Object::Record(vec![
-                ObjectValue::Unsigned16(0),           // Sub 1: IfIndex
-                ObjectValue::Unsigned32(0xC0A86401),  // Sub 2: IP Address (192.168.100.1 LE)
-                ObjectValue::Unsigned32(0xFFFFFF00),  // Sub 3: NetMask
-                ObjectValue::Unsigned16(0),           // Sub 4: ReasmMaxSize
-                ObjectValue::Unsigned32(0xC0A864FE),  // Sub 5: DefaultGateway
-            ]),
-             ..Default::default()
-        });
+        od.insert(
+            constants::IDX_NWL_IP_ADDR_TABLE_REC,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned16(0),          // Sub 1: IfIndex
+                    ObjectValue::Unsigned32(0xC0A86401), // Sub 2: IP Address (192.168.100.1 LE)
+                    ObjectValue::Unsigned32(0xFFFFFF00), // Sub 3: NetMask
+                    ObjectValue::Unsigned16(0),          // Sub 4: ReasmMaxSize
+                    ObjectValue::Unsigned32(0xC0A864FE), // Sub 5: DefaultGateway
+                ]),
+                ..Default::default()
+            },
+        );
 
-        od.insert(constants::IDX_NMT_CYCLE_TIMING_REC, ObjectEntry {
-            object: Object::Record(vec![
-                ObjectValue::Unsigned16(0),
-                ObjectValue::Unsigned16(0),
-                ObjectValue::Unsigned32(0), 
-                ObjectValue::Unsigned16(0),
-                ObjectValue::Unsigned16(0),
-                ObjectValue::Unsigned32(0),
-                ObjectValue::Unsigned16(0),
-                ObjectValue::Unsigned16(1500) 
-            ]),
-            ..Default::default()
-        });
+        od.insert(
+            constants::IDX_NMT_CYCLE_TIMING_REC,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned32(0),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned32(0),
+                    ObjectValue::Unsigned16(0),
+                    ObjectValue::Unsigned16(1500),
+                ]),
+                ..Default::default()
+            },
+        );
 
         od
     }
@@ -378,25 +411,28 @@ mod tests {
     fn test_ident_response_round_trip() {
         let od = create_test_od();
         let payload = IdentResponsePayload::new(&od);
-        
-        let mut buffer = [0u8; 256];
-        let size = payload.serialize(&mut buffer).expect("Serialization failed");
-        
-        assert_eq!(size, 158); 
 
-        let deserialized = IdentResponsePayload::deserialize(&buffer[..size]).expect("Deserialization failed");
+        let mut buffer = [0u8; 256];
+        let size = payload
+            .serialize(&mut buffer)
+            .expect("Serialization failed");
+
+        assert_eq!(size, 158);
+
+        let deserialized =
+            IdentResponsePayload::deserialize(&buffer[..size]).expect("Deserialization failed");
 
         assert_eq!(deserialized.nmt_state, NmtState::NmtReadyToOperate);
         assert_eq!(deserialized.epl_version, EPLVersion(0x20));
         assert_eq!(deserialized.device_type, 0x12345678);
-        assert_eq!(deserialized.host_name, "PowerlinkRS"); 
+        assert_eq!(deserialized.host_name, "PowerlinkRS");
         // Verify IP: 0xC0A86401 (LE) -> [0x01, 0x64, 0xA8, 0xC0] -> [1, 100, 168, 192]
         assert_eq!(deserialized.ip_address, [1, 100, 168, 192]);
     }
 
     #[test]
     fn test_deserialize_too_short() {
-        let buffer = [0u8; 157]; 
+        let buffer = [0u8; 157];
         let result = IdentResponsePayload::deserialize(&buffer);
         assert!(matches!(result, Err(PowerlinkError::BufferTooShort)));
     }

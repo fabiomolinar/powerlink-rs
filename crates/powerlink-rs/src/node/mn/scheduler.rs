@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/node/mn/scheduler.rs
 use super::payload;
-use super::state::{AsyncRequest, CnInfo, CnState, MnContext};
+use super::state::{CnInfo, CnState, MnContext};
 use crate::frame::basic::MacAddress;
 use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId}; // Added ServiceId/Frame
 use crate::nmt::events::{MnNmtCommandRequest, NmtEvent, NmtStateCommand};
@@ -443,8 +443,8 @@ pub(super) fn schedule_timeout(context: &mut MnContext, deadline_us: u64, event:
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::{BTreeMap, BinaryHeap};
     use crate::node::mn::state::AsyncRequest;
+    use alloc::collections::{BTreeMap, BinaryHeap};
 
     use super::*;
     use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
@@ -454,9 +454,9 @@ mod tests {
     use crate::od::ObjectDictionary;
     use crate::sdo::client_manager::SdoClientManager;
     use crate::sdo::transport::AsndTransport;
-    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
     #[cfg(feature = "sdo-udp")]
     use crate::sdo::transport::UdpTransport;
+    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
     use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
     use alloc::vec::Vec;
 
@@ -518,7 +518,7 @@ mod tests {
     fn test_priority_er_requests() {
         let mut context = create_test_context();
         let node_id = NodeId(10);
-        
+
         // Setup: Add a pending ER request
         context.pending_er_requests.push(node_id);
 
@@ -536,7 +536,7 @@ mod tests {
     fn test_priority_status_requests() {
         let mut context = create_test_context();
         let node_id = NodeId(20);
-        
+
         // Setup: Add a pending Status request
         context.pending_status_requests.push(node_id);
 
@@ -560,7 +560,7 @@ mod tests {
             target_node,
             NmtCommandData::None,
         ));
-        
+
         let dummy_frame = PowerlinkFrame::SoA(crate::frame::SoAFrame::new(
             Default::default(),
             NmtState::NmtOperational,
@@ -588,13 +588,13 @@ mod tests {
         let node_low = NodeId(11);
 
         // Setup: CN 10 requests with Priority 7 (NMT), CN 11 with Priority 3 (Generic)
-        context.async_request_queue.push(AsyncRequest { 
-            node_id: node_low, 
-            priority: 3 
+        context.async_request_queue.push(AsyncRequest {
+            node_id: node_low,
+            priority: 3,
         });
-        context.async_request_queue.push(AsyncRequest { 
-            node_id: node_high, 
-            priority: 7 
+        context.async_request_queue.push(AsyncRequest {
+            node_id: node_high,
+            priority: 7,
         });
 
         // Act 1: Should pick High Priority
@@ -611,23 +611,41 @@ mod tests {
     #[test]
     fn test_find_next_node_to_identify() {
         let mut context = create_test_context();
-        
+
         // Setup: Add nodes in various states
         // Node 1: Operational (Known)
-        context.node_info.insert(NodeId(1), CnInfo { state: CnState::Operational, ..Default::default() });
+        context.node_info.insert(
+            NodeId(1),
+            CnInfo {
+                state: CnState::Operational,
+                ..Default::default()
+            },
+        );
         // Node 2: Unknown (Needs ID)
-        context.node_info.insert(NodeId(2), CnInfo { state: CnState::Unknown, ..Default::default() });
+        context.node_info.insert(
+            NodeId(2),
+            CnInfo {
+                state: CnState::Unknown,
+                ..Default::default()
+            },
+        );
         // Node 3: Missing (Needs ID to check if back)
-        context.node_info.insert(NodeId(3), CnInfo { state: CnState::Missing, ..Default::default() });
-        
+        context.node_info.insert(
+            NodeId(3),
+            CnInfo {
+                state: CnState::Missing,
+                ..Default::default()
+            },
+        );
+
         // Act 1
         let node1 = find_next_node_to_identify(&mut context).unwrap();
         assert_eq!(node1, NodeId(2));
-        
+
         // Act 2 (Round robin)
         let node2 = find_next_node_to_identify(&mut context).unwrap();
         assert_eq!(node2, NodeId(3));
-        
+
         // Act 3 (Loop back to 2)
         let node3 = find_next_node_to_identify(&mut context).unwrap();
         assert_eq!(node3, NodeId(2));
@@ -636,13 +654,25 @@ mod tests {
     #[test]
     fn test_find_next_async_only_to_poll() {
         let mut context = create_test_context();
-        
+
         // Setup: Two async-only nodes
         context.async_only_nodes.push(NodeId(10));
         context.async_only_nodes.push(NodeId(20));
-        
-        context.node_info.insert(NodeId(10), CnInfo { state: CnState::Operational, ..Default::default() });
-        context.node_info.insert(NodeId(20), CnInfo { state: CnState::Operational, ..Default::default() });
+
+        context.node_info.insert(
+            NodeId(10),
+            CnInfo {
+                state: CnState::Operational,
+                ..Default::default()
+            },
+        );
+        context.node_info.insert(
+            NodeId(20),
+            CnInfo {
+                state: CnState::Operational,
+                ..Default::default()
+            },
+        );
 
         // Act 1
         let node1 = find_next_async_only_to_poll(&mut context).unwrap();
@@ -651,7 +681,7 @@ mod tests {
         // Act 2
         let node2 = find_next_async_only_to_poll(&mut context).unwrap();
         assert_eq!(node2, NodeId(20));
-        
+
         // Act 3 (Loop back)
         let node3 = find_next_async_only_to_poll(&mut context).unwrap();
         assert_eq!(node3, NodeId(10));

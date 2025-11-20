@@ -89,12 +89,7 @@ impl SdoClientManager {
         conn.start_write_job(index, sub_index, data, tid, time, od)
     }
 
-    pub fn handle_response(
-        &mut self,
-        source: NodeId,
-        seq: SequenceLayerHeader,
-        cmd: SdoCommand,
-    ) {
+    pub fn handle_response(&mut self, source: NodeId, seq: SequenceLayerHeader, cmd: SdoCommand) {
         if let Some(conn) = self.connections.get_mut(&source) {
             conn.handle_response(&seq, &cmd);
             if conn.is_closed() {

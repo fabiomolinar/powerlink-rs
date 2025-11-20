@@ -19,9 +19,9 @@ use crate::sdo::client_manager::SdoClientManager;
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
 use crate::sdo::server::SdoClientInfo;
+use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
-use crate::sdo::transport::AsndTransport;
 use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoServer, SdoTransport};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::collections::BinaryHeap;
@@ -62,9 +62,7 @@ impl<'s> ManagingNode<'s> {
 
         // Read cycle time (0x1006)
         let cycle_time_us = od.read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0).ok_or(
-            PowerlinkError::ValidationError(
-                "Failed to read 0x1006 NMT_CycleLen_U32",
-            ),
+            PowerlinkError::ValidationError("Failed to read 0x1006 NMT_CycleLen_U32"),
         )? as u64;
 
         // --- Initialize CN Management Info (using config module) ---
@@ -214,23 +212,21 @@ impl<'s> ManagingNode<'s> {
                     return NodeAction::NoAction;
                 }
                 match SequenceLayerHeader::deserialize(&payload[0..4]) {
-                    Ok(seq_header) => {
-                        match SdoCommand::deserialize(&payload[4..]) {
-                            Ok(cmd) => {
-                                self.context.sdo_client_manager.handle_response(
-                                    asnd_source_node_id,
-                                    seq_header,
-                                    cmd,
-                                );
-                            }
-                            Err(e) => {
-                                error!(
-                                    "Failed to deserialize SDO command from Node {}: {:?}",
-                                    asnd_source_node_id.0, e
-                                );
-                            }
+                    Ok(seq_header) => match SdoCommand::deserialize(&payload[4..]) {
+                        Ok(cmd) => {
+                            self.context.sdo_client_manager.handle_response(
+                                asnd_source_node_id,
+                                seq_header,
+                                cmd,
+                            );
                         }
-                    }
+                        Err(e) => {
+                            error!(
+                                "Failed to deserialize SDO command from Node {}: {:?}",
+                                asnd_source_node_id.0, e
+                            );
+                        }
+                    },
                     Err(e) => {
                         error!(
                             "Failed to deserialize SDO sequence header from Node {}: {:?}",

@@ -3,9 +3,7 @@ use super::payload;
 use super::state::CnContext;
 use crate::common::NetTime;
 use crate::frame::error::{EntryType, ErrorEntry, ErrorEntryMode};
-use crate::frame::{
-    ASndFrame, DllCsEvent, DllError, NmtAction, PowerlinkFrame, RequestedServiceId, ServiceId,
-};
+use crate::frame::{ASndFrame, DllError, NmtAction, PowerlinkFrame, RequestedServiceId, ServiceId};
 use crate::nmt::events::NmtEvent; // Removed NmtCommand
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;

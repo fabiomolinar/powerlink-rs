@@ -6,23 +6,20 @@ use super::cycle;
 use super::events;
 use super::state::{CyclePhase, MnContext};
 use crate::common::{NetTime, RelativeTime};
+use crate::frame::PowerlinkFrame;
 use crate::frame::control::SocFrame;
-use crate::frame::{DllMsEvent, PowerlinkFrame};
 use crate::nmt::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::constants;
 use crate::sdo::server::SdoClientInfo;
-#[cfg(feature = "sdo-udp")]
-use crate::sdo::transport::UdpTransport;
-use crate::sdo::transport::{AsndTransport, SdoTransport};
+use crate::sdo::transport::SdoTransport;
 use log::{error, trace, warn};
 
 /// Handles periodic timer events for the node.
 pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     // --- 0. Check for Cycle Start ---
-    let time_since_last_cycle =
-        current_time_us.saturating_sub(context.current_cycle_start_time_us);
+    let time_since_last_cycle = current_time_us.saturating_sub(context.current_cycle_start_time_us);
     let current_nmt_state = context.nmt_state_machine.current_state();
 
     if time_since_last_cycle >= context.cycle_time_us
@@ -120,7 +117,10 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
     // --- Handle PRes Timeout ---
     if let Some(event) = context.pending_timeout_event.take() {
         // This is a PRes timeout
-        warn!("[MN] PRes timeout for Node {:?}.", context.current_polled_cn);
+        warn!(
+            "[MN] PRes timeout for Node {:?}.",
+            context.current_polled_cn
+        );
         events::handle_dll_event(
             context,
             event,
@@ -150,17 +150,17 @@ mod tests {
     use super::*;
     use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
     use crate::frame::ms_state_machine::DllMsStateMachine;
+    use crate::frame::{DllMsEvent, PowerlinkFrame, deserialize_frame};
     use crate::nmt::mn_state_machine::MnNmtStateMachine;
+    use crate::node::mn::state::CyclePhase;
     use crate::node::{CoreNodeContext, NodeAction};
     use crate::od::ObjectDictionary;
     use crate::sdo::client_manager::SdoClientManager;
-    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
     use crate::sdo::transport::AsndTransport;
     #[cfg(feature = "sdo-udp")]
     use crate::sdo::transport::UdpTransport;
-    use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
-    use crate::frame::{PowerlinkFrame, DllMsEvent, deserialize_frame};
-    use crate::node::mn::state::{CnInfo, CnState, CyclePhase}; // Import CyclePhase
+    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
+    use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
     use alloc::collections::{BTreeMap, BinaryHeap};
     use alloc::vec::Vec;
 
@@ -178,7 +178,12 @@ mod tests {
         MnContext {
             core,
             configuration_interface: None,
-            nmt_state_machine: MnNmtStateMachine::new(NodeId(C_ADR_MN_DEF_NODE_ID), Default::default(), 0, 0),
+            nmt_state_machine: MnNmtStateMachine::new(
+                NodeId(C_ADR_MN_DEF_NODE_ID),
+                Default::default(),
+                0,
+                0,
+            ),
             dll_state_machine: DllMsStateMachine::default(),
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
             asnd_transport: AsndTransport,
@@ -217,15 +222,17 @@ mod tests {
         let mut context = create_test_context();
         context.cycle_time_us = 1000;
         context.current_cycle_start_time_us = 1000;
-        
-        context.nmt_state_machine.set_state(NmtState::NmtOperational);
+
+        context
+            .nmt_state_machine
+            .set_state(NmtState::NmtOperational);
         context.current_phase = CyclePhase::Idle;
 
         let action1 = handle_tick(&mut context, 1900);
         assert!(matches!(action1, NodeAction::NoAction));
 
         let action2 = handle_tick(&mut context, 2000);
-        
+
         if let NodeAction::SendFrame(bytes) = action2 {
             let frame = deserialize_frame(&bytes).expect("Failed to deserialize SoC");
             assert!(matches!(frame, PowerlinkFrame::Soc(_)));
@@ -240,8 +247,10 @@ mod tests {
     #[test]
     fn test_handle_tick_pres_timeout() {
         let mut context = create_test_context();
-        context.nmt_state_machine.set_state(NmtState::NmtOperational);
-        
+        context
+            .nmt_state_machine
+            .set_state(NmtState::NmtOperational);
+
         // Fix: Set phase to IsochronousPReq so handle_tick doesn't try to start a new cycle
         // (which would preempt the timeout handling)
         context.current_phase = CyclePhase::IsochronousPReq;
@@ -249,13 +258,24 @@ mod tests {
         context.pending_timeout_event = Some(DllMsEvent::PresTimeout);
         context.current_polled_cn = Some(NodeId(5));
         context.next_tick_us = Some(1500);
-        
+
         // Add an async request to force SoA transmission logic in advance_cycle_phase
-        context.async_request_queue.push(crate::node::mn::state::AsyncRequest { node_id: NodeId(1), priority: 1 });
+        context
+            .async_request_queue
+            .push(crate::node::mn::state::AsyncRequest {
+                node_id: NodeId(1),
+                priority: 1,
+            });
 
         let action = handle_tick(&mut context, 1500);
 
-        assert!(context.pending_timeout_event.is_none() || context.pending_timeout_event == Some(DllMsEvent::AsndTimeout));
-        assert!(matches!(action, NodeAction::SendFrame(_)), "Should advance to next phase");
+        assert!(
+            context.pending_timeout_event.is_none()
+                || context.pending_timeout_event == Some(DllMsEvent::AsndTimeout)
+        );
+        assert!(
+            matches!(action, NodeAction::SendFrame(_)),
+            "Should advance to next phase"
+        );
     }
 }

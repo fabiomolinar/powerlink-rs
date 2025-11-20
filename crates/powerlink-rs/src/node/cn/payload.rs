@@ -45,13 +45,13 @@ pub(super) fn build_ident_response(
     // FIX: Use a buffer large enough for the struct (approx 180 bytes max).
     // Standard says IdentResponse is fixed length logic mostly.
     // We init with 0 to pad string fields correctly.
-    let mut payload_buf = vec![0u8; 256]; 
+    let mut payload_buf = vec![0u8; 256];
     let payload_len = match payload_struct.serialize(&mut payload_buf) {
         Ok(len) => len,
         Err(e) => {
             error!("Failed to serialize IdentResponsePayload: {:?}", e);
             // Fallback: minimal length or zeroed
-            158 
+            158
         }
     };
     // Truncate to the actual written length so the frame is sized correctly.
@@ -59,11 +59,11 @@ pub(super) fn build_ident_response(
 
     let asnd = ASndFrame::new(
         mac_address,
-        soa.eth_header.source_mac,    
-        NodeId(C_ADR_MN_DEF_NODE_ID), 
+        soa.eth_header.source_mac,
+        NodeId(C_ADR_MN_DEF_NODE_ID),
         node_id,
         ServiceId::IdentResponse,
-        payload_buf, 
+        payload_buf,
     );
     PowerlinkFrame::ASnd(asnd)
 }
@@ -165,10 +165,7 @@ pub(super) fn build_nmt_request(
         "Building NMTRequest(CommandID={:#04x}, Target={}) for SoA from node {}",
         command_id, target.0, soa.source.0
     );
-    let payload = vec![
-        command_id,
-        target.0,
-    ];
+    let payload = vec![command_id, target.0];
 
     let asnd = ASndFrame::new(
         mac_address,
@@ -233,56 +230,91 @@ pub(super) fn build_pres_response(context: &mut CnContext, en_flag: bool) -> Pow
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::control::{IdentResponsePayload, StatusResponsePayload, SoAFlags};
-    use crate::frame::{SoAFrame, ServiceId, RequestedServiceId};
-    use crate::nmt::states::NmtState;
-    use crate::od::{ObjectDictionary, ObjectEntry, ObjectValue, Object};
-    use crate::types::{EPLVersion, NodeId};
-    use crate::sdo::SdoClient;
     use crate::frame::basic::MacAddress;
+    use crate::frame::control::{IdentResponsePayload, SoAFlags, StatusResponsePayload};
+    use crate::frame::{RequestedServiceId, ServiceId, SoAFrame};
+    use crate::nmt::states::NmtState;
+    use crate::od::{Object, ObjectDictionary, ObjectEntry, ObjectValue};
+    use crate::sdo::SdoClient;
+    use crate::types::{EPLVersion, NodeId};
     use alloc::collections::VecDeque;
     use alloc::vec;
 
     fn setup_od() -> ObjectDictionary<'static> {
         let mut od = ObjectDictionary::new(None);
-        
+
         // 0x1018 Identity
-        od.insert(0x1018, ObjectEntry { 
-            object: Object::Record(vec![
-                ObjectValue::Unsigned32(0), 
-                ObjectValue::Unsigned32(0), 
-                ObjectValue::Unsigned32(0), 
-                ObjectValue::Unsigned32(0)
-            ]), 
-            ..Default::default() 
-        });
-        od.write(0x1018, 1, ObjectValue::Unsigned32(0x11112222)).unwrap();
-        od.write(0x1018, 2, ObjectValue::Unsigned32(0x33334444)).unwrap();
-        
-        od.insert(0x1000, ObjectEntry { object: Object::Variable(ObjectValue::Unsigned32(0x00009999)), ..Default::default() });
-        od.insert(0x1F9A, ObjectEntry { object: Object::Variable(ObjectValue::VisibleString("TestCN".into())), ..Default::default() });
-        
-        od.insert(constants::IDX_NMT_CURR_NMT_STATE_U8, ObjectEntry { object: Object::Variable(ObjectValue::Unsigned8(0)), ..Default::default() });
-        od.insert(constants::IDX_NMT_ERROR_REGISTER_U8, ObjectEntry { object: Object::Variable(ObjectValue::Unsigned8(0)), ..Default::default() });
+        od.insert(
+            0x1018,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned32(0),
+                    ObjectValue::Unsigned32(0),
+                    ObjectValue::Unsigned32(0),
+                    ObjectValue::Unsigned32(0),
+                ]),
+                ..Default::default()
+            },
+        );
+        od.write(0x1018, 1, ObjectValue::Unsigned32(0x11112222))
+            .unwrap();
+        od.write(0x1018, 2, ObjectValue::Unsigned32(0x33334444))
+            .unwrap();
+
+        od.insert(
+            0x1000,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned32(0x00009999)),
+                ..Default::default()
+            },
+        );
+        od.insert(
+            0x1F9A,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::VisibleString("TestCN".into())),
+                ..Default::default()
+            },
+        );
+
+        od.insert(
+            constants::IDX_NMT_CURR_NMT_STATE_U8,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned8(0)),
+                ..Default::default()
+            },
+        );
+        od.insert(
+            constants::IDX_NMT_ERROR_REGISTER_U8,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned8(0)),
+                ..Default::default()
+            },
+        );
 
         // 0x1E40 Network Configuration (Explicitly required by IdentResponsePayload::new)
-        od.insert(0x1E40, ObjectEntry {
-            object: Object::Record(vec![
-                ObjectValue::Unsigned32(0), // Sub 1: IP
-                ObjectValue::Unsigned32(0), // Sub 2: Mask
-                ObjectValue::Unsigned32(0)  // Sub 3: Gateway
-            ]),
-            ..Default::default()
-        });
+        od.insert(
+            0x1E40,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned32(0), // Sub 1: IP
+                    ObjectValue::Unsigned32(0), // Sub 2: Mask
+                    ObjectValue::Unsigned32(0), // Sub 3: Gateway
+                ]),
+                ..Default::default()
+            },
+        );
 
         // 0x1020 Verify Configuration (Some serialization logic checks this)
-        od.insert(0x1020, ObjectEntry {
-            object: Object::Record(vec![
-                ObjectValue::Unsigned32(0), // Date
-                ObjectValue::Unsigned32(0)  // Time
-            ]),
-            ..Default::default()
-        });
+        od.insert(
+            0x1020,
+            ObjectEntry {
+                object: Object::Record(vec![
+                    ObjectValue::Unsigned32(0), // Date
+                    ObjectValue::Unsigned32(0), // Time
+                ]),
+                ..Default::default()
+            },
+        );
 
         od
     }
@@ -292,17 +324,20 @@ mod tests {
         let od = setup_od();
         let sdo_client = SdoClient::new();
         let pending_nmt = Vec::new();
-        
+
         let soa = SoAFrame::new(
             MacAddress::default(),
             NmtState::NmtOperational,
             SoAFlags::default(),
             RequestedServiceId::NoService,
             NodeId(0),
-            EPLVersion(0x20)
+            EPLVersion(0x20),
         );
         let soa_frame = PowerlinkFrame::SoA(soa);
-        let soa_ref = match &soa_frame { PowerlinkFrame::SoA(s) => s, _ => panic!() };
+        let soa_ref = match &soa_frame {
+            PowerlinkFrame::SoA(s) => s,
+            _ => panic!(),
+        };
 
         let frame = build_ident_response(
             MacAddress::default(),
@@ -310,12 +345,12 @@ mod tests {
             &od,
             soa_ref,
             &sdo_client,
-            &pending_nmt
+            &pending_nmt,
         );
 
         if let PowerlinkFrame::ASnd(asnd) = frame {
             assert_eq!(asnd.service_id, ServiceId::IdentResponse);
-            
+
             // Match and print specific error if deserialization fails
             match IdentResponsePayload::deserialize(&asnd.payload) {
                 Ok(payload) => {
@@ -323,9 +358,13 @@ mod tests {
                     assert_eq!(payload.product_code, 0x33334444);
                     assert_eq!(payload.device_type, 0x00009999);
                     assert_eq!(payload.host_name.as_str(), "TestCN");
-                },
+                }
                 Err(e) => {
-                    panic!("Failed to deserialize IdentResponse. Payload size: {}: {:?}", asnd.payload.len(), e);
+                    panic!(
+                        "Failed to deserialize IdentResponse. Payload size: {}: {:?}",
+                        asnd.payload.len(),
+                        e
+                    );
                 }
             }
         } else {
@@ -346,27 +385,30 @@ mod tests {
             SoAFlags::default(),
             RequestedServiceId::NoService,
             NodeId(0),
-            EPLVersion(0x20)
+            EPLVersion(0x20),
         );
         let soa_frame = PowerlinkFrame::SoA(soa);
-        let soa_ref = match &soa_frame { PowerlinkFrame::SoA(s) => s, _ => panic!() };
+        let soa_ref = match &soa_frame {
+            PowerlinkFrame::SoA(s) => s,
+            _ => panic!(),
+        };
 
         let frame = build_status_response(
             MacAddress::default(),
             NodeId(10),
             &mut od,
-            true,  
-            false, 
+            true,
+            false,
             &mut emergency_queue,
             soa_ref,
             &sdo_client,
-            &pending_nmt
+            &pending_nmt,
         );
 
         if let PowerlinkFrame::ASnd(asnd) = frame {
             assert_eq!(asnd.service_id, ServiceId::StatusResponse);
             // Ensure payload is valid
-             match StatusResponsePayload::deserialize(&asnd.payload) {
+            match StatusResponsePayload::deserialize(&asnd.payload) {
                 Ok(payload) => assert!(payload.en_flag),
                 Err(e) => panic!("Failed to deserialize StatusResponse: {:?}", e),
             }

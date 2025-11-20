@@ -328,14 +328,16 @@ pub trait PdoHandler<'s>: NodeContext<'s> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::od::{Object, ObjectDictionary, ObjectEntry, ObjectValue};
-    use crate::types::NodeId;
-    use crate::pdo::PDOVersion;
-    use crate::node::{NodeContext, CoreNodeContext};
-    use crate::frame::error::{DllErrorManager, LoggingErrorHandler, CnErrorCounters, ErrorHandler, ErrorCounters};
-    use crate::nmt::cn_state_machine::CnNmtStateMachine;
-    use crate::sdo::{SdoServer, SdoClient, EmbeddedSdoServer, EmbeddedSdoClient};
     use crate::frame::basic::MacAddress;
+    use crate::frame::error::{
+        CnErrorCounters, DllErrorManager, ErrorCounters, ErrorHandler, LoggingErrorHandler,
+    };
+    use crate::nmt::cn_state_machine::CnNmtStateMachine;
+    use crate::node::{CoreNodeContext, NodeContext};
+    use crate::od::{Object, ObjectDictionary, ObjectEntry, ObjectValue};
+    use crate::pdo::PDOVersion;
+    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
+    use crate::types::NodeId;
     use alloc::borrow::Cow;
     use alloc::vec;
 
@@ -346,66 +348,93 @@ mod tests {
     }
 
     impl<'a> NodeContext<'a> for TestNode {
-        fn is_cn(&self) -> bool { true }
-        fn core(&self) -> &CoreNodeContext<'a> { unsafe { core::mem::transmute(&self.core) } }
-        fn core_mut(&mut self) -> &mut CoreNodeContext<'a> { unsafe { core::mem::transmute(&mut self.core) } }
-        fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine { &self.nmt_state_machine }
+        fn is_cn(&self) -> bool {
+            true
+        }
+        fn core(&self) -> &CoreNodeContext<'a> {
+            unsafe { core::mem::transmute(&self.core) }
+        }
+        fn core_mut(&mut self) -> &mut CoreNodeContext<'a> {
+            unsafe { core::mem::transmute(&mut self.core) }
+        }
+        fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine {
+            &self.nmt_state_machine
+        }
     }
 
     impl<'a> PdoHandler<'a> for TestNode {
-        fn dll_error_manager(&mut self) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
+        fn dll_error_manager(
+            &mut self,
+        ) -> &mut DllErrorManager<impl ErrorCounters, impl ErrorHandler> {
             &mut self.dll_error_manager
         }
     }
 
     fn setup_node() -> TestNode {
         let mut od = ObjectDictionary::new(None);
-        
+
         // 1. Target Object (0x2000)
-        od.insert(0x2000, ObjectEntry {
-            object: Object::Record(vec![
-                ObjectValue::Unsigned8(0),  
-                ObjectValue::Unsigned16(0)  
-            ]),
-            ..Default::default()
-        });
+        od.insert(
+            0x2000,
+            ObjectEntry {
+                object: Object::Record(vec![ObjectValue::Unsigned8(0), ObjectValue::Unsigned16(0)]),
+                ..Default::default()
+            },
+        );
         od.write(0x2000, 1, ObjectValue::Unsigned8(0)).unwrap();
         od.write(0x2000, 2, ObjectValue::Unsigned16(0)).unwrap();
 
         // 2. RPDO Comm Param (0x1400)
-        od.insert(0x1400, ObjectEntry {
-            object: Object::Array(vec![
-                ObjectValue::Unsigned8(1), // Sub 1: NodeID = 1
-                ObjectValue::Unsigned8(0)  // Sub 2: Version = 0
-            ]),
-            ..Default::default()
-        });
+        od.insert(
+            0x1400,
+            ObjectEntry {
+                object: Object::Array(vec![
+                    ObjectValue::Unsigned8(1), // Sub 1: NodeID = 1
+                    ObjectValue::Unsigned8(0), // Sub 2: Version = 0
+                ]),
+                ..Default::default()
+            },
+        );
         od.write(0x1400, 1, ObjectValue::Unsigned8(1)).unwrap();
 
         // 3. RPDO Mapping (0x1600)
-        od.insert(0x1600, ObjectEntry {
-            object: Object::Array(vec![
-                ObjectValue::Unsigned64(0), 
-                ObjectValue::Unsigned64(0)
-            ]),
-            ..Default::default()
-        });
-        
+        od.insert(
+            0x1600,
+            ObjectEntry {
+                object: Object::Array(vec![ObjectValue::Unsigned64(0), ObjectValue::Unsigned64(0)]),
+                ..Default::default()
+            },
+        );
+
         // CALCULATE MAPPING ENTRIES CORRECTLY
         // Format: Length(48..63) | Offset(32..47) | Res | Sub(16..23) | Index(0..15)
-        
+
         // Entry 1: Index 0x2000, Sub 1, Offset 0, Length 8 bits
         // 0x0008_0000_0001_2000
         let mapping_1: u64 = (8 << 48) | (0 << 32) | (1 << 16) | 0x2000;
-        od.write(0x1600, 1, ObjectValue::Unsigned64(mapping_1)).unwrap();
+        od.write(0x1600, 1, ObjectValue::Unsigned64(mapping_1))
+            .unwrap();
 
         // Entry 2: Index 0x2000, Sub 2, Offset 8 bits (1 byte), Length 16 bits
         // 0x0010_0008_0002_2000
         let mapping_2: u64 = (16 << 48) | (8 << 32) | (2 << 16) | 0x2000;
-        od.write(0x1600, 2, ObjectValue::Unsigned64(mapping_2)).unwrap();
+        od.write(0x1600, 2, ObjectValue::Unsigned64(mapping_2))
+            .unwrap();
 
-        od.insert(constants::IDX_PDO_ERR_MAP_VERS_OSTR, ObjectEntry { object: Object::Variable(ObjectValue::OctetString(vec![0; 32])), ..Default::default() });
-        od.insert(constants::IDX_PDO_ERR_SHORT_RX_OSTR, ObjectEntry { object: Object::Variable(ObjectValue::OctetString(vec![0; 32])), ..Default::default() });
+        od.insert(
+            constants::IDX_PDO_ERR_MAP_VERS_OSTR,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::OctetString(vec![0; 32])),
+                ..Default::default()
+            },
+        );
+        od.insert(
+            constants::IDX_PDO_ERR_SHORT_RX_OSTR,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::OctetString(vec![0; 32])),
+                ..Default::default()
+            },
+        );
 
         let core = CoreNodeContext {
             od,
@@ -427,7 +456,7 @@ mod tests {
     fn test_consume_valid_pdo() {
         let mut node = setup_node();
         let payload = [0xAA, 0xBB, 0xCC]; // 0xAA (U8), 0xCCBB (U16)
-        
+
         node.consume_pdo_payload(NodeId(1), &payload, PDOVersion(0), true);
 
         let val_u8 = node.core.od.read(0x2000, 1).unwrap();
@@ -435,23 +464,31 @@ mod tests {
 
         // Assert using match to avoid unwrap panic hiding info
         if let ObjectValue::Unsigned8(v) = val_u8.as_ref() {
-            assert_eq!(*v, 0xAA, "PDO write failed for U8. Expected 0xAA, got {:#02X}", v);
+            assert_eq!(
+                *v, 0xAA,
+                "PDO write failed for U8. Expected 0xAA, got {:#02X}",
+                v
+            );
         } else {
             panic!("OD 0x2000/1 has wrong type");
         }
 
         if let ObjectValue::Unsigned16(v) = val_u16.as_ref() {
-            assert_eq!(*v, 0xCCBB, "PDO write failed for U16. Expected 0xCCBB, got {:#04X}", v);
+            assert_eq!(
+                *v, 0xCCBB,
+                "PDO write failed for U16. Expected 0xCCBB, got {:#04X}",
+                v
+            );
         } else {
-             panic!("OD 0x2000/2 has wrong type");
+            panic!("OD 0x2000/2 has wrong type");
         }
     }
 
     #[test]
     fn test_consume_pdo_too_short() {
         let mut node = setup_node();
-        let payload = [0xAA, 0xBB]; 
-        
+        let payload = [0xAA, 0xBB];
+
         node.consume_pdo_payload(NodeId(1), &payload, PDOVersion(0), true);
 
         let val_u16 = node.core.od.read(0x2000, 2).unwrap();
@@ -462,10 +499,14 @@ mod tests {
     fn test_consume_pdo_version_mismatch() {
         let mut node = setup_node();
         let payload = [0xAA, 0xBB, 0xCC];
-        
+
         node.consume_pdo_payload(NodeId(1), &payload, PDOVersion(0x99), true);
-        
+
         let val_u8 = node.core.od.read(0x2000, 1).unwrap();
-        assert_eq!(val_u8, Cow::Borrowed(&ObjectValue::Unsigned8(0x00)), "Data written despite version mismatch"); 
+        assert_eq!(
+            val_u8,
+            Cow::Borrowed(&ObjectValue::Unsigned8(0x00)),
+            "Data written despite version mismatch"
+        );
     }
 }

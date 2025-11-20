@@ -2,7 +2,7 @@
 //! Contains logic for verifying Controlled Node (CN) identity, software, and configuration.
 //! (EPSG DS 301, Section 7.4.2.2)
 
-use super::state::{CnState, MnContext, SdoState};
+use super::state::{MnContext, SdoState};
 use crate::frame::control::IdentResponsePayload;
 use crate::od::constants;
 use crate::types::NodeId;
@@ -214,21 +214,21 @@ mod tests {
     use super::*;
     use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
     use crate::frame::ms_state_machine::DllMsStateMachine;
-    use crate::nmt::mn_state_machine::MnNmtStateMachine;
+    use crate::frame::poll::{PRFlag, RSFlag};
     use crate::nmt::flags::FeatureFlags;
+    use crate::nmt::mn_state_machine::MnNmtStateMachine;
     use crate::nmt::states::NmtState;
     use crate::node::CoreNodeContext;
     use crate::od::{ObjectDictionary, ObjectEntry, ObjectValue};
     use crate::sdo::client_manager::SdoClientManager;
     use crate::sdo::transport::AsndTransport;
-    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
     #[cfg(feature = "sdo-udp")]
     use crate::sdo::transport::UdpTransport;
+    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
     use crate::types::{C_ADR_MN_DEF_NODE_ID, EPLVersion};
-    use crate::frame::poll::{PRFlag, RSFlag};
+    use alloc::collections::BTreeMap;
     use alloc::vec;
     use alloc::vec::Vec;
-    use alloc::collections::BTreeMap;
 
     // --- Mock Configuration Interface ---
     struct MockConfigInterface {
@@ -236,8 +236,13 @@ mod tests {
         config_data: Vec<u8>,
     }
     impl crate::hal::ConfigurationInterface for MockConfigInterface {
-        fn get_expected_identity(&self, _node_id: u8) -> Option<crate::hal::Identity> { None }
-        fn get_configuration<'a>(&'a self, _node_id: u8) -> Result<&'a [u8], crate::PowerlinkError> {
+        fn get_expected_identity(&self, _node_id: u8) -> Option<crate::hal::Identity> {
+            None
+        }
+        fn get_configuration<'a>(
+            &'a self,
+            _node_id: u8,
+        ) -> Result<&'a [u8], crate::PowerlinkError> {
             Ok(&self.config_data)
         }
         fn is_software_update_required(&self, _node_id: u8, _d: u32, _t: u32) -> bool {
@@ -276,23 +281,42 @@ mod tests {
     // --- Helper to setup OD ---
     fn setup_od(od: &mut ObjectDictionary, node_id: u8) {
         // Insert Expected Values
-        od.insert(constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32, ObjectEntry {
-            object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
-            ..Default::default()
-        });
-        od.write(constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32, node_id, ObjectValue::Unsigned32(0x1234)).unwrap();
+        od.insert(
+            constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32,
+            ObjectEntry {
+                object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
+                ..Default::default()
+            },
+        );
+        od.write(
+            constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32,
+            node_id,
+            ObjectValue::Unsigned32(0x1234),
+        )
+        .unwrap();
 
-        od.insert(constants::IDX_NMT_MN_VENDOR_ID_LIST_AU32, ObjectEntry {
-            object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
-            ..Default::default()
-        });
-        od.write(constants::IDX_NMT_MN_VENDOR_ID_LIST_AU32, node_id, ObjectValue::Unsigned32(0xABCD)).unwrap();
+        od.insert(
+            constants::IDX_NMT_MN_VENDOR_ID_LIST_AU32,
+            ObjectEntry {
+                object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
+                ..Default::default()
+            },
+        );
+        od.write(
+            constants::IDX_NMT_MN_VENDOR_ID_LIST_AU32,
+            node_id,
+            ObjectValue::Unsigned32(0xABCD),
+        )
+        .unwrap();
 
         // StartUp Flags (Check Identity = Bit 9, Check Config = Bit 11)
-        od.insert(constants::IDX_NMT_START_UP_U32, ObjectEntry {
-             object: crate::od::Object::Variable(ObjectValue::Unsigned32(0)),
-             ..Default::default()
-        });
+        od.insert(
+            constants::IDX_NMT_START_UP_U32,
+            ObjectEntry {
+                object: crate::od::Object::Variable(ObjectValue::Unsigned32(0)),
+                ..Default::default()
+            },
+        );
     }
 
     fn create_context<'a>(od: ObjectDictionary<'a>) -> MnContext<'a> {
@@ -307,7 +331,12 @@ mod tests {
         MnContext {
             core,
             configuration_interface: None,
-            nmt_state_machine: MnNmtStateMachine::new(NodeId(C_ADR_MN_DEF_NODE_ID), Default::default(), 0, 0),
+            nmt_state_machine: MnNmtStateMachine::new(
+                NodeId(C_ADR_MN_DEF_NODE_ID),
+                Default::default(),
+                0,
+                0,
+            ),
             dll_state_machine: DllMsStateMachine::default(),
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
             asnd_transport: AsndTransport,
@@ -362,7 +391,7 @@ mod tests {
         let node_id = NodeId(1);
         setup_od(&mut od, node_id.0);
         let mut context = create_context(od);
-        
+
         let mut payload = create_valid_payload();
         payload.device_type = 0x9999; // Mismatch
 
@@ -378,19 +407,35 @@ mod tests {
         let mut od = ObjectDictionary::new(None);
         let node_id = NodeId(1);
         setup_od(&mut od, node_id.0);
-        
+
         // Ensure Bit 11 (Check Config) is 0
-        od.write(constants::IDX_NMT_START_UP_U32, 0, ObjectValue::Unsigned32(0)).unwrap();
+        od.write(
+            constants::IDX_NMT_START_UP_U32,
+            0,
+            ObjectValue::Unsigned32(0),
+        )
+        .unwrap();
 
         let mut context = create_context(od);
-        
+
         // Payload has date=0, but we set expected date in OD
-        context.core.od.insert(constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32, ObjectEntry {
-             object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
-             ..Default::default()
-        });
-        context.core.od.write(constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32, node_id.0, ObjectValue::Unsigned32(500)).unwrap();
-        
+        context.core.od.insert(
+            constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32,
+            ObjectEntry {
+                object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
+                ..Default::default()
+            },
+        );
+        context
+            .core
+            .od
+            .write(
+                constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32,
+                node_id.0,
+                ObjectValue::Unsigned32(500),
+            )
+            .unwrap();
+
         let payload = create_valid_payload(); // Has date=0
 
         // Act
@@ -405,21 +450,40 @@ mod tests {
         let mut od = ObjectDictionary::new(None);
         let node_id = NodeId(1);
         setup_od(&mut od, node_id.0);
-        
+
         // Enable Config Check (Bit 11)
-        od.write(constants::IDX_NMT_START_UP_U32, 0, ObjectValue::Unsigned32(1 << 11)).unwrap();
+        od.write(
+            constants::IDX_NMT_START_UP_U32,
+            0,
+            ObjectValue::Unsigned32(1 << 11),
+        )
+        .unwrap();
 
         let mut context = create_context(od);
-        
+
         // Set expected date
-        context.core.od.insert(constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32, ObjectEntry {
-             object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
-             ..Default::default()
-        });
-        context.core.od.write(constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32, node_id.0, ObjectValue::Unsigned32(500)).unwrap();
+        context.core.od.insert(
+            constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32,
+            ObjectEntry {
+                object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
+                ..Default::default()
+            },
+        );
+        context
+            .core
+            .od
+            .write(
+                constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32,
+                node_id.0,
+                ObjectValue::Unsigned32(500),
+            )
+            .unwrap();
 
         // Set up Mock Config Interface
-        let mock_interface = MockConfigInterface { should_update_sw: false, config_data: vec![0x00, 0x00, 0x00, 0x00] }; // Empty Concise DCF
+        let mock_interface = MockConfigInterface {
+            should_update_sw: false,
+            config_data: vec![0x00, 0x00, 0x00, 0x00],
+        }; // Empty Concise DCF
         context.configuration_interface = Some(&mock_interface);
 
         let payload = create_valid_payload(); // Has date=0, mismatch!

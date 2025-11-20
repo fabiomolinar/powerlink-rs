@@ -11,7 +11,6 @@ use crate::sdo::command::{CommandId, CommandLayerHeader, SdoCommand, Segmentatio
 use crate::sdo::sequence::{ReceiveConnState, SendConnState, SequenceLayerHeader};
 use crate::sdo::{OD_IDX_SDO_RETRIES, OD_IDX_SDO_TIMEOUT};
 use crate::types::NodeId;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::convert::TryInto;
 use log::{debug, error, info, warn};
@@ -249,10 +248,7 @@ impl SdoClientConnection {
                         // Server wants to send segmented data.
                         if let Some(size) = cmd.data_size {
                             self.total_size = size as usize;
-                            info!(
-                                "SDO Client: Starting segmented upload ({} bytes).",
-                                size
-                            );
+                            info!("SDO Client: Starting segmented upload ({} bytes).", size);
                         } else {
                             info!("SDO Client: Starting segmented upload (unknown size).");
                         }
@@ -326,26 +322,24 @@ impl SdoClientConnection {
                 }
 
                 // Safety: Bounds checked above. Using try_into() for robust no_std compliance.
-                let index_bytes: [u8; 2] =
-                    if let Ok(b) = data[offset..offset + 2].try_into() {
-                        b
-                    } else {
-                        // Should be unreachable due to bounds check
-                        error!("[SDO] Concise DCF slice error (index).");
-                        return false;
-                    };
+                let index_bytes: [u8; 2] = if let Ok(b) = data[offset..offset + 2].try_into() {
+                    b
+                } else {
+                    // Should be unreachable due to bounds check
+                    error!("[SDO] Concise DCF slice error (index).");
+                    return false;
+                };
                 let index = u16::from_le_bytes(index_bytes);
 
                 let sub_index = data[offset + 2];
 
-                let size_bytes: [u8; 4] =
-                    if let Ok(b) = data[offset + 3..offset + 7].try_into() {
-                        b
-                    } else {
-                        // Should be unreachable due to bounds check
-                        error!("[SDO] Concise DCF slice error (size).");
-                        return false;
-                    };
+                let size_bytes: [u8; 4] = if let Ok(b) = data[offset + 3..offset + 7].try_into() {
+                    b
+                } else {
+                    // Should be unreachable due to bounds check
+                    error!("[SDO] Concise DCF slice error (size).");
+                    return false;
+                };
                 let data_size = u32::from_le_bytes(size_bytes) as usize;
                 offset += 7;
 
@@ -592,12 +586,13 @@ impl SdoClientConnection {
         }
 
         // Safety: Bounds checked above. Use try_into() to avoid unwrap().
-        let entries_bytes: [u8; 4] =
-            if let Ok(b) = dcf_data[0..4].try_into() {
-                b
-            } else {
-                return Err(PowerlinkError::ValidationError("Concise DCF header parse failed"));
-            };
+        let entries_bytes: [u8; 4] = if let Ok(b) = dcf_data[0..4].try_into() {
+            b
+        } else {
+            return Err(PowerlinkError::ValidationError(
+                "Concise DCF header parse failed",
+            ));
+        };
         let entries = u32::from_le_bytes(entries_bytes);
 
         self.state = SdoClientConnectionState::Opening;

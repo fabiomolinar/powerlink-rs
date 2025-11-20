@@ -5,7 +5,7 @@
 
 use crate::PowerlinkError;
 use crate::od::{ObjectDictionary, ObjectValue};
-use crate::sdo::command::{CommandId, ReadByIndexRequest, Segmentation};
+use crate::sdo::command::{CommandId, Segmentation};
 use crate::sdo::embedded::{PdoSdoCommand, PdoSequenceLayerHeader};
 use alloc::collections::BTreeMap;
 use alloc::vec;

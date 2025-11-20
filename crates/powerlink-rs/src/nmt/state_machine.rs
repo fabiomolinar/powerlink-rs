@@ -36,10 +36,7 @@ pub trait NmtStateMachine {
             ObjectValue::Unsigned8(self.current_state() as u8),
             false,
         ) {
-            error!(
-                "[NMT] Failed to update NMT state in OD (0x1F8C): {:?}",
-                e
-            );
+            error!("[NMT] Failed to update NMT state in OD (0x1F8C): {:?}", e);
         }
     }
 

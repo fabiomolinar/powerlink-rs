@@ -194,7 +194,7 @@ impl ObjectValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{NetTime, TimeDifference, TimeOfDay};
+    use crate::common::{NetTime, TimeOfDay};
     use crate::frame::basic::MacAddress;
     use alloc::vec;
 
@@ -223,7 +223,7 @@ mod tests {
             ObjectValue::deserialize(&val_i32.serialize(), &val_i32),
             Ok(val_i32)
         );
-        
+
         let val_bool = ObjectValue::Boolean(1);
         assert_eq!(
             ObjectValue::deserialize(&val_bool.serialize(), &val_bool),
@@ -246,7 +246,7 @@ mod tests {
         let deserialized = ObjectValue::deserialize(&bytes, &original).unwrap();
         assert_eq!(original, deserialized);
     }
-    
+
     #[test]
     fn test_unicode_string_roundtrip() {
         let original = ObjectValue::UnicodeString(vec![0x0048, 0x0069]); // "Hi"
@@ -255,7 +255,7 @@ mod tests {
         let deserialized = ObjectValue::deserialize(&bytes, &original).unwrap();
         assert_eq!(original, deserialized);
     }
-    
+
     #[test]
     fn test_unicode_string_odd_length_error() {
         let template = ObjectValue::UnicodeString(vec![]);
@@ -279,13 +279,19 @@ mod tests {
         assert_eq!(ObjectValue::deserialize(&bytes, &ip), Ok(ip));
 
         // NetTime
-        let time = ObjectValue::NetTime(NetTime { seconds: 100, nanoseconds: 500 });
+        let time = ObjectValue::NetTime(NetTime {
+            seconds: 100,
+            nanoseconds: 500,
+        });
         let bytes = time.serialize();
         assert_eq!(bytes.len(), 8);
         assert_eq!(ObjectValue::deserialize(&bytes, &time), Ok(time));
-        
+
         // TimeOfDay
-        let tod = ObjectValue::TimeOfDay(TimeOfDay { ms: 123456, days: 5000 });
+        let tod = ObjectValue::TimeOfDay(TimeOfDay {
+            ms: 123456,
+            days: 5000,
+        });
         let bytes = tod.serialize();
         assert_eq!(bytes.len(), 6);
         assert_eq!(ObjectValue::deserialize(&bytes, &tod), Ok(tod));

@@ -254,14 +254,16 @@ impl SdoSequenceHandler {
             // Check if this is a valid Init Handshake or ACK
             let is_init_handshake = *self.state() == SdoServerState::Opening;
             let is_ack = sequence_header.send_con == SendConnState::ConnectionValid;
-            
+
             if is_init_handshake || is_ack {
                 debug!("Received ACK or NIL command (valid empty payload).");
-                
+
                 // If we are in a segmented upload, an empty payload ACK triggers the next segment
-                let is_segmented_upload = matches!(self.state(), SdoServerState::SegmentedUpload(_));
+                let is_segmented_upload =
+                    matches!(self.state(), SdoServerState::SegmentedUpload(_));
                 if is_segmented_upload {
-                     if let SdoServerState::SegmentedUpload(mut state) = mem::take(self.state_mut()) {
+                    if let SdoServerState::SegmentedUpload(mut state) = mem::take(self.state_mut())
+                    {
                         // Client ACK received, continue segmented upload.
                         debug!("Client ACK received, continuing segmented upload.");
                         let (response_command, is_last) =
@@ -282,22 +284,22 @@ impl SdoSequenceHandler {
                         });
                     }
                 }
-                
+
                 // Init Handshake Response or Simple ACK
                 let response_command = SdoCommand {
                     header: CommandLayerHeader {
-                        transaction_id: 0, 
+                        transaction_id: 0,
                         is_response: true,
                         ..Default::default()
                     },
                     data_size: None,
                     payload: Vec::new(),
                 };
-                
+
                 // If it is a simple ACK in Established state (end of transfer), close connection.
                 // BUT if it is Init Handshake (Opening), stay in Opening/Established context.
                 if !is_init_handshake && self.state() == &SdoServerState::Established {
-                     self.state = SdoServerState::Closed;
+                    self.state = SdoServerState::Closed;
                 }
 
                 response_header.receive_sequence_number = self.current_receive_sequence();
@@ -329,14 +331,14 @@ impl SdoSequenceHandler {
 
                 // If this is the end of a transfer, set state to Closed for pruning.
                 // Do NOT close if we are in Opening state (Handshake response), even if segment is Expedited.
-                if *self.state() != SdoServerState::Opening 
+                if *self.state() != SdoServerState::Opening
                     && (response_command.header.segmentation == Segmentation::Expedited
                         || response_command.header.segmentation == Segmentation::Complete
                         || response_command.header.is_aborted)
                 {
                     self.state = SdoServerState::Closed;
                 }
-                
+
                 if response_command.header.is_aborted {
                     response_header.send_con = SendConnState::NoConnection;
                 }
@@ -507,7 +509,7 @@ impl SdoSequenceHandler {
                     data_size: None,
                     payload: Vec::new(),
                 }
-            },
+            }
             CommandId::Abort => {
                 error!("Received Abort command from client, but not handled here.");
                 self.abort(command.header.transaction_id, 0x0504_0001) // Invalid command specifier
@@ -669,9 +671,8 @@ mod tests {
     use super::*;
     use crate::frame::basic::MacAddress;
     use crate::od::{ObjectEntry, ObjectValue};
-    use crate::sdo::command::{CommandLayerHeader, Segmentation};
+    use crate::sdo::command::CommandLayerHeader;
     use crate::types::NodeId;
-    use alloc::vec;
 
     // --- Mock Command Handler ---
     struct MockCommandHandler {
@@ -704,18 +705,10 @@ mod tests {
         ) -> SdoCommand {
             unimplemented!()
         }
-        fn handle_file_read(
-            &mut self,
-            _c: SdoCommand,
-            _o: &mut ObjectDictionary,
-        ) -> SdoCommand {
+        fn handle_file_read(&mut self, _c: SdoCommand, _o: &mut ObjectDictionary) -> SdoCommand {
             unimplemented!()
         }
-        fn handle_file_write(
-            &mut self,
-            _c: SdoCommand,
-            _o: &mut ObjectDictionary,
-        ) -> SdoCommand {
+        fn handle_file_write(&mut self, _c: SdoCommand, _o: &mut ObjectDictionary) -> SdoCommand {
             unimplemented!()
         }
     }
@@ -760,13 +753,33 @@ mod tests {
             Ok(response) => {
                 // Expect Server to be in Opening.
                 // Response Header: RcvCon=Init(1), RcvSeq=0 (echo client's), SndCon=Init(1), SndSeq=0
-                assert_eq!(response.seq_header.receive_con, ReceiveConnState::Initialization, "ReceiveCon mismatch");
-                assert_eq!(response.seq_header.receive_sequence_number, 0, "ReceiveSeq mismatch. Actual: {}, Expected: 0. Handler LastRecv: {}", response.seq_header.receive_sequence_number, handler.last_received_sequence_number);
-                assert_eq!(response.seq_header.send_con, SendConnState::Initialization, "SendCon mismatch");
-                assert_eq!(response.seq_header.send_sequence_number, 0, "SendSeq mismatch");
+                assert_eq!(
+                    response.seq_header.receive_con,
+                    ReceiveConnState::Initialization,
+                    "ReceiveCon mismatch"
+                );
+                assert_eq!(
+                    response.seq_header.receive_sequence_number,
+                    0,
+                    "ReceiveSeq mismatch. Actual: {}, Expected: 0. Handler LastRecv: {}",
+                    response.seq_header.receive_sequence_number,
+                    handler.last_received_sequence_number
+                );
+                assert_eq!(
+                    response.seq_header.send_con,
+                    SendConnState::Initialization,
+                    "SendCon mismatch"
+                );
+                assert_eq!(
+                    response.seq_header.send_sequence_number, 0,
+                    "SendSeq mismatch"
+                );
 
                 if !matches!(handler.state(), SdoServerState::Opening) {
-                    panic!("Handler failed to transition to Opening. Current: {:?}", handler.state());
+                    panic!(
+                        "Handler failed to transition to Opening. Current: {:?}",
+                        handler.state()
+                    );
                 }
             }
             Err(e) => panic!("Handling init request failed: {:?}", e),
@@ -787,7 +800,7 @@ mod tests {
         // Client sends Command (SendCon = Valid(2), SendSeq = 0)
         let req = [
             // Seq Header: RcvSeq=0, RcvCon=Valid(2), SndSeq=0, SndCon=Valid(2)
-            0x02, 0x02, 0x00, 0x00, 
+            0x02, 0x02, 0x00, 0x00,
             // Command Layer (Read 0x1000/0)
             // Byte 4: SegmentSize = 4 (0x04, 0x00) - CRITICAL FIX
             0x00, 0x01, 0x00, 0x02, 0x04, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
@@ -840,7 +853,7 @@ mod tests {
             .expect("Duplicate handling failed");
 
         // The handler should ACK the duplicate but NOT process the command.
-        // Since the first request successfully incremented SndSeq to 1, 
+        // Since the first request successfully incremented SndSeq to 1,
         // this duplicate response should also send SndSeq 1.
         assert_eq!(response.seq_header.send_sequence_number, 1);
     }
@@ -857,8 +870,7 @@ mod tests {
         // Expecting Seq 0. Send Seq 5.
         let req_gap = [
             // SndSeq=5 (0x05) -> Byte 1: (5<<2)|2 = 22 (0x16)
-            0x02, 0x16, 0x00, 0x00,
-            // Command
+            0x02, 0x16, 0x00, 0x00, // Command
             0x00, 0x01, 0x00, 0x02, 0x04, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
         ];
 

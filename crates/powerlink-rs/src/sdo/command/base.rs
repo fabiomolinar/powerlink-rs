@@ -33,7 +33,7 @@ pub enum CommandId {
     Abort = 0x40,
     // Parameter service
     MaxSegmentSize = 0x70,
-    // Manufacturer specific from 0x80 to 0xFF    
+    // Manufacturer specific from 0x80 to 0xFF
 }
 
 impl Default for CommandId {
