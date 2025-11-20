@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/node/pdo_handler.rs
 use crate::frame::error::{DllError, DllErrorManager, ErrorCounters, ErrorHandler};
 use crate::node::NodeContext;
 use crate::od::{ObjectValue, constants};
@@ -6,6 +7,7 @@ use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::vec::Vec;
 use log::{error, trace, warn};
 
+// ... [trait definitions remain the same] ...
 /// A trait for handling Process Data Object (PDO) logic.
 /// The lifetime parameter 's matches the lifetime of the Node implementing this trait.
 pub trait PdoHandler<'s>: NodeContext<'s> {
@@ -62,7 +64,6 @@ pub trait PdoHandler<'s>: NodeContext<'s> {
 
     /// Reads RPDO mappings for a given source Node ID and writes
     /// data from the payload into the Object Dictionary.
-    /// This is a default implementation shared between CN and MN.
     fn consume_pdo_payload(
         &mut self,
         source_node_id: NodeId,
@@ -234,10 +235,14 @@ pub trait PdoHandler<'s>: NodeContext<'s> {
                     entry.index
                 );
                 let core = self.core_mut();
-                core.embedded_sdo_server.handle_request(
+                // Borrow checker workaround: Split borrow of `core` fields
+                let embedded_server = &mut core.embedded_sdo_server;
+                let od = &mut core.od;
+
+                embedded_server.handle_request(
                     entry.index,
                     data_slice,
-                    &core.od, // Pass immutable reference to OD
+                    od, // Pass MUTABLE reference to OD
                 );
                 return Ok(()); // SDO handled, skip standard data write
             }

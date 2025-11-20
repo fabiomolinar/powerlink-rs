@@ -190,3 +190,121 @@ impl ObjectValue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::{NetTime, TimeDifference, TimeOfDay};
+    use crate::frame::basic::MacAddress;
+    use alloc::vec;
+
+    #[test]
+    fn test_basic_types_roundtrip() {
+        let val_u8 = ObjectValue::Unsigned8(0xAA);
+        assert_eq!(
+            ObjectValue::deserialize(&val_u8.serialize(), &val_u8),
+            Ok(val_u8)
+        );
+
+        let val_u16 = ObjectValue::Unsigned16(0xAABB);
+        assert_eq!(
+            ObjectValue::deserialize(&val_u16.serialize(), &val_u16),
+            Ok(val_u16)
+        );
+
+        let val_u32 = ObjectValue::Unsigned32(0xAABBCCDD);
+        assert_eq!(
+            ObjectValue::deserialize(&val_u32.serialize(), &val_u32),
+            Ok(val_u32)
+        );
+
+        let val_i32 = ObjectValue::Integer32(-123456);
+        assert_eq!(
+            ObjectValue::deserialize(&val_i32.serialize(), &val_i32),
+            Ok(val_i32)
+        );
+        
+        let val_bool = ObjectValue::Boolean(1);
+        assert_eq!(
+            ObjectValue::deserialize(&val_bool.serialize(), &val_bool),
+            Ok(val_bool)
+        );
+    }
+
+    #[test]
+    fn test_string_roundtrip() {
+        let original = ObjectValue::VisibleString("Powerlink".into());
+        let bytes = original.serialize();
+        let deserialized = ObjectValue::deserialize(&bytes, &original).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_octet_string_roundtrip() {
+        let original = ObjectValue::OctetString(vec![0x01, 0x02, 0x03, 0x04]);
+        let bytes = original.serialize();
+        let deserialized = ObjectValue::deserialize(&bytes, &original).unwrap();
+        assert_eq!(original, deserialized);
+    }
+    
+    #[test]
+    fn test_unicode_string_roundtrip() {
+        let original = ObjectValue::UnicodeString(vec![0x0048, 0x0069]); // "Hi"
+        let bytes = original.serialize();
+        assert_eq!(bytes.len(), 4);
+        let deserialized = ObjectValue::deserialize(&bytes, &original).unwrap();
+        assert_eq!(original, deserialized);
+    }
+    
+    #[test]
+    fn test_unicode_string_odd_length_error() {
+        let template = ObjectValue::UnicodeString(vec![]);
+        let odd_bytes = vec![0x00, 0x48, 0x00]; // 3 bytes
+        let result = ObjectValue::deserialize(&odd_bytes, &template);
+        assert_eq!(result, Err(PowerlinkError::TypeMismatch));
+    }
+
+    #[test]
+    fn test_complex_types_roundtrip() {
+        // MacAddress
+        let mac = ObjectValue::MacAddress(MacAddress([0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]));
+        let bytes = mac.serialize();
+        assert_eq!(bytes, vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC]);
+        assert_eq!(ObjectValue::deserialize(&bytes, &mac), Ok(mac));
+
+        // IpAddress
+        let ip = ObjectValue::IpAddress([192, 168, 100, 1]);
+        let bytes = ip.serialize();
+        assert_eq!(bytes, vec![192, 168, 100, 1]);
+        assert_eq!(ObjectValue::deserialize(&bytes, &ip), Ok(ip));
+
+        // NetTime
+        let time = ObjectValue::NetTime(NetTime { seconds: 100, nanoseconds: 500 });
+        let bytes = time.serialize();
+        assert_eq!(bytes.len(), 8);
+        assert_eq!(ObjectValue::deserialize(&bytes, &time), Ok(time));
+        
+        // TimeOfDay
+        let tod = ObjectValue::TimeOfDay(TimeOfDay { ms: 123456, days: 5000 });
+        let bytes = tod.serialize();
+        assert_eq!(bytes.len(), 6);
+        assert_eq!(ObjectValue::deserialize(&bytes, &tod), Ok(tod));
+    }
+
+    #[test]
+    fn test_buffer_too_short() {
+        let u32_template = ObjectValue::Unsigned32(0);
+        let short_buf = [0xAA, 0xBB, 0xCC]; // 3 bytes
+        assert_eq!(
+            ObjectValue::deserialize(&short_buf, &u32_template),
+            Err(PowerlinkError::BufferTooShort)
+        );
+
+        let mac_template = ObjectValue::MacAddress(MacAddress::default());
+        let short_mac = [0x00; 5];
+        assert_eq!(
+            ObjectValue::deserialize(&short_mac, &mac_template),
+            Err(PowerlinkError::BufferTooShort)
+        );
+    }
+}

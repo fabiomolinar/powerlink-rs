@@ -3,13 +3,14 @@
 //!
 //! (Reference: EPSG DS 301, Section 6.3.3)
 
-use crate::od::ObjectDictionary;
+use crate::PowerlinkError;
+use crate::od::{ObjectDictionary, ObjectValue};
 use crate::sdo::command::{CommandId, ReadByIndexRequest, Segmentation};
 use crate::sdo::embedded::{PdoSdoCommand, PdoSequenceLayerHeader};
 use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
-use log::{error, trace, warn}; // Added warn
+use log::{error, trace, warn};
 
 /// The state of a single embedded SDO server connection.
 #[derive(Debug, Clone, Default)]
@@ -40,7 +41,7 @@ impl EmbeddedSdoServer {
         &mut self,
         channel_index: u16,
         payload: &[u8],
-        od: &ObjectDictionary, // <-- ADDED
+        od: &mut ObjectDictionary, // Changed to mutable reference
     ) {
         let conn = self
             .connections
@@ -78,7 +79,7 @@ impl EmbeddedSdoServer {
         // Sequence is new and valid, update our state.
         conn.last_sequence_number = command.sequence_header.sequence_number;
 
-        // Process the SDO command (this is a simplified handler)
+        // Process the SDO command
         let response_payload = Self::process_command(&command, od, conn.last_sequence_number);
 
         // Store the serialized response
@@ -86,25 +87,67 @@ impl EmbeddedSdoServer {
     }
 
     /// Generates a response payload for a given request.
-    /// This is a simplified handler for ReadByIndex only.
     fn process_command(
         req: &PdoSdoCommand,
-        od: &ObjectDictionary,
+        od: &mut ObjectDictionary,
         response_seq_num: u8,
     ) -> Vec<u8> {
         let (abort_code, data) = match req.command_id {
             CommandId::ReadByIndex => {
-                match ReadByIndexRequest::from_payload(&req.data) {
-                    Ok(read_req) => {
-                        match od.read(read_req.index, read_req.sub_index) {
-                            Some(value) => (None, value.serialize()),
-                            None => (Some(0x0602_0000), Vec::new()), // Object does not exist
+                // For Embedded SDO, Index and SubIndex are in the header fields (req.index, req.sub_index).
+                // The payload (req.data) is typically empty for a Read request.
+                match od.read(req.index, req.sub_index) {
+                    Some(value) => (None, value.serialize()),
+                    None => {
+                        // Distinguish Object vs SubObject not found
+                        if od.read_object(req.index).is_none() {
+                            (Some(0x0602_0000), Vec::new()) // Object does not exist
+                        } else {
+                            (Some(0x0609_0011), Vec::new()) // Sub-index does not exist
                         }
                     }
-                    Err(_) => (Some(0x0504_0001), Vec::new()), // Invalid command
                 }
             }
-            _ => (Some(0x0504_0001), Vec::new()), // Unsupported command
+            CommandId::WriteByIndex => {
+                // 1. Check if object exists and get its type template
+                // We clone the template to avoid holding an immutable borrow on OD while calling write (mutable borrow)
+                let template_opt = od
+                    .read(req.index, req.sub_index)
+                    .map(|cow| cow.into_owned());
+
+                if let Some(template) = template_opt {
+                    // 2. Deserialize the raw data using the type template
+                    match ObjectValue::deserialize(&req.data, &template) {
+                        Ok(value) => {
+                            // 3. Write the value to the OD
+                            match od.write(req.index, req.sub_index, value) {
+                                Ok(_) => (None, Vec::new()), // Success
+                                Err(e) => {
+                                    // Map PowerlinkError to SDO Abort Code
+                                    let code = match e {
+                                        PowerlinkError::StorageError("Object is read-only") => {
+                                            0x0601_0002
+                                        }
+                                        PowerlinkError::TypeMismatch => 0x0607_0010,
+                                        PowerlinkError::ValidationError(_) => 0x0609_0030, // Value range exceeded
+                                        _ => 0x0800_0020, // Data cannot be transferred or stored
+                                    };
+                                    (Some(code), Vec::new())
+                                }
+                            }
+                        }
+                        Err(_) => (Some(0x0607_0010), Vec::new()), // Data type does not match (deserialization failed)
+                    }
+                } else {
+                    // Object or sub-index does not exist
+                    if od.read_object(req.index).is_none() {
+                        (Some(0x0602_0000), Vec::new())
+                    } else {
+                        (Some(0x0609_0011), Vec::new())
+                    }
+                }
+            }
+            _ => (Some(0x0504_0001), Vec::new()), // Unsupported command / Command ID not valid
         };
 
         let response_cmd = PdoSdoCommand {
@@ -115,7 +158,7 @@ impl EmbeddedSdoServer {
             transaction_id: req.transaction_id,
             is_response: true,
             is_aborted: abort_code.is_some(),
-            segmentation: Segmentation::Expedited, // Always expedited
+            segmentation: Segmentation::Expedited, // Always expedited for embedded
             valid_payload_length: 0,               // Will be set during serialization
             command_id: if abort_code.is_some() {
                 CommandId::Nil
@@ -150,7 +193,7 @@ impl EmbeddedSdoServer {
                     payload.len(),
                     container_len
                 );
-                // Truncate the response (undesirable, but better than panic)
+                // Truncate the response
                 payload[..container_len].to_vec()
             } else {
                 // Pad the response to fill the container
@@ -160,8 +203,176 @@ impl EmbeddedSdoServer {
             }
         } else {
             // No response ready, send an "Idle/NIL" command
-            // TODO: Send a proper NIL command instead of just zeros.
             vec![0; container_len]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::od::{AccessType, Object, ObjectEntry, ObjectValue};
+    use crate::sdo::command::{CommandId, Segmentation};
+    use crate::sdo::embedded::{PdoSdoCommand, PdoSequenceLayerHeader};
+    use alloc::vec;
+
+    fn create_test_od() -> ObjectDictionary<'static> {
+        let mut od = ObjectDictionary::new(None);
+        // Add a test object
+        od.insert(
+            0x2000,
+            ObjectEntry {
+                object: Object::Variable(ObjectValue::Unsigned32(0xDEADBEEF)),
+                access: Some(AccessType::ReadWrite), // Make it writable
+                ..Default::default()
+            },
+        );
+        od
+    }
+
+    #[test]
+    fn test_handle_valid_read_request() {
+        let mut server = EmbeddedSdoServer::new();
+        let mut od = create_test_od();
+
+        let request = PdoSdoCommand {
+            sequence_header: PdoSequenceLayerHeader {
+                sequence_number: 1,
+                connection_state: 2,
+            },
+            transaction_id: 10,
+            is_response: false,
+            is_aborted: false,
+            segmentation: Segmentation::Expedited,
+            valid_payload_length: 0, // Read request has no data payload
+            command_id: CommandId::ReadByIndex,
+            index: 0x2000,
+            sub_index: 0,
+            data: vec![], // Empty data for Read
+        };
+
+        // Serialize request
+        let payload = request.serialize();
+
+        // Handle it
+        server.handle_request(0x1200, &payload, &mut od);
+
+        // Retrieve response
+        let response_bytes = server.get_pending_response(0x1200, 20);
+        let response =
+            PdoSdoCommand::deserialize(&response_bytes).expect("Failed to parse response");
+
+        assert!(response.is_response);
+        assert!(!response.is_aborted);
+        assert_eq!(response.transaction_id, 10);
+        assert_eq!(response.index, 0x2000);
+
+        // Verify data: 0xDEADBEEF (LE: EF BE AD DE)
+        assert_eq!(response.data, vec![0xEF, 0xBE, 0xAD, 0xDE]);
+    }
+
+    #[test]
+    fn test_handle_valid_write_request() {
+        let mut server = EmbeddedSdoServer::new();
+        let mut od = create_test_od();
+
+        let request = PdoSdoCommand {
+            sequence_header: PdoSequenceLayerHeader {
+                sequence_number: 1,
+                connection_state: 2,
+            },
+            transaction_id: 15,
+            is_response: false,
+            is_aborted: false,
+            segmentation: Segmentation::Expedited,
+            valid_payload_length: 4,
+            command_id: CommandId::WriteByIndex,
+            index: 0x2000,
+            sub_index: 0,
+            // Write 0xCAFEBABE (LE: BE BA FE CA)
+            data: vec![0xBE, 0xBA, 0xFE, 0xCA],
+        };
+
+        let payload = request.serialize();
+        server.handle_request(0x1200, &payload, &mut od);
+
+        // Retrieve response
+        let response_bytes = server.get_pending_response(0x1200, 20);
+        let response =
+            PdoSdoCommand::deserialize(&response_bytes).expect("Failed to parse response");
+
+        assert!(response.is_response);
+        assert!(!response.is_aborted);
+        assert_eq!(response.transaction_id, 15);
+
+        // Verify write occurred in OD
+        let val = od.read_u32(0x2000, 0).unwrap();
+        assert_eq!(val, 0xCAFEBABE);
+    }
+
+    #[test]
+    fn test_handle_duplicate_request() {
+        let mut server = EmbeddedSdoServer::new();
+        let mut od = create_test_od();
+
+        let request = PdoSdoCommand {
+            sequence_header: PdoSequenceLayerHeader {
+                sequence_number: 1,
+                connection_state: 2,
+            },
+            transaction_id: 5,
+            is_response: false,
+            is_aborted: false,
+            segmentation: Segmentation::Expedited,
+            valid_payload_length: 0,
+            command_id: CommandId::ReadByIndex,
+            index: 0x2000,
+            sub_index: 0,
+            data: vec![],
+        };
+
+        let payload = request.serialize();
+
+        // 1. First request
+        server.handle_request(0x1200, &payload, &mut od);
+        let resp1 = server.get_pending_response(0x1200, 20);
+        assert!(!resp1.iter().all(|&x| x == 0));
+
+        // 2. Duplicate request (same seq)
+        server.handle_request(0x1200, &payload, &mut od);
+        let resp2 = server.get_pending_response(0x1200, 20);
+
+        // Since pending_response was taken, it will be NIL (zeros).
+        assert!(resp2.iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn test_handle_invalid_index() {
+        let mut server = EmbeddedSdoServer::new();
+        let mut od = create_test_od();
+
+        let request = PdoSdoCommand {
+            sequence_header: PdoSequenceLayerHeader {
+                sequence_number: 1,
+                connection_state: 2,
+            },
+            transaction_id: 11,
+            is_response: false,
+            is_aborted: false,
+            segmentation: Segmentation::Expedited,
+            valid_payload_length: 0,
+            command_id: CommandId::ReadByIndex,
+            index: 0x9999, // Invalid
+            sub_index: 0,
+            data: vec![],
+        };
+
+        server.handle_request(0x1200, &request.serialize(), &mut od);
+        let response_bytes = server.get_pending_response(0x1200, 20);
+        let response = PdoSdoCommand::deserialize(&response_bytes).unwrap();
+
+        assert!(response.is_aborted);
+        // Abort Code: Object does not exist (0x06020000) -> LE: [00, 00, 02, 06]
+        assert_eq!(response.data, vec![0x00, 0x00, 0x02, 0x06]);
     }
 }
