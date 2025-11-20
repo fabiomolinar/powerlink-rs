@@ -99,12 +99,14 @@ impl NmtStateMachine for CnNmtStateMachine {
                 | NmtEvent::ResetCommunication
                 | NmtEvent::ResetConfiguration
         ) {
-            self.reset(event);
+            self.reset(event, od); // Pass OD to reset
             if old_state != self.current_state {
                 self.update_od_state(od);
             }
             // After a reset, a full re-initialisation sequence should run.
-            self.run_internal_initialisation(od);
+            // Note: reset() now handles the full cascade down to NotActive.
+            // But run_internal_initialisation is essentially doing the same.
+            // We don't need to call run_internal_initialisation explicitly if reset() did the job.
             return None;
         }
 

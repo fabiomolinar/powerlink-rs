@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/nmt/state_machine.rs
 use super::events::NmtEvent;
 use super::states::NmtState;
 use crate::NodeId;
@@ -40,22 +41,83 @@ pub trait NmtStateMachine {
         }
     }
 
-    /// Resets the state machine to a specific reset state. This is a default implementation.
-    fn reset(&mut self, event: NmtEvent) {
-        let new_state = match event {
+    /// Resets the state machine to a specific reset state and performs OD cleanup.
+    /// (Reference: EPSG DS 301, 7.1.2.1.1.1 Sub-states)
+    fn reset(&mut self, event: NmtEvent, od: &mut ObjectDictionary) {
+        let initial_reset_state = match event {
             NmtEvent::Reset | NmtEvent::SwReset => NmtState::NmtGsInitialising,
             NmtEvent::ResetNode => NmtState::NmtGsResetApplication,
             NmtEvent::ResetCommunication => NmtState::NmtGsResetCommunication,
             NmtEvent::ResetConfiguration => NmtState::NmtGsResetConfiguration,
             _ => return, // Not a reset event for this handler
         };
+
         info!(
-            "[NMT] State reset from {:?} to {:?} due to event {:?}",
+            "[NMT] Reset Sequence initiated from {:?} (Target: {:?}, Event: {:?})",
             self.current_state(),
-            new_state,
+            initial_reset_state,
             event
         );
-        self.set_state(new_state);
+
+        // Execute the cascading reset sequence.
+        // Depending on the entry point, we fall through to subsequent states.
+        
+        // 1. NMT_GS_INITIALISING (PowerOn / SwReset)
+        if initial_reset_state == NmtState::NmtGsInitialising {
+            self.set_state(NmtState::NmtGsInitialising);
+            self.update_od_state(od);
+            // Basic initialization actions (if any)
+        }
+
+        // 2. NMT_GS_RESET_APPLICATION (ResetNode)
+        // Fallthrough from Initialising OR start here
+        if initial_reset_state == NmtState::NmtGsInitialising 
+           || initial_reset_state == NmtState::NmtGsResetApplication 
+        {
+            self.set_state(NmtState::NmtGsResetApplication);
+            self.update_od_state(od);
+            
+            info!("[NMT] NMT_GS_RESET_APPLICATION: Resetting App Parameters (0x6000-0x9FFF) and Manuf. (0x2000-0x5FFF)");
+            // Reset Manufacturer Specific Profile Area (0x2000 - 0x5FFF)
+            od.restore_power_on_values(0x2000, 0x5FFF);
+            // Reset Standardised Device Profile Area (0x6000 - 0x9FFF)
+            od.restore_power_on_values(0x6000, 0x9FFF);
+        }
+
+        // 3. NMT_GS_RESET_COMMUNICATION (ResetCommunication)
+        // Fallthrough or start here
+        if initial_reset_state == NmtState::NmtGsInitialising 
+           || initial_reset_state == NmtState::NmtGsResetApplication
+           || initial_reset_state == NmtState::NmtGsResetCommunication
+        {
+            self.set_state(NmtState::NmtGsResetCommunication);
+            self.update_od_state(od);
+            
+            info!("[NMT] NMT_GS_RESET_COMMUNICATION: Resetting Comm Parameters (0x1000-0x1FFF)");
+            // Reset Communication Profile Area (0x1000 - 0x1FFF), excluding Error History
+            od.restore_power_on_values(0x1000, 0x1FFF);
+        }
+
+        // 4. NMT_GS_RESET_CONFIGURATION (ResetConfiguration)
+        // Fallthrough or start here
+        if initial_reset_state == NmtState::NmtGsInitialising 
+           || initial_reset_state == NmtState::NmtGsResetApplication
+           || initial_reset_state == NmtState::NmtGsResetCommunication
+           || initial_reset_state == NmtState::NmtGsResetConfiguration
+        {
+            self.set_state(NmtState::NmtGsResetConfiguration);
+            self.update_od_state(od);
+            
+            // Configuration actions could happen here (e.g., reloading NodeID from HW switches)
+        }
+
+        // Final Transition: Enter NMT_MS_NOT_ACTIVE or NMT_CS_NOT_ACTIVE
+        // The specific MN or CN state machine will determine the final state (MT1 or CT1)
+        // usually based on Node ID.
+        // Since this trait is shared, we can default to NotActive.
+        self.set_state(NmtState::NmtNotActive);
+        self.update_od_state(od);
+        info!("[NMT] Reset Sequence complete. Entered NmtNotActive.");
     }
 
     /// Handles automatic, internal state transitions that don't require an external event.
@@ -65,24 +127,7 @@ pub trait NmtStateMachine {
         if self.current_state() != NmtState::NmtGsInitialising {
             return;
         }
-        info!("Starting internal NMT initialisation sequence.");
-
-        let sequence = [
-            NmtState::NmtGsResetApplication,
-            NmtState::NmtGsResetCommunication,
-            NmtState::NmtGsResetConfiguration,
-            NmtState::NmtNotActive,
-        ];
-
-        for &next_state in &sequence {
-            info!(
-                "[NMT] Internal transition from {:?} to {:?}",
-                self.current_state(),
-                next_state
-            );
-            self.set_state(next_state);
-            self.update_od_state(od);
-        }
-        info!("Internal NMT initialisation sequence complete.");
+        // Reuse the reset logic for the initial boot sequence
+        self.reset(NmtEvent::SwReset, od);
     }
 }

@@ -16,7 +16,7 @@ use crate::hal::ObjectDictionaryStorage;
 use crate::{NodeId, PowerlinkError};
 use alloc::{borrow::Cow, collections::BTreeMap, vec::Vec};
 use core::fmt;
-use log::{error, trace, warn};
+use log::{error, info, trace, warn};
 
 /// The main Object Dictionary structure.
 pub struct ObjectDictionary<'a> {
@@ -233,6 +233,71 @@ impl<'a> ObjectDictionary<'a> {
             }
         }
         None
+    }
+    
+    /// Restores "PowerOn" values for all objects within a specific index range.
+    ///
+    /// "PowerOn" values are defined as:
+    /// 1. The value found in persistent storage (if available).
+    /// 2. If no stored value exists, the default value from the Object Entry definition.
+    /// 3. If no default value exists, the object is left unchanged (or zeroed if necessary).
+    ///
+    /// This is used by NMT Reset commands (e.g., ResetCommunication, ResetApplication).
+    pub fn restore_power_on_values(&mut self, start_index: u16, end_index: u16) {
+        info!("Restoring PowerOn values for OD range {:#04X}..={:#04X}", start_index, end_index);
+
+        // 1. Try to load stored parameters from the backend (if available)
+        let stored_params = if let Some(s) = &mut self.storage {
+            match s.load() {
+                Ok(params) => Some(params),
+                Err(e) => {
+                    warn!("Failed to load stored parameters during reset: {:?}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // 2. Iterate over all existing entries in the specified range
+        for (&index, entry) in self.entries.iter_mut() {
+            if index < start_index || index > end_index {
+                continue;
+            }
+            
+            // Skip Error History (0x1003) during ResetCommunication (EPSG DS 301, 6.5.10.2)
+            if index == 0x1003 {
+                continue; 
+            }
+
+            // Determine the "PowerOn" value for each sub-index
+            match &mut entry.object {
+                Object::Variable(val) => {
+                    if let Some(stored_val) = stored_params.as_ref().and_then(|p| p.get(&(index, 0))) {
+                         *val = stored_val.clone();
+                    } else if let Some(default_val) = &entry.default_value {
+                        *val = default_val.clone();
+                    }
+                },
+                Object::Array(values) | Object::Record(values) => {
+                    for (i, val) in values.iter_mut().enumerate() {
+                        let sub_index = (i + 1) as u8;
+                        if let Some(stored_val) = stored_params.as_ref().and_then(|p| p.get(&(index, sub_index))) {
+                            *val = stored_val.clone();
+                        } else if let Some(default_val) = &entry.default_value {
+                            // NOTE: default_value in ObjectEntry typically applies to the variable, 
+                            // but for complex types, individual defaults might be complex.
+                            // Current ObjectEntry only has one simple default_value. 
+                            // Ideally, defaults should be per sub-index or complex.
+                            // Fallback: If the default value matches the type, apply it, otherwise ignore.
+                            if core::mem::discriminant(val) == core::mem::discriminant(default_val) {
+                                 *val = default_val.clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Atomically increments an UNSIGNED32 counter in the Object Dictionary.
@@ -465,6 +530,33 @@ mod tests {
         assert_eq!(od.find_by_name("DeviceName"), Some((0x1008, 0)));
         assert_eq!(od.find_by_name("ErrorFlags"), Some((0x2000, 0)));
         assert_eq!(od.find_by_name("NonExistent"), None);
+    }
+
+    #[test]
+    fn test_restore_power_on_values() {
+        let mut od = ObjectDictionary::new(None);
+        // Add 0x1000 (Communication) and 0x6000 (Application)
+        od.insert(0x1000, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(10)),
+            default_value: Some(ObjectValue::Unsigned32(99)),
+            ..Default::default()
+        });
+        od.insert(0x6000, ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(20)),
+            default_value: Some(ObjectValue::Unsigned32(88)),
+            ..Default::default()
+        });
+        
+        // Change values
+        od.write(0x1000, 0, ObjectValue::Unsigned32(11)).unwrap();
+        od.write(0x6000, 0, ObjectValue::Unsigned32(21)).unwrap();
+
+        // Reset Comm only (1000-1FFF)
+        od.restore_power_on_values(0x1000, 0x1FFF);
+
+        // 0x1000 should be default (99), 0x6000 should stay 21
+        assert_eq!(od.read_u32(0x1000, 0).unwrap(), 99);
+        assert_eq!(od.read_u32(0x6000, 0).unwrap(), 21);
     }
 
     // Default implementation for ObjectEntry to simplify test setup.
