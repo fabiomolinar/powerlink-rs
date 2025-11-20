@@ -273,11 +273,11 @@ impl IdentResponsePayload {
         let serial_number = u32::from_le_bytes(buffer[38..42].try_into()?);
         let verify_conf_date = u32::from_le_bytes(buffer[50..54].try_into()?);
         let verify_conf_time = u32::from_le_bytes(buffer[54..58].try_into()?);
-        let app_sw_date = u32::from_le_bytes(buffer[58..61].try_into()?);
+        let app_sw_date = u32::from_le_bytes(buffer[58..62].try_into()?);
         let app_sw_time = u32::from_le_bytes(buffer[62..66].try_into()?);
         let ip_address = buffer[66..70].try_into()?;
         let subnet_mask = buffer[70..74].try_into()?;
-        let default_gateway = buffer[74..78].try_into()?;
+        let default_gateway = buffer[74..78].try_into()?;        
 
         // Parse HostName
         let hostname_slice = &buffer[HOSTNAME_OFFSET..HOSTNAME_OFFSET + HOSTNAME_SIZE];

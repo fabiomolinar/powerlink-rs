@@ -301,3 +301,112 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
 
     NodeAction::NoAction // Default return if no frame needs sending
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::CoreNodeContext;
+    use crate::node::cn::state::CnContext;
+    use crate::nmt::cn_state_machine::CnNmtStateMachine;
+    use crate::frame::cs_state_machine::DllCsStateMachine; 
+    use crate::frame::error::{DllErrorManager, LoggingErrorHandler, CnErrorCounters};
+    use crate::sdo::{SdoServer, SdoClient, EmbeddedSdoServer, EmbeddedSdoClient};
+    use crate::sdo::transport::AsndTransport;
+    #[cfg(feature = "sdo-udp")]
+    use crate::sdo::transport::UdpTransport;
+    use crate::od::{ObjectDictionary, ObjectEntry, ObjectValue, Object};
+    use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
+    use crate::frame::DllCsEvent;
+    use alloc::collections::{BTreeMap, VecDeque};
+    use alloc::vec::Vec;
+    use alloc::vec;
+
+    fn create_context<'a>() -> CnContext<'a> {
+        let mut od = ObjectDictionary::new(None);
+        od.insert(constants::IDX_NMT_CYCLE_LEN_U32, ObjectEntry { object: Object::Variable(ObjectValue::Unsigned32(0)), ..Default::default() });
+        od.insert(constants::IDX_DLL_CN_LOSS_OF_SOC_TOL_U32, ObjectEntry { object: Object::Variable(ObjectValue::Unsigned32(0)), ..Default::default() });
+        od.insert(constants::IDX_NMT_ERROR_REGISTER_U8, ObjectEntry { object: Object::Variable(ObjectValue::Unsigned8(0)), ..Default::default() });
+        od.insert(constants::IDX_DIAG_ERR_STATISTICS_REC, ObjectEntry { object: Object::Record(vec![ObjectValue::Unsigned32(0); 16]), ..Default::default() });
+        
+        let core = CoreNodeContext {
+            od,
+            mac_address: Default::default(),
+            sdo_server: SdoServer::new(),
+            sdo_client: SdoClient::new(),
+            embedded_sdo_server: EmbeddedSdoServer::new(),
+            embedded_sdo_client: EmbeddedSdoClient::new(),
+        };
+        
+        CnContext {
+            core,
+            nmt_state_machine: CnNmtStateMachine::new(NodeId(1), Default::default(), 0),
+            dll_state_machine: DllCsStateMachine::default(),
+            dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
+            asnd_transport: AsndTransport,
+            #[cfg(feature = "sdo-udp")]
+            udp_transport: UdpTransport,
+            pending_nmt_requests: Vec::new(),
+            emergency_queue: VecDeque::new(),
+            heartbeat_consumers: BTreeMap::new(),
+            last_soc_reception_time_us: 0,
+            soc_timeout_check_active: false,
+            next_tick_us: None,
+            en_flag: false,
+            ec_flag: false,
+            error_status_changed: false,
+        }
+    }
+
+    #[test]
+    fn test_heartbeat_timeout() {
+        let mut context = create_context();
+        context.heartbeat_consumers.insert(NodeId(240), (1000, 0));
+        context.nmt_state_machine.set_state(NmtState::NmtPreOperational2);
+
+        process_tick(&mut context, 100);
+
+        for i in 0..20 {
+            process_tick(&mut context, 1200 + (i * 1000));
+            if context.error_status_changed { break; }
+        }
+        
+        assert!(context.error_status_changed, "Heartbeat timeout failed to signal error");
+    }
+
+    #[test]
+    fn test_soc_timeout_logic() {
+        let mut context = create_context();
+        context.core.od.write(constants::IDX_NMT_CYCLE_LEN_U32, 0, ObjectValue::Unsigned32(1000)).unwrap();
+        context.core.od.write(constants::IDX_DLL_CN_LOSS_OF_SOC_TOL_U32, 0, ObjectValue::Unsigned32(100000)).unwrap(); 
+
+        context.last_soc_reception_time_us = 1000;
+        context.soc_timeout_check_active = true;
+        context.nmt_state_machine.set_state(NmtState::NmtOperational);
+
+        // PRIME THE PUMP:
+        // Force DLL state machine into a state that monitors SoC (e.g., WaitSoc or WaitPreq).
+        // Sending a SocTrig event simulates receiving a valid SoC.
+        context.dll_state_machine.process_event(DllCsEvent::Soc, NmtState::NmtOperational);
+
+        context.next_tick_us = Some(2100); 
+        
+        for i in 0..20 {
+             context.next_tick_us = Some(2100 + (i * 1000)); 
+             process_tick(&mut context, 2100 + (i * 1000));
+             if context.error_status_changed { break; }
+        }
+
+        assert!(context.error_status_changed, "SoC timeout failed to signal error");
+    }
+    
+    #[test]
+    fn test_heartbeat_alive() {
+        let mut context = create_context();
+        context.heartbeat_consumers.insert(NodeId(240), (1000, 0));
+        context.nmt_state_machine.set_state(NmtState::NmtPreOperational2);
+        process_tick(&mut context, 100); 
+        context.heartbeat_consumers.insert(NodeId(240), (1000, 900));
+        process_tick(&mut context, 1200); 
+        assert!(!context.error_status_changed);
+    }
+}
