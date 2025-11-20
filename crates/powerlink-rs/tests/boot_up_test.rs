@@ -49,7 +49,7 @@ mod tests {
 
     fn create_mn() -> NodeHarness<ManagingNode<'static>> {
         let node_id = 240;
-        let mac = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0xF0]);
+        let mac = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, node_id]);
         
         // Setup minimal OD for MN
         let mut od = powerlink_rs::od::utils::new_mn_default(NodeId(node_id)).unwrap();
