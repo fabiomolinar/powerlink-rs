@@ -9,12 +9,17 @@ mod simulator;
 mod tests {
     // Use the local simulator module we declared above
     use super::simulator::{NodeHarness, SimulatedInterface, VirtualNetwork};
+    
+    // Fix E0432: Import specific items from their submodules
     use powerlink_rs::{
-        ControlledNode, MacAddress, ManagingNode, Node, NodeId, 
+        ControlledNode, Node, NodeId, 
         ObjectDictionaryStorage, PowerlinkError,
     };
+    use powerlink_rs::frame::basic::MacAddress;
+    use powerlink_rs::node::ManagingNode;
+
     use powerlink_rs::nmt::states::NmtState;
-    use powerlink_rs::od::{ObjectDictionary, ObjectEntry, ObjectValue};
+    use powerlink_rs::od::{ObjectDictionary, ObjectEntry, ObjectValue, Category, AccessType}; // Added Category/AccessType
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::collections::BTreeMap;
@@ -30,16 +35,27 @@ mod tests {
         fn clear_restore_defaults_flag(&mut self) -> Result<(), PowerlinkError> { Ok(()) }
     }
 
+    // Helper to create a default ObjectEntry since the trait impl isn't visible here
+    fn default_object_entry(value: ObjectValue) -> ObjectEntry {
+        ObjectEntry {
+            object: powerlink_rs::od::Object::Variable(value),
+            name: "TestObject",
+            category: Category::Optional,
+            access: None,
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        }
+    }
+
     fn create_cn(node_id: u8) -> NodeHarness<ControlledNode<'static>> {
         let mac = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, node_id]);
         
         // Setup minimal OD
         let mut od = powerlink_rs::od::utils::new_cn_default(NodeId(node_id)).unwrap();
         // Required by IdentResponse
-        od.insert(0x1000, ObjectEntry { 
-            object: powerlink_rs::od::Object::Variable(ObjectValue::Unsigned32(0x12345678)), 
-            ..Default::default() 
-        });
+        // Fix E0277: Construct ObjectEntry manually
+        od.insert(0x1000, default_object_entry(ObjectValue::Unsigned32(0x12345678)));
         
         let node = ControlledNode::new(od, mac).unwrap();
         let interface = Rc::new(RefCell::new(SimulatedInterface::new(node_id, mac.0)));
@@ -49,7 +65,7 @@ mod tests {
 
     fn create_mn() -> NodeHarness<ManagingNode<'static>> {
         let node_id = 240;
-        let mac = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, node_id]);
+        let mac = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0xF0]);
         
         // Setup minimal OD for MN
         let mut od = powerlink_rs::od::utils::new_mn_default(NodeId(node_id)).unwrap();

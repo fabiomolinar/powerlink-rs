@@ -3,7 +3,11 @@ pub mod interface;
 
 use powerlink_rs::node::{Node, NodeAction};
 use powerlink_rs::types::NodeId;
-use interface::SimulatedInterface;
+// Fix E0603: Re-export the interface so it's accessible to tests
+pub use interface::SimulatedInterface; 
+// Fix E0599: Import trait to use send_frame/receive_frame methods
+use powerlink_rs::NetworkInterface; 
+
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -110,10 +114,19 @@ impl<N: Node> NodeHarness<N> {
         };
 
         // 2. Run the node cycle
+        // Fix E0061: Handle argument mismatch based on feature flags
+        #[cfg(feature = "sdo-udp")]
         let action = if rx_len > 0 {
              self.node.run_cycle(Some(&rx_buffer[..rx_len]), None, network.current_time())
         } else {
              self.node.run_cycle(None, None, network.current_time())
+        };
+
+        #[cfg(not(feature = "sdo-udp"))]
+        let action = if rx_len > 0 {
+             self.node.run_cycle(Some(&rx_buffer[..rx_len]), network.current_time())
+        } else {
+             self.node.run_cycle(None, network.current_time())
         };
 
         // 3. Handle output actions
@@ -125,7 +138,6 @@ impl<N: Node> NodeHarness<N> {
                 let tx_frames = self.interface.borrow_mut().take_tx_frames();
                 for data in tx_frames {
                     // Simple broadcast logic for now.
-                    // A real implementation would parse the Ethernet header to find destination.
                     network.transmit(Packet {
                         data,
                         src_node_id: self.node_id.0,

@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/od/utils.rs
 //! Utility functions for creating default Object Dictionaries.
 
 use super::{
@@ -186,6 +187,20 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         },
     );
 
+    // *** FIXED: Add missing mandatory object 0x1F99 (NMT_CNBasicEthernetTimeout_U32) ***
+    od.insert(
+        0x1F99,
+        ObjectEntry {
+            object: Object::Variable(ObjectValue::Unsigned32(5_000_000)), // 5 seconds
+            name: "NMT_CNBasicEthernetTimeout_U32",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadWrite),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
+
     add_diagnostic_objects(&mut od)?;
 
     Ok(od)
@@ -227,6 +242,45 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(0)),
             name: "NMT_StartUp_U32",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadWrite),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
+
+    // *** FIXED: Add missing mandatory object 0x1F81 (NMT_NodeAssignment_AU32) ***
+    od.insert(
+        0x1F81,
+        ObjectEntry {
+            object: Object::Array(vec![ObjectValue::Unsigned32(0); 255]), // 254 entries + sub0
+            name: "NMT_NodeAssignment_AU32",
+            category: Category::Mandatory,
+            access: Some(AccessType::ReadWrite),
+            default_value: None,
+            value_range: None,
+            pdo_mapping: None,
+        },
+    );
+
+    // *** FIXED: Add missing mandatory object 0x1F89 (NMT_BootTime_REC) ***
+    od.insert(
+        0x1F89,
+        ObjectEntry {
+            object: Object::Record(vec![
+                ObjectValue::Unsigned8(9),           // NumberOfEntries
+                ObjectValue::Unsigned32(1_000_000), // MNWaitNotAct_U32
+                ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp1_U32
+                ObjectValue::Unsigned32(500_000),   // MNWaitPreOp1_U32
+                ObjectValue::Unsigned32(500_000),   // MNTimeoutPreOp2_U32
+                ObjectValue::Unsigned32(500_000),   // MNTimeoutReadyToOp_U32
+                ObjectValue::Unsigned32(500_000),   // MNIdentificationTimeout_U32
+                ObjectValue::Unsigned32(500_000),   // MNSoftwareTimeout_U32
+                ObjectValue::Unsigned32(500_000),   // MNConfigurationTimeout_U32
+                ObjectValue::Unsigned32(500_000),   // MNStartCNTimeout_U32
+            ]),
+            name: "NMT_BootTime_REC",
             category: Category::Mandatory,
             access: Some(AccessType::ReadWrite),
             default_value: None,

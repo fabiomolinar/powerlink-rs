@@ -1,14 +1,27 @@
-use super::ObjectDictionary;
+use super::{ObjectDictionary, ObjectValue};
 use super::entry::{AccessType, Category, Object, ObjectEntry, PdoMapping};
-use super::value::ObjectValue;
 use crate::PowerlinkError;
 use alloc::vec;
+use log::trace;
 
 /// Populates the OD with mandatory objects that define protocol mechanisms.
-/// Device-specific identification objects are left to the user to insert.
+///
+/// This function is NON-DESTRUCTIVE. It only inserts objects if they do not
+/// already exist in the dictionary. This allows applications to provide
+/// their own defaults or load values from storage before calling this.
 pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
+    // Helper macro to insert only if missing
+    macro_rules! insert_if_missing {
+        ($index:expr, $entry:expr) => {
+            if !od.entries.contains_key(&$index) {
+                trace!("Populating missing mandatory object {:#06X}", $index);
+                od.insert($index, $entry);
+            }
+        };
+    }
+
     // Add "Store Parameters" (1010h)
-    od.insert(
+    insert_if_missing!(
         0x1010,
         ObjectEntry {
             object: Object::Record(vec![
@@ -22,11 +35,11 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             default_value: None,
             value_range: None,
             pdo_mapping: None,
-        },
+        }
     );
 
     // Add "Restore Default Parameters" (1011h)
-    od.insert(
+    insert_if_missing!(
         0x1011,
         ObjectEntry {
             object: Object::Record(vec![
@@ -40,11 +53,11 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             default_value: None,
             value_range: None,
             pdo_mapping: None,
-        },
+        }
     );
 
     // Add SDO Sequence Layer Timeout (1300h)
-    od.insert(
+    insert_if_missing!(
         0x1300,
         ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(15000)), // Default: 15000ms
@@ -54,11 +67,11 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             default_value: Some(ObjectValue::Unsigned32(15000)),
             value_range: None,
             pdo_mapping: Some(PdoMapping::No),
-        },
+        }
     );
 
     // Add SDO Number of Acknowledge Retries (1302h)
-    od.insert(
+    insert_if_missing!(
         0x1302,
         ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned32(2)), // Default: 2 retries
@@ -68,11 +81,11 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             default_value: Some(ObjectValue::Unsigned32(2)),
             value_range: None,
             pdo_mapping: Some(PdoMapping::No),
-        },
+        }
     );
 
     // Add "PDO_CommParamRecord_TYPE" (0x0420) definition
-    od.insert(
+    insert_if_missing!(
         0x0420,
         ObjectEntry {
             object: Object::Record(vec![
@@ -86,11 +99,11 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             default_value: None,
             value_range: None,
             pdo_mapping: Some(PdoMapping::No),
-        },
+        }
     );
 
     // Add "RPDO Communication Parameter" (1400h) - Default entry
-    od.insert(
+    insert_if_missing!(
         0x1400,
         ObjectEntry {
             object: Object::Record(vec![
@@ -98,61 +111,61 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
                 ObjectValue::Unsigned8(0), // 2: MappingVersion_U8
             ]),
             name: "PDO_RxCommParam_00h_REC",
-            category: Category::Conditional,
+            category: Category::Mandatory,
             access: None, // Access is per-subindex
             default_value: None,
             value_range: None,
             pdo_mapping: None,
-        },
+        }
     );
 
     // Add "RPDO Mapping Parameter" (1600h) - Default entry
-    od.insert(
+    insert_if_missing!(
         0x1600,
         ObjectEntry {
             object: Object::Array(vec![]), // Empty mapping by default
             name: "PDO_RxMappParam_00h_AU64",
-            category: Category::Conditional,
+            category: Category::Mandatory,
             access: None, // Access is per-subindex
             default_value: None,
             value_range: None,
             pdo_mapping: None,
-        },
+        }
     );
 
     // Add "TPDO Communication Parameter" (1800h) - Default entry
-    od.insert(
+    insert_if_missing!(
         0x1800,
         ObjectEntry {
             object: Object::Record(vec![
-                ObjectValue::Unsigned8(0), // 1: NodeID_U8 (0 = mapped to PRes)
+                ObjectValue::Unsigned8(1), // 1: NodeID_U8 (1 = self, placeholder)
                 ObjectValue::Unsigned8(0), // 2: MappingVersion_U8
             ]),
             name: "PDO_TxCommParam_00h_REC",
-            category: Category::Conditional,
+            category: Category::Mandatory,
             access: None, // Access is per-subindex
             default_value: None,
             value_range: None,
             pdo_mapping: None,
-        },
+        }
     );
 
     // Add "TPDO Mapping Parameter" (1A00h) - Default entry
-    od.insert(
+    insert_if_missing!(
         0x1A00,
         ObjectEntry {
             object: Object::Array(vec![]), // Empty mapping by default
             name: "PDO_TxMappParam_00h_AU64",
-            category: Category::Conditional,
+            category: Category::Mandatory,
             access: None, // Access is per-subindex
             default_value: None,
             value_range: None,
             pdo_mapping: None,
-        },
+        }
     );
 
     // Add "PDO_ErrMapVers_OSTR" (1C80h) - Optional error logging
-    od.insert(
+    insert_if_missing!(
         0x1C80,
         ObjectEntry {
             object: Object::Variable(ObjectValue::OctetString(vec![0; 32])),
@@ -162,11 +175,11 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             default_value: Some(ObjectValue::OctetString(vec![0; 32])),
             value_range: None,
             pdo_mapping: Some(PdoMapping::No),
-        },
+        }
     );
 
     // Add "PDO_ErrShort_RX_OSTR" (1C81h) - Optional error logging
-    od.insert(
+    insert_if_missing!(
         0x1C81,
         ObjectEntry {
             object: Object::Variable(ObjectValue::OctetString(vec![0; 32])),
@@ -176,11 +189,11 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             default_value: Some(ObjectValue::OctetString(vec![0; 32])),
             value_range: None,
             pdo_mapping: Some(PdoMapping::No),
-        },
+        }
     );
 
     // Add "NMT_CurrNMTState_U8" (1F8Ch)
-    od.insert(
+    insert_if_missing!(
         0x1F8C,
         ObjectEntry {
             object: Object::Variable(ObjectValue::Unsigned8(0)),
@@ -190,69 +203,7 @@ pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
             default_value: Some(ObjectValue::Unsigned8(0)),
             value_range: None,
             pdo_mapping: Some(PdoMapping::No),
-        },
-    );
-
-    // --- Add default PDO Communication Parameters ---
-    // RPDO 1 Comm Param (for PReq from MN, NodeID 0)
-    od.insert(
-        0x1400,
-        ObjectEntry {
-            object: Object::Record(vec![
-                ObjectValue::Unsigned8(0), // 1: NodeID_U8 (0 = PReq)
-                ObjectValue::Unsigned8(0), // 2: MappingVersion_U8
-            ]),
-            name: "PDO_RxCommParam_00h_REC",
-            category: Category::Mandatory,
-            access: None,
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-        },
-    );
-    // TPDO 1 Comm Param (for PRes from this CN)
-    od.insert(
-        0x1800,
-        ObjectEntry {
-            object: Object::Record(vec![
-                ObjectValue::Unsigned8(1), // 1: NodeID_U8 (1 = self, placeholder)
-                ObjectValue::Unsigned8(0), // 2: MappingVersion_U8
-            ]),
-            name: "PDO_TxCommParam_00h_REC",
-            category: Category::Mandatory,
-            access: None,
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-        },
-    );
-
-    // --- Add default PDO Mapping Parameters (empty) ---
-    // RPDO 1 Mapping Param
-    od.insert(
-        0x1600,
-        ObjectEntry {
-            object: Object::Array(vec![]), // Empty mapping by default
-            name: "PDO_RxMappParam_00h_AU64",
-            category: Category::Mandatory,
-            access: None,
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-        },
-    );
-    // TPDO 1 Mapping Param
-    od.insert(
-        0x1A00,
-        ObjectEntry {
-            object: Object::Array(vec![]), // Empty mapping by default
-            name: "PDO_TxMappParam_00h_AU64",
-            category: Category::Mandatory,
-            access: None,
-            default_value: None,
-            value_range: None,
-            pdo_mapping: None,
-        },
+        }
     );
 }
 
