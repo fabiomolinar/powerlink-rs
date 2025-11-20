@@ -217,3 +217,67 @@ impl StatusResponsePayload {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::error::{EntryType, ErrorEntry, ErrorEntryMode};
+    use crate::nmt::states::NmtState;
+    use crate::common::NetTime;
+    use alloc::vec;
+
+    #[test]
+    fn test_status_response_round_trip() {
+        let error1 = ErrorEntry {
+            entry_type: EntryType { is_status_entry: false, send_to_queue: true, mode: ErrorEntryMode::EventOccurred, profile: 1 },
+            error_code: 0x1234,
+            timestamp: NetTime { seconds: 100, nanoseconds: 500 },
+            additional_information: 0xAABBCCDDEEFF,
+        };
+
+        let payload = StatusResponsePayload {
+            en_flag: true,
+            ec_flag: false,
+            pr: crate::frame::poll::PRFlag::PrioNmtRequest,
+            rs: crate::frame::poll::RSFlag::new(3),
+            nmt_state: NmtState::NmtOperational,
+            static_error_bit_field: StaticErrorBitField { 
+                error_register: 0xAB, 
+                // FIXED: Use array of size 7 to match struct definition
+                specific_errors: [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07] 
+            },
+            error_entries: vec![error1],
+        };
+
+        let mut buffer = [0u8; 100];
+        let size = payload.serialize(&mut buffer).expect("Serialization failed");
+        
+        let deserialized = StatusResponsePayload::deserialize(&buffer[..size]).expect("Deserialization failed");
+
+        assert_eq!(deserialized.en_flag, true);
+        assert_eq!(deserialized.nmt_state, NmtState::NmtOperational);
+        assert_eq!(deserialized.static_error_bit_field.error_register, 0xAB);
+        assert_eq!(deserialized.static_error_bit_field.specific_errors, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+        assert_eq!(deserialized.error_entries.len(), 1);
+        assert_eq!(deserialized.error_entries[0].error_code, 0x1234);
+    }
+
+    #[test]
+    fn test_status_response_no_errors() {
+        let payload = StatusResponsePayload {
+            en_flag: false,
+            ec_flag: true,
+            pr: crate::frame::poll::PRFlag::PrioNmtRequest,
+            rs: crate::frame::poll::RSFlag::new(0),
+            nmt_state: NmtState::NmtPreOperational1,
+            static_error_bit_field: StaticErrorBitField::default(),
+            error_entries: vec![],
+        };
+
+        let mut buffer = [0u8; 50];
+        let size = payload.serialize(&mut buffer).expect("Serialization failed");
+        
+        let deserialized = StatusResponsePayload::deserialize(&buffer[..size]).expect("Deserialization failed");
+        assert_eq!(deserialized.error_entries.len(), 0);
+    }
+}

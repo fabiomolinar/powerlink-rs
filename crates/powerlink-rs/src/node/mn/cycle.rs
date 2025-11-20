@@ -320,3 +320,125 @@ pub(super) fn build_sdo_asnd_request(
         sdo_payload,
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
+    use crate::frame::ms_state_machine::DllMsStateMachine;
+    use crate::nmt::mn_state_machine::MnNmtStateMachine;
+    use crate::node::{CoreNodeContext, NodeAction};
+    use crate::od::ObjectDictionary;
+    use crate::sdo::client_manager::SdoClientManager;
+    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
+    use crate::sdo::transport::AsndTransport;
+    #[cfg(feature = "sdo-udp")]
+    use crate::sdo::transport::UdpTransport;
+    use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
+    use crate::frame::{PowerlinkFrame, deserialize_frame};
+    use crate::node::mn::state::{CnInfo, CnState}; // Import CnState
+    use alloc::collections::{BTreeMap, BinaryHeap};
+    use alloc::vec::Vec;
+
+    fn create_test_context<'a>() -> MnContext<'a> {
+        let od = ObjectDictionary::new(None);
+        let core = CoreNodeContext {
+            od,
+            mac_address: Default::default(),
+            sdo_server: SdoServer::new(),
+            sdo_client: SdoClient::new(),
+            embedded_sdo_server: EmbeddedSdoServer::new(),
+            embedded_sdo_client: EmbeddedSdoClient::new(),
+        };
+
+        MnContext {
+            core,
+            configuration_interface: None,
+            nmt_state_machine: MnNmtStateMachine::new(NodeId(C_ADR_MN_DEF_NODE_ID), Default::default(), 0, 0),
+            dll_state_machine: DllMsStateMachine::default(),
+            dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
+            asnd_transport: AsndTransport,
+            #[cfg(feature = "sdo-udp")]
+            udp_transport: UdpTransport,
+            cycle_time_us: 10000,
+            multiplex_cycle_len: 0,
+            multiplex_assign: BTreeMap::new(),
+            publish_config: BTreeMap::new(),
+            current_multiplex_cycle: 0,
+            node_info: BTreeMap::new(),
+            mandatory_nodes: Vec::new(),
+            isochronous_nodes: Vec::new(),
+            async_only_nodes: Vec::new(),
+            arp_cache: BTreeMap::new(),
+            next_isoch_node_idx: 0,
+            current_phase: CyclePhase::Idle,
+            current_polled_cn: None,
+            async_request_queue: BinaryHeap::new(),
+            pending_er_requests: Vec::new(),
+            pending_status_requests: Vec::new(),
+            pending_nmt_commands: Vec::new(),
+            mn_async_send_queue: Vec::new(),
+            sdo_client_manager: SdoClientManager::new(),
+            last_ident_poll_node_id: NodeId(0),
+            last_status_poll_node_id: NodeId(0),
+            next_tick_us: None,
+            pending_timeout_event: None,
+            current_cycle_start_time_us: 0,
+            initial_operational_actions_done: false,
+        }
+    }
+
+    #[test]
+    fn test_advance_cycle_isochronous_phase() {
+        let mut context = create_test_context();
+        context.isochronous_nodes.push(NodeId(1));
+        context.isochronous_nodes.push(NodeId(2));
+        
+        // Fix: Set state to Operational so they are polled
+        context.node_info.insert(NodeId(1), CnInfo { state: CnState::Operational, ..Default::default() });
+        context.node_info.insert(NodeId(2), CnInfo { state: CnState::Operational, ..Default::default() });
+
+        context.current_phase = CyclePhase::SoCSent;
+        context.next_isoch_node_idx = 0;
+
+        let action1 = advance_cycle_phase(&mut context, 100);
+        assert!(matches!(action1, NodeAction::SendFrame(_)), "Should send PReq");
+        assert_eq!(context.current_polled_cn, Some(NodeId(1)));
+        assert_eq!(context.current_phase, CyclePhase::IsochronousPReq);
+
+        let action2 = advance_cycle_phase(&mut context, 200);
+        assert!(matches!(action2, NodeAction::SendFrame(_)), "Should send PReq for Node 2");
+        assert_eq!(context.current_polled_cn, Some(NodeId(2)));
+
+        // Queue a dummy async request so SoA is sent (transition to AsynchronousSoA)
+        context.async_request_queue.push(crate::node::mn::state::AsyncRequest { node_id: NodeId(1), priority: 1 });
+
+        let action3 = advance_cycle_phase(&mut context, 300);
+        if let NodeAction::SendFrame(bytes) = action3 {
+            let frame = deserialize_frame(&bytes).expect("Failed to deserialize SoA");
+            assert!(matches!(frame, PowerlinkFrame::SoA(_)), "Expected SoA frame");
+        } else {
+            panic!("Expected SendFrame for SoA");
+        }
+        assert_eq!(context.current_phase, CyclePhase::AsynchronousSoA);
+    }
+
+    #[test]
+    fn test_advance_cycle_empty_isochronous() {
+        let mut context = create_test_context();
+        context.current_phase = CyclePhase::SoCSent;
+        
+        // Queue a dummy async request so SoA is sent
+        context.async_request_queue.push(crate::node::mn::state::AsyncRequest { node_id: NodeId(1), priority: 1 });
+
+        let action = advance_cycle_phase(&mut context, 100);
+        
+        if let NodeAction::SendFrame(bytes) = action {
+             let frame = deserialize_frame(&bytes).expect("Failed to deserialize SoA");
+             assert!(matches!(frame, PowerlinkFrame::SoA(_)), "Should skip to SoA");
+        } else {
+             panic!("Expected SendFrame");
+        }
+        assert_eq!(context.current_phase, CyclePhase::AsynchronousSoA);
+    }
+}

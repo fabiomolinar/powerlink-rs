@@ -144,3 +144,118 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         cycle::tick(context, current_time_us)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
+    use crate::frame::ms_state_machine::DllMsStateMachine;
+    use crate::nmt::mn_state_machine::MnNmtStateMachine;
+    use crate::node::{CoreNodeContext, NodeAction};
+    use crate::od::ObjectDictionary;
+    use crate::sdo::client_manager::SdoClientManager;
+    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
+    use crate::sdo::transport::AsndTransport;
+    #[cfg(feature = "sdo-udp")]
+    use crate::sdo::transport::UdpTransport;
+    use crate::types::{NodeId, C_ADR_MN_DEF_NODE_ID};
+    use crate::frame::{PowerlinkFrame, DllMsEvent, deserialize_frame};
+    use crate::node::mn::state::{CnInfo, CnState, CyclePhase}; // Import CyclePhase
+    use alloc::collections::{BTreeMap, BinaryHeap};
+    use alloc::vec::Vec;
+
+    fn create_test_context<'a>() -> MnContext<'a> {
+        let od = ObjectDictionary::new(None);
+        let core = CoreNodeContext {
+            od,
+            mac_address: Default::default(),
+            sdo_server: SdoServer::new(),
+            sdo_client: SdoClient::new(),
+            embedded_sdo_server: EmbeddedSdoServer::new(),
+            embedded_sdo_client: EmbeddedSdoClient::new(),
+        };
+
+        MnContext {
+            core,
+            configuration_interface: None,
+            nmt_state_machine: MnNmtStateMachine::new(NodeId(C_ADR_MN_DEF_NODE_ID), Default::default(), 0, 0),
+            dll_state_machine: DllMsStateMachine::default(),
+            dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
+            asnd_transport: AsndTransport,
+            #[cfg(feature = "sdo-udp")]
+            udp_transport: UdpTransport,
+            cycle_time_us: 1000,
+            multiplex_cycle_len: 0,
+            multiplex_assign: BTreeMap::new(),
+            publish_config: BTreeMap::new(),
+            current_multiplex_cycle: 0,
+            node_info: BTreeMap::new(),
+            mandatory_nodes: Vec::new(),
+            isochronous_nodes: Vec::new(),
+            async_only_nodes: Vec::new(),
+            arp_cache: BTreeMap::new(),
+            next_isoch_node_idx: 0,
+            current_phase: CyclePhase::Idle,
+            current_polled_cn: None,
+            async_request_queue: BinaryHeap::new(),
+            pending_er_requests: Vec::new(),
+            pending_status_requests: Vec::new(),
+            pending_nmt_commands: Vec::new(),
+            mn_async_send_queue: Vec::new(),
+            sdo_client_manager: SdoClientManager::new(),
+            last_ident_poll_node_id: NodeId(0),
+            last_status_poll_node_id: NodeId(0),
+            next_tick_us: None,
+            pending_timeout_event: None,
+            current_cycle_start_time_us: 0,
+            initial_operational_actions_done: false,
+        }
+    }
+
+    #[test]
+    fn test_handle_tick_starts_cycle() {
+        let mut context = create_test_context();
+        context.cycle_time_us = 1000;
+        context.current_cycle_start_time_us = 1000;
+        
+        context.nmt_state_machine.set_state(NmtState::NmtOperational);
+        context.current_phase = CyclePhase::Idle;
+
+        let action1 = handle_tick(&mut context, 1900);
+        assert!(matches!(action1, NodeAction::NoAction));
+
+        let action2 = handle_tick(&mut context, 2000);
+        
+        if let NodeAction::SendFrame(bytes) = action2 {
+            let frame = deserialize_frame(&bytes).expect("Failed to deserialize SoC");
+            assert!(matches!(frame, PowerlinkFrame::Soc(_)));
+        } else {
+            panic!("Expected SendFrame(SoC)");
+        }
+
+        assert_eq!(context.current_cycle_start_time_us, 2000);
+        assert_eq!(context.current_phase, CyclePhase::SoCSent);
+    }
+
+    #[test]
+    fn test_handle_tick_pres_timeout() {
+        let mut context = create_test_context();
+        context.nmt_state_machine.set_state(NmtState::NmtOperational);
+        
+        // Fix: Set phase to IsochronousPReq so handle_tick doesn't try to start a new cycle
+        // (which would preempt the timeout handling)
+        context.current_phase = CyclePhase::IsochronousPReq;
+
+        context.pending_timeout_event = Some(DllMsEvent::PresTimeout);
+        context.current_polled_cn = Some(NodeId(5));
+        context.next_tick_us = Some(1500);
+        
+        // Add an async request to force SoA transmission logic in advance_cycle_phase
+        context.async_request_queue.push(crate::node::mn::state::AsyncRequest { node_id: NodeId(1), priority: 1 });
+
+        let action = handle_tick(&mut context, 1500);
+
+        assert!(context.pending_timeout_event.is_none() || context.pending_timeout_event == Some(DllMsEvent::AsndTimeout));
+        assert!(matches!(action, NodeAction::SendFrame(_)), "Should advance to next phase");
+    }
+}
