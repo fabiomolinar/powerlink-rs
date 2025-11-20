@@ -1,6 +1,6 @@
 // crates/powerlink-rs/src/node/mn/scheduler.rs
-use super::payload; // Import payload to build frames
-use super::state::{CnInfo, CnState, MnContext};
+use super::payload;
+use super::state::{AsyncRequest, CnInfo, CnState, MnContext};
 use crate::frame::basic::MacAddress;
 use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId}; // Added ServiceId/Frame
 use crate::nmt::events::{MnNmtCommandRequest, NmtEvent, NmtStateCommand};
@@ -438,5 +438,222 @@ pub(super) fn schedule_timeout(context: &mut MnContext, deadline_us: u64, event:
             context.next_tick_us = Some(deadline_us);
         }
         _ => {} // Existing deadline is sooner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::collections::{BTreeMap, BinaryHeap};
+    use crate::node::mn::state::AsyncRequest;
+
+    use super::*;
+    use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
+    use crate::frame::ms_state_machine::DllMsStateMachine;
+    use crate::nmt::mn_state_machine::MnNmtStateMachine;
+    use crate::node::CoreNodeContext;
+    use crate::od::ObjectDictionary;
+    use crate::sdo::client_manager::SdoClientManager;
+    use crate::sdo::transport::AsndTransport;
+    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
+    #[cfg(feature = "sdo-udp")]
+    use crate::sdo::transport::UdpTransport;
+    use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
+    use alloc::vec::Vec;
+
+    // --- Helper to create a minimal MnContext for testing ---
+    fn create_test_context<'a>() -> MnContext<'a> {
+        let od = ObjectDictionary::new(None);
+        let core = CoreNodeContext {
+            od,
+            mac_address: Default::default(),
+            sdo_server: SdoServer::new(),
+            sdo_client: SdoClient::new(),
+            embedded_sdo_server: EmbeddedSdoServer::new(),
+            embedded_sdo_client: EmbeddedSdoClient::new(),
+        };
+
+        MnContext {
+            core,
+            configuration_interface: None,
+            nmt_state_machine: MnNmtStateMachine::new(
+                NodeId(C_ADR_MN_DEF_NODE_ID),
+                Default::default(),
+                0,
+                0,
+            ),
+            dll_state_machine: DllMsStateMachine::default(),
+            dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
+            asnd_transport: AsndTransport,
+            #[cfg(feature = "sdo-udp")]
+            udp_transport: UdpTransport,
+            cycle_time_us: 10000,
+            multiplex_cycle_len: 10,
+            multiplex_assign: BTreeMap::new(),
+            publish_config: BTreeMap::new(),
+            current_multiplex_cycle: 0,
+            node_info: BTreeMap::new(),
+            mandatory_nodes: Vec::new(),
+            isochronous_nodes: Vec::new(),
+            async_only_nodes: Vec::new(),
+            arp_cache: BTreeMap::new(),
+            next_isoch_node_idx: 0,
+            current_phase: crate::node::mn::state::CyclePhase::Idle,
+            current_polled_cn: None,
+            async_request_queue: BinaryHeap::new(),
+            pending_er_requests: Vec::new(),
+            pending_status_requests: Vec::new(),
+            pending_nmt_commands: Vec::new(),
+            mn_async_send_queue: Vec::new(),
+            sdo_client_manager: SdoClientManager::new(),
+            last_ident_poll_node_id: NodeId(0),
+            last_status_poll_node_id: NodeId(0),
+            next_tick_us: None,
+            pending_timeout_event: None,
+            current_cycle_start_time_us: 0,
+            initial_operational_actions_done: false,
+        }
+    }
+
+    #[test]
+    fn test_priority_er_requests() {
+        let mut context = create_test_context();
+        let node_id = NodeId(10);
+        
+        // Setup: Add a pending ER request
+        context.pending_er_requests.push(node_id);
+
+        // Act
+        let (service, target, er_flag) = determine_next_async_action(&mut context);
+
+        // Assert: Should be StatusRequest, Target 10, ER flag true
+        assert_eq!(service, RequestedServiceId::StatusRequest);
+        assert_eq!(target, node_id);
+        assert_eq!(er_flag, true);
+        assert!(context.pending_er_requests.is_empty());
+    }
+
+    #[test]
+    fn test_priority_status_requests() {
+        let mut context = create_test_context();
+        let node_id = NodeId(20);
+        
+        // Setup: Add a pending Status request
+        context.pending_status_requests.push(node_id);
+
+        // Act
+        let (service, target, er_flag) = determine_next_async_action(&mut context);
+
+        // Assert: Should be StatusRequest, Target 20, ER flag false
+        assert_eq!(service, RequestedServiceId::StatusRequest);
+        assert_eq!(target, node_id);
+        assert_eq!(er_flag, false);
+    }
+
+    #[test]
+    fn test_priority_nmt_command_over_generic() {
+        let mut context = create_test_context();
+        let target_node = NodeId(5);
+
+        // Setup: Add both an NMT command and a generic ASnd frame
+        context.pending_nmt_commands.push((
+            MnNmtCommandRequest::State(NmtStateCommand::StartNode),
+            target_node,
+            NmtCommandData::None,
+        ));
+        
+        let dummy_frame = PowerlinkFrame::SoA(crate::frame::SoAFrame::new(
+            Default::default(),
+            NmtState::NmtOperational,
+            Default::default(),
+            RequestedServiceId::NoService,
+            NodeId(0),
+            crate::types::EPLVersion(0),
+        ));
+        context.mn_async_send_queue.push(dummy_frame);
+
+        // Act
+        let (service, target, _) = determine_next_async_action(&mut context);
+
+        // Assert: NMT command (UnspecifiedInvite to Self) takes precedence
+        assert_eq!(service, RequestedServiceId::UnspecifiedInvite);
+        assert_eq!(target, NodeId(C_ADR_MN_DEF_NODE_ID));
+        // Ensure the NMT command is still in the queue (it's consumed by tick/cycle, not scheduler)
+        assert!(!context.pending_nmt_commands.is_empty());
+    }
+
+    #[test]
+    fn test_priority_cn_async_request() {
+        let mut context = create_test_context();
+        let node_high = NodeId(10);
+        let node_low = NodeId(11);
+
+        // Setup: CN 10 requests with Priority 7 (NMT), CN 11 with Priority 3 (Generic)
+        context.async_request_queue.push(AsyncRequest { 
+            node_id: node_low, 
+            priority: 3 
+        });
+        context.async_request_queue.push(AsyncRequest { 
+            node_id: node_high, 
+            priority: 7 
+        });
+
+        // Act 1: Should pick High Priority
+        let (service1, target1, _) = determine_next_async_action(&mut context);
+        assert_eq!(target1, node_high);
+        assert_eq!(service1, RequestedServiceId::NmtRequestInvite);
+
+        // Act 2: Should pick Low Priority
+        let (service2, target2, _) = determine_next_async_action(&mut context);
+        assert_eq!(target2, node_low);
+        assert_eq!(service2, RequestedServiceId::UnspecifiedInvite);
+    }
+
+    #[test]
+    fn test_find_next_node_to_identify() {
+        let mut context = create_test_context();
+        
+        // Setup: Add nodes in various states
+        // Node 1: Operational (Known)
+        context.node_info.insert(NodeId(1), CnInfo { state: CnState::Operational, ..Default::default() });
+        // Node 2: Unknown (Needs ID)
+        context.node_info.insert(NodeId(2), CnInfo { state: CnState::Unknown, ..Default::default() });
+        // Node 3: Missing (Needs ID to check if back)
+        context.node_info.insert(NodeId(3), CnInfo { state: CnState::Missing, ..Default::default() });
+        
+        // Act 1
+        let node1 = find_next_node_to_identify(&mut context).unwrap();
+        assert_eq!(node1, NodeId(2));
+        
+        // Act 2 (Round robin)
+        let node2 = find_next_node_to_identify(&mut context).unwrap();
+        assert_eq!(node2, NodeId(3));
+        
+        // Act 3 (Loop back to 2)
+        let node3 = find_next_node_to_identify(&mut context).unwrap();
+        assert_eq!(node3, NodeId(2));
+    }
+
+    #[test]
+    fn test_find_next_async_only_to_poll() {
+        let mut context = create_test_context();
+        
+        // Setup: Two async-only nodes
+        context.async_only_nodes.push(NodeId(10));
+        context.async_only_nodes.push(NodeId(20));
+        
+        context.node_info.insert(NodeId(10), CnInfo { state: CnState::Operational, ..Default::default() });
+        context.node_info.insert(NodeId(20), CnInfo { state: CnState::Operational, ..Default::default() });
+
+        // Act 1
+        let node1 = find_next_async_only_to_poll(&mut context).unwrap();
+        assert_eq!(node1, NodeId(10));
+
+        // Act 2
+        let node2 = find_next_async_only_to_poll(&mut context).unwrap();
+        assert_eq!(node2, NodeId(20));
+        
+        // Act 3 (Loop back)
+        let node3 = find_next_async_only_to_poll(&mut context).unwrap();
+        assert_eq!(node3, NodeId(10));
     }
 }

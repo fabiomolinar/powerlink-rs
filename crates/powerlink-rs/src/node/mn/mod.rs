@@ -1,11 +1,12 @@
 // crates/powerlink-rs/src/node/mn/mod.rs
-pub(crate) mod config; // <-- ADDED
+pub(crate) mod config;
 mod cycle;
 mod events;
 mod main;
 mod payload;
 mod scheduler;
 mod state;
+mod tick; // <-- ADDED
 pub mod validation;
 
 pub use main::ManagingNode;

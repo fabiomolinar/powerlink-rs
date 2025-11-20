@@ -4,9 +4,7 @@ use alloc::collections::BTreeMap;
 use super::events;
 use super::state::{CyclePhase, MnContext};
 use crate::PowerlinkError;
-use crate::common::{NetTime, RelativeTime};
 use crate::frame::basic::MacAddress;
-use crate::frame::control::SocFrame;
 use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::ms_state_machine::DllMsStateMachine;
 use crate::frame::{PowerlinkFrame, ServiceId, deserialize_frame};
@@ -14,8 +12,8 @@ use crate::hal::ConfigurationInterface;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
-use crate::node::mn::config; // <-- ADDED
-use crate::node::{CoreNodeContext, Node, NodeAction, serialize_frame_action};
+use crate::node::mn::config;
+use crate::node::{CoreNodeContext, Node, NodeAction};
 use crate::od::{ObjectDictionary, constants};
 use crate::sdo::client_manager::SdoClientManager;
 use crate::sdo::command::SdoCommand;
@@ -23,8 +21,8 @@ use crate::sdo::sequence::SequenceLayerHeader;
 use crate::sdo::server::SdoClientInfo;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
-use crate::sdo::transport::{AsndTransport, SdoTransport};
-use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoServer};
+use crate::sdo::transport::AsndTransport;
+use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoServer, SdoTransport};
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, MessageType, NodeId};
 use alloc::collections::BinaryHeap;
 use alloc::vec::Vec;
@@ -35,7 +33,6 @@ use crate::sdo::udp::deserialize_sdo_udp_payload;
 #[cfg(feature = "sdo-udp")]
 use crate::types::IpAddress;
 
-use super::cycle;
 use crate::nmt::events::{MnNmtCommandRequest, NmtManagingCommand, NmtStateCommand};
 use crate::node::mn::state::NmtCommandData;
 
@@ -70,11 +67,11 @@ impl<'s> ManagingNode<'s> {
             ),
         )? as u64;
 
-        // --- Initialize CN Management Info (using new config module) ---
+        // --- Initialize CN Management Info (using config module) ---
         let (node_info, mandatory_nodes, isochronous_nodes, async_only_nodes, multiplex_assign) =
             config::parse_mn_node_lists(&od)?;
 
-        // --- Initialize NMT Info Publish Configuration (using new config module) ---
+        // --- Initialize NMT Info Publish Configuration (using config module) ---
         let publish_config = config::parse_publish_config(&od);
 
         // --- Initialize Core Context ---
@@ -187,8 +184,7 @@ impl<'s> ManagingNode<'s> {
         self.process_powerlink_frame(frame, current_time_us)
     }
 
-    /// Helper function to process ASnd frames, which might contain
-    /// SDO, IdentResponse, StatusResponse, or other services.
+    /// Helper function to process ASnd frames.
     fn process_asnd_frame(
         &mut self,
         asnd_frame: PowerlinkFrame,
@@ -307,134 +303,9 @@ impl<'s> ManagingNode<'s> {
         }
     }
 
-    fn handle_tick(&mut self, current_time_us: u64) -> NodeAction {
-        let time_since_last_cycle =
-            current_time_us.saturating_sub(self.context.current_cycle_start_time_us);
-        let current_nmt_state = self.context.nmt_state_machine.current_state();
-
-        if time_since_last_cycle >= self.context.cycle_time_us
-            && current_nmt_state >= NmtState::NmtPreOperational2
-            && self.context.current_phase == CyclePhase::Idle
-        {
-            trace!("[MN] Cycle time elapsed. Starting new cycle.");
-            return cycle::start_cycle(&mut self.context, current_time_us);
-        }
-
-        if let Some((target_node_id, seq, cmd)) = self
-            .context
-            .sdo_client_manager
-            .tick(current_time_us, &self.context.core.od)
-        {
-            warn!(
-                "SDO Client tick generated frame (timeout/abort) for Node {}.",
-                target_node_id.0
-            );
-            match cycle::build_sdo_asnd_request(&self.context, target_node_id, seq, cmd) {
-                Ok(frame) => {
-                    self.context.core.od.increment_counter(
-                        constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
-                        constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
-                    );
-                    return serialize_frame_action(frame, &mut self.context)
-                        .unwrap_or(NodeAction::NoAction);
-                }
-                Err(e) => error!("Failed to build SDO client tick frame: {:?}", e),
-            }
-        }
-
-        if let Some(deadline) = self.context.core.sdo_server.next_action_time() {
-            if current_time_us >= deadline {
-                match self
-                    .context
-                    .core
-                    .sdo_server
-                    .tick(current_time_us, &self.context.core.od)
-                {
-                    Ok(Some(response_data)) => {
-                        warn!("SDO Server tick generated abort frame.");
-                        let build_result = match response_data.client_info {
-                            SdoClientInfo::Asnd { .. } => {
-                                self.context.core.od.increment_counter(
-                                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
-                                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
-                                );
-                                self.context
-                                    .asnd_transport
-                                    .build_response(response_data, &self.context)
-                            }
-                            #[cfg(feature = "sdo-udp")]
-                            SdoClientInfo::Udp { .. } => {
-                                self.context.core.od.increment_counter(
-                                    constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
-                                    constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
-                                );
-                                self.context
-                                    .udp_transport
-                                    .build_response(response_data, &self.context)
-                            }
-                        };
-                        match build_result {
-                            Ok(action) => return action,
-                            Err(e) => {
-                                error!("Failed to build SDO/ASnd abort response: {:?}", e);
-                            }
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => error!("SDO server tick error: {:?}", e),
-                }
-            }
-        }
-
-        let deadline_passed = self
-            .context
-            .next_tick_us
-            .is_some_and(|deadline| current_time_us >= deadline);
-
-        if !deadline_passed {
-            return NodeAction::NoAction;
-        }
-
-        trace!(
-            "Tick deadline reached at {}us (Deadline was {:?})",
-            current_time_us, self.context.next_tick_us
-        );
-        self.context.next_tick_us = None;
-
-        if let Some(event) = self.context.pending_timeout_event.take() {
-            warn!(
-                "[MN] PRes timeout for Node {:?}.",
-                self.context.current_polled_cn
-            );
-            events::handle_dll_event(
-                &mut self.context,
-                event,
-                &PowerlinkFrame::Soc(SocFrame::new(
-                    Default::default(),
-                    Default::default(),
-                    NetTime {
-                        seconds: 0,
-                        nanoseconds: 0,
-                    },
-                    RelativeTime {
-                        seconds: 0,
-                        nanoseconds: 0,
-                    },
-                )),
-            );
-            return cycle::advance_cycle_phase(&mut self.context, current_time_us);
-        } else {
-            cycle::tick(&mut self.context, current_time_us)
-        }
-    }
-
     // --- New Public API Methods ---
 
     /// Queues an NMT state command to be sent to a target CN or broadcast.
-    ///
-    /// # Arguments
-    /// * `command` - The NMT state command to send (e.g., `NmtStateCommand::StartNode`).
-    /// * `target` - The `NodeId` of the target CN, or `NodeId(C_ADR_BROADCAST_NODE_ID)` for broadcast.
     pub fn queue_nmt_state_command(&mut self, command: NmtStateCommand, target: NodeId) {
         info!(
             "Queueing NMT State Command: {:?} for Node {}",
@@ -448,11 +319,6 @@ impl<'s> ManagingNode<'s> {
     }
 
     /// Queues an NMTNetHostNameSet command to be sent to a target CN.
-    /// (Reference: EPSG DS 301, Section 7.3.2.1.1)
-    ///
-    /// # Arguments
-    /// * `target` - The `NodeId` of the target CN. Must be a unicast address.
-    /// * `hostname` - The hostname to set (max 32 bytes).
     pub fn set_hostname(
         &mut self,
         target: NodeId,
@@ -481,10 +347,6 @@ impl<'s> ManagingNode<'s> {
     }
 
     /// Queues an NMTFlushArpEntry command to be sent as a broadcast.
-    /// (Reference: EPSG DS 301, Section 7.3.2.1.2)
-    ///
-    /// # Arguments
-    /// * `target` - The `NodeId` to flush, or `NodeId(C_ADR_BROADCAST_NODE_ID)` to flush all.
     pub fn flush_arp_entry(&mut self, target: NodeId) {
         info!("Queueing NMTFlushArpEntry for Node {}", target.0);
         self.context.pending_nmt_commands.push((
@@ -494,6 +356,7 @@ impl<'s> ManagingNode<'s> {
         ));
     }
 
+    /// Initiates an SDO Read (Upload) transfer from a target CN.
     pub fn read_object(
         &mut self,
         target: NodeId,
@@ -514,6 +377,7 @@ impl<'s> ManagingNode<'s> {
         )
     }
 
+    /// Initiates an SDO Write (Download) transfer to a target CN.
     pub fn write_object(
         &mut self,
         target: NodeId,
@@ -636,7 +500,8 @@ impl<'s> Node for ManagingNode<'s> {
             }
         }
 
-        self.handle_tick(current_time_us)
+        // Call the new tick module
+        super::tick::handle_tick(&mut self.context, current_time_us)
     }
 
     #[cfg(not(feature = "sdo-udp"))]
@@ -652,7 +517,8 @@ impl<'s> Node for ManagingNode<'s> {
             }
         }
 
-        self.handle_tick(current_time_us)
+        // Call the new tick module
+        super::tick::handle_tick(&mut self.context, current_time_us)
     }
 
     fn nmt_state(&self) -> NmtState {

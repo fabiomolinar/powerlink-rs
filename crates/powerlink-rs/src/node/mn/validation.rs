@@ -208,3 +208,229 @@ pub(super) fn validate_boot_step1_checks(
     // TODO: Add SerialNo check (0x1F88) as a warning-only check
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
+    use crate::frame::ms_state_machine::DllMsStateMachine;
+    use crate::nmt::mn_state_machine::MnNmtStateMachine;
+    use crate::nmt::flags::FeatureFlags;
+    use crate::nmt::states::NmtState;
+    use crate::node::CoreNodeContext;
+    use crate::od::{ObjectDictionary, ObjectEntry, ObjectValue};
+    use crate::sdo::client_manager::SdoClientManager;
+    use crate::sdo::transport::AsndTransport;
+    use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
+    #[cfg(feature = "sdo-udp")]
+    use crate::sdo::transport::UdpTransport;
+    use crate::types::{C_ADR_MN_DEF_NODE_ID, EPLVersion};
+    use crate::frame::poll::{PRFlag, RSFlag};
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use alloc::collections::BTreeMap;
+
+    // --- Mock Configuration Interface ---
+    struct MockConfigInterface {
+        should_update_sw: bool,
+        config_data: Vec<u8>,
+    }
+    impl crate::hal::ConfigurationInterface for MockConfigInterface {
+        fn get_expected_identity(&self, _node_id: u8) -> Option<crate::hal::Identity> { None }
+        fn get_configuration<'a>(&'a self, _node_id: u8) -> Result<&'a [u8], crate::PowerlinkError> {
+            Ok(&self.config_data)
+        }
+        fn is_software_update_required(&self, _node_id: u8, _d: u32, _t: u32) -> bool {
+            self.should_update_sw
+        }
+    }
+
+    // --- Helper to create a valid payload ---
+    fn create_valid_payload() -> IdentResponsePayload {
+        IdentResponsePayload {
+            pr: PRFlag::default(),
+            rs: RSFlag::default(),
+            nmt_state: NmtState::NmtPreOperational1,
+            epl_version: EPLVersion(0x20),
+            feature_flags: FeatureFlags::default(),
+            mtu: 300,
+            poll_in_size: 36,
+            poll_out_size: 36,
+            response_time: 1000,
+            device_type: 0x1234,
+            vendor_id: 0xABCD,
+            product_code: 0x5678,
+            revision_number: 0x0001,
+            serial_number: 0x9999,
+            verify_conf_date: 0,
+            verify_conf_time: 0,
+            app_sw_date: 0,
+            app_sw_time: 0,
+            ip_address: [0; 4],
+            subnet_mask: [0; 4],
+            default_gateway: [0; 4],
+            host_name: "TestNode".into(),
+        }
+    }
+
+    // --- Helper to setup OD ---
+    fn setup_od(od: &mut ObjectDictionary, node_id: u8) {
+        // Insert Expected Values
+        od.insert(constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32, ObjectEntry {
+            object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
+            ..Default::default()
+        });
+        od.write(constants::IDX_NMT_MN_DEVICE_TYPE_ID_LIST_AU32, node_id, ObjectValue::Unsigned32(0x1234)).unwrap();
+
+        od.insert(constants::IDX_NMT_MN_VENDOR_ID_LIST_AU32, ObjectEntry {
+            object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
+            ..Default::default()
+        });
+        od.write(constants::IDX_NMT_MN_VENDOR_ID_LIST_AU32, node_id, ObjectValue::Unsigned32(0xABCD)).unwrap();
+
+        // StartUp Flags (Check Identity = Bit 9, Check Config = Bit 11)
+        od.insert(constants::IDX_NMT_START_UP_U32, ObjectEntry {
+             object: crate::od::Object::Variable(ObjectValue::Unsigned32(0)),
+             ..Default::default()
+        });
+    }
+
+    fn create_context<'a>(od: ObjectDictionary<'a>) -> MnContext<'a> {
+        let core = CoreNodeContext {
+            od,
+            mac_address: Default::default(),
+            sdo_server: SdoServer::new(),
+            sdo_client: SdoClient::new(),
+            embedded_sdo_server: EmbeddedSdoServer::new(),
+            embedded_sdo_client: EmbeddedSdoClient::new(),
+        };
+        MnContext {
+            core,
+            configuration_interface: None,
+            nmt_state_machine: MnNmtStateMachine::new(NodeId(C_ADR_MN_DEF_NODE_ID), Default::default(), 0, 0),
+            dll_state_machine: DllMsStateMachine::default(),
+            dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),
+            asnd_transport: AsndTransport,
+            #[cfg(feature = "sdo-udp")]
+            udp_transport: UdpTransport,
+            cycle_time_us: 10000,
+            multiplex_cycle_len: 0,
+            multiplex_assign: BTreeMap::new(),
+            publish_config: BTreeMap::new(),
+            current_multiplex_cycle: 0,
+            node_info: BTreeMap::new(),
+            mandatory_nodes: Vec::new(),
+            isochronous_nodes: Vec::new(),
+            async_only_nodes: Vec::new(),
+            arp_cache: BTreeMap::new(),
+            next_isoch_node_idx: 0,
+            current_phase: super::super::state::CyclePhase::Idle,
+            current_polled_cn: None,
+            async_request_queue: Default::default(),
+            pending_er_requests: Vec::new(),
+            pending_status_requests: Vec::new(),
+            pending_nmt_commands: Vec::new(),
+            mn_async_send_queue: Vec::new(),
+            sdo_client_manager: SdoClientManager::new(),
+            last_ident_poll_node_id: NodeId(0),
+            last_status_poll_node_id: NodeId(0),
+            next_tick_us: None,
+            pending_timeout_event: None,
+            current_cycle_start_time_us: 0,
+            initial_operational_actions_done: false,
+        }
+    }
+
+    #[test]
+    fn test_identity_check_pass() {
+        let mut od = ObjectDictionary::new(None);
+        let node_id = NodeId(1);
+        setup_od(&mut od, node_id.0);
+        let mut context = create_context(od);
+        let payload = create_valid_payload();
+
+        // Act
+        let result = validate_boot_step1_checks(&mut context, node_id, &payload, 0);
+
+        // Assert
+        assert!(result, "Validation should pass for matching identity");
+    }
+
+    #[test]
+    fn test_identity_check_fail_device_type() {
+        let mut od = ObjectDictionary::new(None);
+        let node_id = NodeId(1);
+        setup_od(&mut od, node_id.0);
+        let mut context = create_context(od);
+        
+        let mut payload = create_valid_payload();
+        payload.device_type = 0x9999; // Mismatch
+
+        // Act
+        let result = validate_boot_step1_checks(&mut context, node_id, &payload, 0);
+
+        // Assert
+        assert!(!result, "Validation should fail for mismatched DeviceType");
+    }
+
+    #[test]
+    fn test_config_check_pass_when_disabled() {
+        let mut od = ObjectDictionary::new(None);
+        let node_id = NodeId(1);
+        setup_od(&mut od, node_id.0);
+        
+        // Ensure Bit 11 (Check Config) is 0
+        od.write(constants::IDX_NMT_START_UP_U32, 0, ObjectValue::Unsigned32(0)).unwrap();
+
+        let mut context = create_context(od);
+        
+        // Payload has date=0, but we set expected date in OD
+        context.core.od.insert(constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32, ObjectEntry {
+             object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
+             ..Default::default()
+        });
+        context.core.od.write(constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32, node_id.0, ObjectValue::Unsigned32(500)).unwrap();
+        
+        let payload = create_valid_payload(); // Has date=0
+
+        // Act
+        let result = validate_boot_step1_checks(&mut context, node_id, &payload, 0);
+
+        // Assert
+        assert!(result, "Should pass because config check is disabled");
+    }
+
+    #[test]
+    fn test_config_check_triggers_download() {
+        let mut od = ObjectDictionary::new(None);
+        let node_id = NodeId(1);
+        setup_od(&mut od, node_id.0);
+        
+        // Enable Config Check (Bit 11)
+        od.write(constants::IDX_NMT_START_UP_U32, 0, ObjectValue::Unsigned32(1 << 11)).unwrap();
+
+        let mut context = create_context(od);
+        
+        // Set expected date
+        context.core.od.insert(constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32, ObjectEntry {
+             object: crate::od::Object::Array(vec![ObjectValue::Unsigned32(0); 255]),
+             ..Default::default()
+        });
+        context.core.od.write(constants::IDX_NMT_MN_EXP_CONF_DATE_LIST_AU32, node_id.0, ObjectValue::Unsigned32(500)).unwrap();
+
+        // Set up Mock Config Interface
+        let mock_interface = MockConfigInterface { should_update_sw: false, config_data: vec![0x00, 0x00, 0x00, 0x00] }; // Empty Concise DCF
+        context.configuration_interface = Some(&mock_interface);
+
+        let payload = create_valid_payload(); // Has date=0, mismatch!
+
+        // Act
+        let result = validate_boot_step1_checks(&mut context, node_id, &payload, 1000);
+
+        // Assert
+        assert!(!result, "Should return false to pause boot-up");
+        // Verify SDO logic triggered (we can check if a connection exists)
+        // This is tricky to check deeply without exposing SDO internals, but returning false with config interface present
+        // implies the download path was taken.
+    }
+}
