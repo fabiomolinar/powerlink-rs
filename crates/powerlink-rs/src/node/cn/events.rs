@@ -15,6 +15,7 @@ use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 // --- NEW/MODIFIED IMPORTS ---
 use crate::nmt::events::{NmtManagingCommand, NmtServiceRequest, NmtStateCommand};
 use crate::od::ObjectValue;
+use crate::od::error_history; // Import the new module
 use alloc::string::String;
 // --- END IMPORTS ---
 use log::{debug, error, info, trace, warn};
@@ -25,6 +26,7 @@ pub(super) fn process_frame(
     frame: PowerlinkFrame,
     current_time_us: u64,
 ) -> NodeAction {
+    // ... [Existing code for SDO/ASnd handling remains unchanged] ...
     // --- Special handling for SDO ASnd frames ---
     // (This is handled in main.rs's process_raw_frame/process_udp_datagram
     // to increment SdoRx counters before passing to SdoServer)
@@ -93,6 +95,7 @@ pub(super) fn process_frame(
         }
     }
 
+    // ... [Existing SoC/PReq/PRes/SoA handling remains unchanged] ...
     // --- Handle SoC Frame specific logic ---
     if let PowerlinkFrame::Soc(_) = &frame {
         trace!("SoC received at time {}", current_time_us);
@@ -276,6 +279,7 @@ pub(super) fn process_frame(
             if asnd_frame.destination == context.nmt_state_machine.node_id
                 && asnd_frame.service_id == ServiceId::NmtCommand =>
         {
+            // ... [Existing NMT Command parsing logic remains unchanged] ...
             // This is an NMT command for us.
             if let Some(cmd_id_byte) = asnd_frame.payload.first() {
                 // First, try to parse as an NMT State Command
@@ -431,7 +435,10 @@ pub(super) fn process_frame(
                     },
                 };
                 if context.emergency_queue.len() < context.emergency_queue.capacity() {
-                    context.emergency_queue.push_back(error_entry);
+                    context.emergency_queue.push_back(error_entry.clone());
+                    // *** NEW: Write to Error History OD ***
+                    error_history::write_error_to_history(&mut context.core.od, &error_entry);
+                    
                     info!("[CN] New error queued: {:?}", error_entry);
                     // Increment emergency write counter
                     context.core.od.increment_counter(
@@ -505,6 +512,7 @@ pub(super) fn process_frame(
     }
 
     // --- Generate Response ---
+    // ... [Existing code remains unchanged] ...
     let current_nmt_state = context.nmt_state_machine.current_state();
     let response_frame_opt = if current_nmt_state >= NmtState::NmtNotActive {
         match &frame {

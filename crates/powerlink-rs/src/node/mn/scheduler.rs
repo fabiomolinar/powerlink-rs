@@ -2,7 +2,7 @@
 use super::payload;
 use super::state::{CnInfo, CnState, MnContext};
 use crate::frame::basic::MacAddress;
-use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId}; // Added ServiceId/Frame
+use crate::frame::{DllMsEvent, PowerlinkFrame, RequestedServiceId, ServiceId};
 use crate::nmt::events::{MnNmtCommandRequest, NmtEvent, NmtStateCommand};
 use crate::nmt::{NmtStateMachine, states::NmtState};
 use crate::node::mn::ip_from_node_id;
@@ -72,8 +72,6 @@ pub(super) fn determine_next_async_action(
     }
 
     // 5. Check for pending SDO client requests from the MN's stateful manager.
-    // CRITICAL FIX: get_pending_request is stateful. We must CAPTURE the result
-    // and queue it, otherwise the frame is lost and the manager hangs.
     if let Some((target_node_id, seq, cmd)) = context
         .sdo_client_manager
         .get_pending_request(context.current_cycle_start_time_us, &context.core.od)
@@ -84,10 +82,8 @@ pub(super) fn determine_next_async_action(
         );
 
         // Construct the ASnd frame here and push it to the generic queue.
-        // This unifies the send path for SDOs and generic frames.
         let sdo_payload = {
             let mut buf = alloc::vec::Vec::with_capacity(128);
-            // We ignore serialization errors here as these structs are internal and validated
             let _ = seq.serialize(&mut buf);
             let _ = cmd.serialize(&mut buf);
             buf
@@ -124,8 +120,7 @@ pub(super) fn determine_next_async_action(
         return (RequestedServiceId::StatusRequest, node_to_poll, false);
     }
 
-    // 8. Check for NMT Info Broadcasts (NEW: Background Task)
-    // Only if no other frames are queued.
+    // 8. Check for NMT Info Broadcasts (Background Task)
     if context.mn_async_send_queue.is_empty() {
         if let Some(service_id) = context.publish_config.get(&context.current_multiplex_cycle) {
             trace!(
@@ -133,7 +128,6 @@ pub(super) fn determine_next_async_action(
                 service_id
             );
 
-            // Build the frame using payload logic
             let frame = payload::build_nmt_info_frame(context, *service_id);
             context.mn_async_send_queue.push(frame);
 
@@ -145,7 +139,7 @@ pub(super) fn determine_next_async_action(
         }
     }
 
-    // 9. Service pending ASnd requests from CNs (already in priority order from BinaryHeap)
+    // 9. Service pending ASnd requests from CNs
     if let Some(request) = context.async_request_queue.pop() {
         info!(
             "[MN] Granting async slot to Node {} (PR={})",
@@ -180,14 +174,10 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
 
         if all_mandatory_identified {
             info!("[MN] All mandatory nodes identified. Triggering NMT transition to PreOp2.");
-            // NMT_MT3
             context
                 .nmt_state_machine
                 .process_event(NmtEvent::AllCnsIdentified, &mut context.core.od);
 
-            // --- Phase 1.4: BOOT_STEP2 ---
-            // Now that we are in PreOp2, queue NMTEnableReadyToOperate for all identified CNs.
-            // (Spec 7.4.1.4, 7.4.2.2.2)
             for (node_id, info) in context.node_info.iter() {
                 if info.state == CnState::Identified {
                     info!(
@@ -203,25 +193,19 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             }
         }
     } else if current_mn_state == NmtState::NmtPreOperational2 {
-        // Check if all mandatory nodes are PreOperational or further (ReadyToOp reported via PRes/Status)
         let all_mandatory_preop = context.mandatory_nodes.iter().all(|node_id| {
             let state = context
                 .node_info
                 .get(node_id)
                 .map_or(CnState::Unknown, |info| info.state);
-            // CN reports PreOp2 or ReadyToOp, MN maps this to CnState::PreOperational
-            // Also check <= Operational to ensure node hasn't gone missing/stopped
             state >= CnState::PreOperational && state <= CnState::Operational
         });
 
         if all_mandatory_preop {
-            // Check MN startup flags if application trigger is needed
-            // NMT_StartUp_U32.Bit8 = 0 -> Auto transition
             if context.nmt_state_machine.startup_flags & (1 << 8) == 0 {
                 info!(
                     "[MN] All mandatory nodes PreOperational/ReadyToOp. Triggering NMT transition to ReadyToOp."
                 );
-                // NMT_MT4
                 context.nmt_state_machine.process_event(
                     NmtEvent::ConfigurationCompleteCnsReady,
                     &mut context.core.od,
@@ -233,8 +217,6 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             }
         }
     } else if current_mn_state == NmtState::NmtReadyToOperate {
-        // --- Phase 1.5: CHECK_COMMUNICATION ---
-        // Check if all mandatory nodes have passed communication checks (Spec 7.4.1.5)
         let all_mandatory_comm_checked = context.mandatory_nodes.iter().all(|node_id| {
             context
                 .node_info
@@ -243,13 +225,10 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
         });
 
         if all_mandatory_comm_checked {
-            // Check MN startup flags if application trigger is needed
-            // NMT_StartUp_U32.Bit2 = 0 -> Auto transition
             if context.nmt_state_machine.startup_flags & (1 << 2) == 0 {
                 info!(
                     "[MN] CHECK_COMMUNICATION passed for all mandatory nodes. Triggering NMT transition to Operational."
                 );
-                // NMT_MT5 - Use AllMandatoryCnsOperational event as the trigger
                 context
                     .nmt_state_machine
                     .process_event(NmtEvent::AllMandatoryCnsOperational, &mut context.core.od);
@@ -260,19 +239,16 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
             }
         }
     }
-    // No automatic checks needed in Operational state based on CN states alone.
 }
 
 /// Finds the next configured CN that has not been identified yet for polling.
 pub(super) fn find_next_node_to_identify(context: &mut MnContext) -> Option<NodeId> {
-    // Start iterating from the node *after* the last one polled
     let start_node_id_val = context.last_ident_poll_node_id.0.wrapping_add(1);
 
     let mut wrapped_around = false;
     let mut current_node_id_val = start_node_id_val;
 
     loop {
-        // Handle wrap-around and node ID range (1-239 for CNs)
         if current_node_id_val == 0 || current_node_id_val > 239 {
             current_node_id_val = 1;
         }
@@ -284,12 +260,9 @@ pub(super) fn find_next_node_to_identify(context: &mut MnContext) -> Option<Node
             wrapped_around = true;
         }
 
-        // Ensure NodeId::try_from is used or logic handles invalid IDs
-        let node_id = NodeId(current_node_id_val); // Directly create NodeId
+        let node_id = NodeId(current_node_id_val); 
 
-        // Check if this node ID exists in our configured node state map
-        // AND if its current state is Unknown or Missing.
-        let info = context.node_info.get(&node_id).cloned(); // Use cloned()
+        let info = context.node_info.get(&node_id).cloned();
         if matches!(
             info,
             Some(CnInfo {
@@ -300,7 +273,6 @@ pub(super) fn find_next_node_to_identify(context: &mut MnContext) -> Option<Node
                 ..
             })
         ) {
-            // Found a node to poll
             debug!(
                 "[MN] Found unidentified or missing Node {} to poll.",
                 node_id.0
@@ -313,7 +285,7 @@ pub(super) fn find_next_node_to_identify(context: &mut MnContext) -> Option<Node
     }
 
     debug!("[MN] No more unidentified nodes found.");
-    None // No unidentified nodes left
+    None
 }
 
 /// Finds the next async-only CN that needs a status poll.
@@ -322,20 +294,18 @@ pub(super) fn find_next_async_only_to_poll(context: &mut MnContext) -> Option<No
         return None;
     }
 
-    // Find the index of the last polled node to continue from there
     let start_idx = context
         .async_only_nodes
         .iter()
         .position(|&id| id == context.last_status_poll_node_id)
         .map_or(0, |i| (i + 1) % context.async_only_nodes.len());
 
-    // Iterate through the async-only list in a round-robin fashion
     for i in 0..context.async_only_nodes.len() {
         let current_idx = (start_idx + i) % context.async_only_nodes.len();
         let node_id = context.async_only_nodes[current_idx];
 
-        // Poll any async-only node that is not considered completely gone
         if let Some(info) = context.node_info.get(&node_id) {
+            // Poll any async-only node that is not considered completely gone
             if info.state != CnState::Missing {
                 debug!(
                     "[MN] Found async-only Node {} to poll for status.",
@@ -364,7 +334,7 @@ pub(super) fn get_next_isochronous_node_to_poll(
         let assigned_cycle = context.multiplex_assign.get(&node_id).copied().unwrap_or(0);
         // Corrected multiplex check: cycle counter is 0-based, assigned is 1-based
         let should_poll_this_cycle = assigned_cycle == 0 // Continuous node
-            || (context.multiplex_cycle_len > 0 && assigned_cycle == (current_multiplex_cycle + 1)); // Multiplexed node for this cycle (assigned cycle is 1-based)
+            || (context.multiplex_cycle_len > 0 && assigned_cycle == (current_multiplex_cycle + 1)); // Multiplexed node for this cycle
 
         if should_poll_this_cycle {
             // Check if the node is in a state where it should be polled isochronously
@@ -372,9 +342,9 @@ pub(super) fn get_next_isochronous_node_to_poll(
                 .node_info
                 .get(&node_id)
                 .map_or(CnState::Unknown, |info| info.state);
-            // Poll nodes from Identified onwards, excluding Stopped/Missing
-            // Corrected state check: >= PreOperational
-            if state >= CnState::PreOperational {
+            // Poll nodes from Identified onwards, excluding Missing.
+            // CRITICAL FIX: Explicitly exclude Stopped nodes (EPSG 301, 7.1.4.1.2.5)
+            if state >= CnState::PreOperational && state != CnState::Stopped {
                 // Found a valid node to poll in this cycle
                 trace!(
                     "[MN] Polling Node {} (State: {:?}, MuxCycle: {}) in mux cycle {}",
@@ -393,7 +363,6 @@ pub(super) fn get_next_isochronous_node_to_poll(
                 node_id.0, assigned_cycle, current_multiplex_cycle
             );
         }
-        // If the node is not in a pollable state or not for this cycle, the loop continues
     }
     None // No more nodes left to poll in this cycle
 }
@@ -413,8 +382,8 @@ pub(super) fn has_more_isochronous_nodes(context: &MnContext, current_multiplex_
                 .node_info
                 .get(&node_id)
                 .map_or(CnState::Unknown, |info| info.state);
-            // Corrected state check: >= PreOperational
-            if state >= CnState::PreOperational {
+            // CRITICAL FIX: Explicitly exclude Stopped nodes here too
+            if state >= CnState::PreOperational && state != CnState::Stopped {
                 return true; // Found at least one more node to poll
             }
         }
@@ -459,6 +428,7 @@ mod tests {
     use crate::sdo::{EmbeddedSdoClient, EmbeddedSdoServer, SdoClient, SdoServer};
     use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
     use alloc::vec::Vec;
+    use crate::node::mn::state::{CnInfo, CnState};
 
     // --- Helper to create a minimal MnContext for testing ---
     fn create_test_context<'a>() -> MnContext<'a> {
@@ -685,5 +655,34 @@ mod tests {
         // Act 3 (Loop back)
         let node3 = find_next_async_only_to_poll(&mut context).unwrap();
         assert_eq!(node3, NodeId(10));
+    }
+
+    #[test]
+    fn test_isochronous_scheduler_skips_stopped_nodes() {
+        let mut context = create_test_context();
+        context.isochronous_nodes.push(NodeId(1));
+        context.isochronous_nodes.push(NodeId(2));
+        context.isochronous_nodes.push(NodeId(3));
+
+        // Node 1: Operational -> Should poll
+        context.node_info.insert(NodeId(1), CnInfo { state: CnState::Operational, ..Default::default() });
+        // Node 2: Stopped -> Should SKIP
+        context.node_info.insert(NodeId(2), CnInfo { state: CnState::Stopped, ..Default::default() });
+        // Node 3: Operational -> Should poll
+        context.node_info.insert(NodeId(3), CnInfo { state: CnState::Operational, ..Default::default() });
+
+        context.next_isoch_node_idx = 0;
+
+        // 1. Get Node 1
+        let n1 = get_next_isochronous_node_to_poll(&mut context, 0);
+        assert_eq!(n1, Some(NodeId(1)));
+
+        // 2. Get Node 3 (Skipping 2)
+        let n3 = get_next_isochronous_node_to_poll(&mut context, 0);
+        assert_eq!(n3, Some(NodeId(3)));
+
+        // 3. None left
+        let n_end = get_next_isochronous_node_to_poll(&mut context, 0);
+        assert_eq!(n_end, None);
     }
 }

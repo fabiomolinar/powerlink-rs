@@ -1,6 +1,7 @@
 // crates/powerlink-rs/src/od/mod.rs
 mod commands;
 pub mod constants;
+pub mod error_history;
 mod entry;
 mod pdo_validator;
 mod predefined;
@@ -15,7 +16,7 @@ use crate::hal::ObjectDictionaryStorage;
 use crate::{NodeId, PowerlinkError};
 use alloc::{borrow::Cow, collections::BTreeMap, vec::Vec};
 use core::fmt;
-use log::{error, trace, warn}; // Added warn
+use log::{error, trace, warn};
 
 /// The main Object Dictionary structure.
 pub struct ObjectDictionary<'a> {

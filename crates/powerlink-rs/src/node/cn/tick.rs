@@ -11,6 +11,7 @@ use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::NodeAction;
 use crate::od::constants;
+use crate::od::error_history; // Import error history module
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
 use alloc::vec::Vec;
@@ -111,6 +112,13 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                 ) {
                     error!("[CN] Failed to update Error Register: {:?}", e)
                 }
+
+                // *** NEW: Handle error history and emergency queue logic here for consistency if needed ***
+                // Currently HeartbeatTimeout doesn't explicitly push to queue in the original code, 
+                // but it triggers NMT error. The DLL manager handles threshold.
+                // If we want to log it, we should construct an entry. 
+                // However, standard POWERLINK behavior for Heartbeat is primarily NMT Reset.
+                // We'll stick to original logic here unless specified otherwise.
             }
             if nmt_action != NmtAction::None {
                 context
@@ -231,7 +239,10 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                         },
                     };
                     if context.emergency_queue.len() < context.emergency_queue.capacity() {
-                        context.emergency_queue.push_back(error_entry);
+                        context.emergency_queue.push_back(error_entry.clone());
+                        // *** NEW: Write to Error History OD ***
+                        error_history::write_error_to_history(&mut context.core.od, &error_entry);
+                        
                         trace!("[CN] New error queued: {:?}", error_entry);
                         // Increment emergency write counter
                         context.core.od.increment_counter(
