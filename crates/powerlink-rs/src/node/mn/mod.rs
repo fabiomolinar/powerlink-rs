@@ -1,9 +1,11 @@
+// crates/powerlink-rs/src/node/mn/mod.rs
 mod cycle;
 mod events;
 mod main;
 mod payload;
 mod scheduler;
 mod state;
+pub mod validation;
 
 pub use main::ManagingNode;
 pub use state::{CnInfo, CnState, MnContext};
