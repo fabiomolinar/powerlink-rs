@@ -54,6 +54,7 @@ impl<'a> ObjectDictionary<'a> {
     /// Initialises the Object Dictionary by populating mandatory objects and
     /// loading parameters from the persistent storage backend.
     pub fn init(&mut self) -> Result<(), PowerlinkError> {
+        // Delegates strictly to the refactored storage module
         storage::init(self)
     }
 
@@ -62,6 +63,7 @@ impl<'a> ObjectDictionary<'a> {
         predefined::validate_mandatory_objects(self, is_mn)
     }
 
+    // ... rest of the file (get_configured_cns, insert, read, write, etc.) remains unchanged ...
     /// Gets a list of configured isochronous CNs from object 0x1F81.
     pub fn get_configured_cns(&self) -> Vec<NodeId> {
         let mut cn_list = Vec::new();
@@ -285,11 +287,7 @@ impl<'a> ObjectDictionary<'a> {
                         if let Some(stored_val) = stored_params.as_ref().and_then(|p| p.get(&(index, sub_index))) {
                             *val = stored_val.clone();
                         } else if let Some(default_val) = &entry.default_value {
-                            // NOTE: default_value in ObjectEntry typically applies to the variable, 
-                            // but for complex types, individual defaults might be complex.
-                            // Current ObjectEntry only has one simple default_value. 
-                            // Ideally, defaults should be per sub-index or complex.
-                            // Fallback: If the default value matches the type, apply it, otherwise ignore.
+                            // Fallback: If the default value matches the type, apply it.
                             if core::mem::discriminant(val) == core::mem::discriminant(default_val) {
                                  *val = default_val.clone();
                             }
@@ -301,7 +299,6 @@ impl<'a> ObjectDictionary<'a> {
     }
 
     /// Atomically increments an UNSIGNED32 counter in the Object Dictionary.
-    /// This is used for diagnostic counters (e.g., 0x1101, 0x1102).
     pub(super) fn increment_counter(&mut self, index: u16, sub_index: u8) {
         let entry = self.entries.get_mut(&index);
 
