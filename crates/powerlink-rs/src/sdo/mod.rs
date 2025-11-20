@@ -1,5 +1,7 @@
+// crates/powerlink-rs/src/sdo/mod.rs
 pub mod asnd;
 pub mod client;
+pub mod client_connection;
 pub mod client_manager;
 pub mod command;
 pub mod embedded;
