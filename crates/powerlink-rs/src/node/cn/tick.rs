@@ -1,4 +1,4 @@
-// crates/powerlink-rs/src/node/cn/tick.rs
+// src/node/cn/tick.rs
 //! Handles time-based events for the Controlled Node (CN).
 //! Includes SDO timeouts, Heartbeat monitoring, and NMT state timeouts.
 
@@ -20,6 +20,7 @@ use log::{debug, error, trace, warn};
 /// Processes a timeout or other periodic check.
 pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> NodeAction {
     // --- SDO Server Tick (handles timeouts/retransmissions) ---
+    // Spec 6.3.2.3.2.5: Broken Connection (Timeout)
     match context
         .core
         .sdo_server
@@ -51,7 +52,6 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
             if let Ok(action) = build_result {
                 return action;
             }
-            // If building the abort frame failed, fall through to other tick logic.
         }
         Err(e) => error!("[CN] SDO Server tick error: {:?}", e),
         _ => {} 
@@ -60,6 +60,8 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     let current_nmt_state = context.nmt_state_machine.current_state();
 
     // --- Heartbeat Consumer Check ---
+    // Spec 7.3.5: NMT Guard Services
+    // Spec 7.2.1.5.4: NMT_ConsumerHeartbeatTime_AU32
     if current_nmt_state >= NmtState::NmtPreOperational2 {
         let mut timed_out_nodes = Vec::new();
         for (node_id, (timeout_us, last_seen_us)) in &mut context.heartbeat_consumers {
@@ -80,13 +82,14 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
 
         // Handle errors outside the mutable borrow
         for node_id in timed_out_nodes {
+            // Log error as HeartbeatTimeout (Custom DLL Error)
             let (nmt_action, signaled) = context
                 .dll_error_manager
                 .handle_error(DllError::HeartbeatTimeout { node_id });
 
+            // Spec 6.5: Error Signaling (Update Error Register, Queue Emergency)
             if signaled {
                 context.error_status_changed = true;
-                // Update Error Register logic...
                 let current_err_reg = context
                     .core
                     .od
@@ -106,6 +109,8 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                     );
                 }
             }
+            
+            // Check if error triggers NMT state transition (e.g., to PreOp1)
             if nmt_action != NmtAction::None {
                 context
                     .nmt_state_machine
@@ -117,6 +122,8 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     }
 
     // --- Handle NmtNotActive Timeout Setup (Bootstrapping) ---
+    // Spec 7.2.3.1.1: NMT_CNBasicEthernetTimeout_U32 (0x1F99)
+    // Transition from NotActive to BasicEthernet if no traffic seen.
     if current_nmt_state == NmtState::NmtNotActive && context.next_tick_us.is_none() {
         let timeout_us = context.nmt_state_machine.basic_ethernet_timeout as u64;
         if timeout_us > 0 {
@@ -137,7 +144,6 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
         .next_tick_us
         .is_some_and(|deadline| current_time_us >= deadline);
 
-    // If no deadline has passed, do nothing else this tick.
     if !deadline_passed {
         return NodeAction::NoAction;
     }
@@ -164,18 +170,18 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
         return NodeAction::NoAction; 
     }
     
-    // 2. SoC Timeout Check
+    // 2. SoC Timeout Check (Spec 4.7.7.3.1 Loss of SoC)
     if context.soc_timeout_check_active {
         warn!(
             "SoC timeout detected at {}us! Last SoC was at {}us.",
             current_time_us, context.last_soc_reception_time_us
         );
+        // Trigger DLL Event
         if let Some(errors) = context
             .dll_state_machine
             .process_event(DllCsEvent::SocTimeout, current_nmt_state)
         {
             for error in errors {
-                // Error logging and NMT reaction logic...
                 context.core.od.increment_counter(
                     constants::IDX_DIAG_ERR_STATISTICS_REC,
                     constants::SUBIDX_DIAG_ERR_STATS_HIST_WRITE,
@@ -192,21 +198,19 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                         .unwrap_or(0);
                     let new_err_reg = current_err_reg | 0b1; // Set Generic Error
                     if current_err_reg != new_err_reg {
-                        // Increment static error change counter
                         context.core.od.increment_counter(
                             constants::IDX_DIAG_ERR_STATISTICS_REC,
                             constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
                         );
                     }
-                    if let Err(e) = context.core.od.write_internal(
+                    let _ = context.core.od.write_internal(
                         constants::IDX_NMT_ERROR_REGISTER_U8,
                         0,
                         crate::od::ObjectValue::Unsigned8(new_err_reg),
                         false,
-                    ) {
-                        error!("[CN] Failed to update Error Register: {:?}", e)
-                    }
+                    );
 
+                    // Queue Emergency
                     let error_entry = ErrorEntry {
                         entry_type: EntryType {
                             is_status_entry: false,
@@ -249,6 +253,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                     }
                 }
                 
+                // Handle NMT State Transition (ResetCommunication -> PreOp1)
                 if nmt_action != NmtAction::None {
                     context
                         .nmt_state_machine
@@ -258,13 +263,14 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                 }
             }
         }
-        // Reschedule next check if still active
+        // Reschedule next check if still active (Spec 4.7.7.3.1)
         if context.soc_timeout_check_active {
             let cycle_time_opt = context
                 .core
                 .od
                 .read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0)
                 .map(|v| v as u64);
+            // Tolerance in 0x1C14
             let tolerance_opt = context
                 .core
                 .od

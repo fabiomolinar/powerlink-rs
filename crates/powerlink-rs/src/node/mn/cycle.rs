@@ -1,4 +1,4 @@
-// crates/powerlink-rs/src/node/mn/cycle.rs
+// src/node/mn/cycle.rs
 use super::state::{CyclePhase, MnContext};
 use crate::frame::{DllMsEvent, PowerlinkFrame};
 use crate::nmt::NmtStateMachine;
@@ -16,55 +16,67 @@ use crate::PowerlinkError;
 use crate::frame::ASndFrame;
 use crate::frame::ServiceId;
 use crate::node::mn::state::NmtCommandData;
-use crate::sdo::asnd::serialize_sdo_asnd_payload;
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
 
-// parse_mn_node_lists has been moved to config.rs
-
-/// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
+/// Advances the POWERLINK cycle to the next phase.
+///
+/// The Cycle State Machine (DLL_MS) dictates the sequence:
+/// 1. SoC (Start of Cycle)
+/// 2. Isochronous Phase (PReq -> PRes for each node)
+/// 3. Asynchronous Phase (SoA -> ASnd)
+///
+/// Reference: EPSG DS 301, 4.2.4.6 MN Cycle State Machine
 pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     let current_nmt_state = context.nmt_state_machine.current_state();
 
-    // FIX: In PreOp1, the cycle is "Reduced" (SoC -> SoA). 
-    // We must skip the Isochronous (PReq) phase entirely.
-    // Isochronous phase is only valid for PreOp2 and Operational.
+    // Spec 4.2.4.2 Reduced POWERLINK Cycle:
+    // "The Reduced POWERLINK Cycle shall consist of queued asynchronous phases only."
+    // However, Figure 24 implies SoA is the start.
+    // In NmtPreOperational1, we skip the Isochronous phase entirely.
+    // Isochronous phase is only valid for PreOp2, ReadyToOp, and Operational.
     let isochronous_allowed = current_nmt_state >= NmtState::NmtPreOperational2;
 
     if isochronous_allowed {
-        // Check if there are more isochronous nodes to poll in the current cycle.
+        // --- Isochronous Phase (4.2.4.1.1) ---
+        // Check if there are more isochronous nodes to poll in the current multiplex cycle.
         if let Some(node_id) =
             scheduler::get_next_isochronous_node_to_poll(context, context.current_multiplex_cycle)
         {
             context.current_polled_cn = Some(node_id);
             context.current_phase = CyclePhase::IsochronousPReq;
+            
+            // Set timeout for PRes (Spec 7.2.2.3.3 NMT_MNCNPResTimeout_AU32)
             let timeout_ns = context
                 .core
                 .od
                 .read_u32(constants::IDX_NMT_MN_CN_PRES_TIMEOUT_AU32, node_id.0)
                 .unwrap_or(25000) as u64;
+            
             scheduler::schedule_timeout(
                 context,
                 current_time_us + (timeout_ns / 1000),
                 DllMsEvent::PresTimeout,
             );
+
+            // Check if node is multiplexed (for MS flag in PReq)
             let is_multiplexed = context.multiplex_assign.get(&node_id).copied().unwrap_or(0) > 0;
             let frame = payload::build_preq_frame(context, node_id, is_multiplexed);
 
-            // Increment Isochronous Tx counter
+            // Increment Isochronous Tx counter (Diag 0x1101)
             context.core.od.increment_counter(
                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                 constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_TX,
             );
 
             return serialize_frame_action(frame, context).unwrap_or(
-                // TODO: handle error
                 NodeAction::NoAction,
             );
         }
     }
 
-    // No more isochronous nodes to poll (or we are skipping them), transition to the asynchronous phase.
+    // --- Transition to Asynchronous Phase ---
+    // No more isochronous nodes to poll (or we are skipping them).
     if context.current_phase != CyclePhase::IsochronousDone {
         debug!(
             "[MN] Isochronous phase complete for cycle {}. Phase: SoCSent -> SoA",
@@ -75,8 +87,8 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
     context.current_polled_cn = None;
     context.current_phase = CyclePhase::IsochronousDone;
 
-    // --- Check for NMT Info Service publishing ---
-    // The multiplexed cycle number in the OD (0x1F9E) is 1-based.
+    // --- Check for NMT Info Service publishing (Spec 7.3.4) ---
+    // Mapped via OD 0x1F9E (Publish Config)
     let current_mux_cycle_1_based = context.current_multiplex_cycle.wrapping_add(1);
     if let Some(&service_id) = context.publish_config.get(&current_mux_cycle_1_based) {
         info!(
@@ -98,12 +110,14 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
     }
     // --- End of NMT Info Service logic ---
 
-    // --- Original logic: Send SoA ---
+    // --- Asynchronous Phase (4.2.4.1.2) ---
+    // Determine who gets the token (SoA).
     let (req_service, target_node, set_er_flag) = scheduler::determine_next_async_action(context);
 
     if target_node.0 != C_ADR_MN_DEF_NODE_ID
         && req_service != crate::frame::RequestedServiceId::NoService
     {
+        // Granting token to a CN
         context.current_phase = CyclePhase::AsynchronousSoA;
         let timeout_ns = context
             .core
@@ -113,14 +127,18 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
                 constants::SUBIDX_NMT_MN_CYCLE_TIMING_ASYNC_SLOT_U32,
             )
             .unwrap_or(100_000) as u64;
+            
+        // Schedule timeout waiting for ASnd from CN
         scheduler::schedule_timeout(
             context,
             current_time_us + (timeout_ns / 1000),
             DllMsEvent::AsndTimeout,
         );
     } else if target_node.0 == C_ADR_MN_DEF_NODE_ID {
+        // MN Grants token to self (AwaitingMnAsyncSend)
         context.current_phase = CyclePhase::AwaitingMnAsyncSend;
     } else {
+        // No service (Idle)
         context.current_phase = CyclePhase::Idle;
     }
 
@@ -140,13 +158,17 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
 
     let frame = payload::build_soa_frame(context, req_service, target_node, set_er_flag);
     serialize_frame_action(frame, context).unwrap_or(
-        // TODO: handle error properly
         NodeAction::NoAction,
     )
 }
 
-/// Starts a new isochronous cycle by sending a SoC.
+/// Starts a new cycle by sending a SoC.
 /// This is the implementation of the SocTrig event.
+///
+/// NOTE: According to EPSG DS 301 4.2.4.2, "The Reduced POWERLINK Cycle shall consist of queued asynchronous phases only."
+/// However, standard implementations often send SoC to synchronize time even in PreOp1.
+/// This implementation sends SoC in all states >= PreOp1 to drive the cycle timer.
+/// In PreOp1, `advance_cycle_phase` skips the PReqs, resulting in SoC -> SoA -> ASnd.
 pub(super) fn start_cycle(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     // 1. Update cycle timing and multiplexing
     context.current_cycle_start_time_us = current_time_us;
@@ -194,6 +216,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
     let current_nmt_state = context.nmt_state_machine.current_state();
 
     // --- 1. Handle one-time actions ---
+    // Example: Sending NMTStartNode when entering Operational (Spec 7.4.1.6)
     if current_nmt_state == NmtState::NmtOperational && !context.initial_operational_actions_done {
         context.initial_operational_actions_done = true;
         if (context.nmt_state_machine.startup_flags & (1 << 1)) != 0 {
@@ -213,7 +236,6 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                 context,
             )
             .unwrap_or(
-                // TODO: Handle error properly
                 NodeAction::NoAction,
             );
         } else if let Some(&node_id) = context.mandatory_nodes.first() {
@@ -231,7 +253,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
     // --- 2. Handle immediate, non-time-based follow-up actions ---
     match context.current_phase {
         CyclePhase::AwaitingMnAsyncSend => {
-            // MN has invited itself. Check what to send.
+            // MN has invited itself via SoA. Check what to send.
             // Priority: NMT Commands > SDO Client > Generic Queue
             context.current_phase = CyclePhase::Idle; // Consume the phase
 
@@ -255,11 +277,12 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                 .unwrap_or(NodeAction::NoAction);
             }
 
+            // SDO Client
             if let Some((target_node_id, seq, cmd)) = context
                 .sdo_client_manager
                 .get_pending_request(current_time_us, &context.core.od)
             {
-                match build_sdo_asnd_request(context, target_node_id, seq, cmd) {
+                match payload::build_sdo_asnd_request(context, target_node_id, seq, cmd) {
                     Ok(frame) => {
                         // *** INCREMENT SDO TX COUNTER (ASnd Request) ***
                         context.core.od.increment_counter(
@@ -273,6 +296,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                 }
             }
 
+            // Generic Async Queue (e.g. NMT Info)
             if let Some(frame) = context.mn_async_send_queue.pop() {
                 // *** INCREMENT ASYNC TX COUNTER (Generic) ***
                 context.core.od.increment_counter(
@@ -287,12 +311,14 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             return NodeAction::NoAction;
         }
         CyclePhase::SoCSent => {
+            // Immediately advance to PReq (if allowed) or SoA
             return advance_cycle_phase(context, current_time_us);
         }
         _ => {}
     }
 
-    // --- 3. Handle time-based actions ---
+    // --- 3. Handle time-based actions (Bootstrapping) ---
+    // Spec 7.1.3.2.1: If no SoC/SoA seen for MNWaitNotAct, transition to PreOp1.
     if current_nmt_state == NmtState::NmtNotActive && context.next_tick_us.is_none() {
         let timeout_us = context.nmt_state_machine.wait_not_active_timeout as u64;
         context.next_tick_us = Some(current_time_us + timeout_us);
@@ -300,37 +326,6 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
     }
 
     NodeAction::NoAction
-}
-
-/// Builds an ASnd(SDO Request) frame for the SdoClientManager.
-pub(super) fn build_sdo_asnd_request(
-    context: &MnContext,
-    target_node_id: NodeId,
-    seq_header: SequenceLayerHeader,
-    cmd: SdoCommand,
-) -> Result<PowerlinkFrame, PowerlinkError> {
-    trace!(
-        "Building SDO ASnd request for Node {} (TID {})",
-        target_node_id.0, cmd.header.transaction_id
-    );
-    let Some(dest_mac) = scheduler::get_cn_mac_address(context, target_node_id) else {
-        error!(
-            "[MN] Cannot build SDO ASnd: MAC for Node {} not found.",
-            target_node_id.0
-        );
-        return Err(PowerlinkError::InternalError("Missing CN MAC address"));
-    };
-
-    let sdo_payload = serialize_sdo_asnd_payload(seq_header, cmd)?;
-
-    Ok(PowerlinkFrame::ASnd(ASndFrame::new(
-        context.core.mac_address,
-        dest_mac,
-        target_node_id,
-        NodeId(C_ADR_MN_DEF_NODE_ID),
-        ServiceId::Sdo,
-        sdo_payload,
-    )))
 }
 
 #[cfg(test)]

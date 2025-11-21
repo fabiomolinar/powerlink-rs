@@ -13,6 +13,9 @@ use crate::nmt::NmtStateMachine;
 use crate::nmt::events::MnNmtCommandRequest;
 use crate::od::ObjectValue;
 use crate::pdo::{PDOVersion, PdoMappingEntry};
+use crate::sdo::asnd::serialize_sdo_asnd_payload;
+use crate::sdo::command::SdoCommand;
+use crate::sdo::sequence::SequenceLayerHeader;
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -517,4 +520,35 @@ where
     }
 
     payload_bytes.to_vec()
+}
+
+/// Builds an ASnd(SDO Request) frame for the SdoClientManager.
+pub(super) fn build_sdo_asnd_request(
+    context: &MnContext,
+    target_node_id: NodeId,
+    seq_header: SequenceLayerHeader,
+    cmd: SdoCommand,
+) -> Result<PowerlinkFrame, PowerlinkError> {
+    trace!(
+        "Building SDO ASnd request for Node {} (TID {})",
+        target_node_id.0, cmd.header.transaction_id
+    );
+    let Some(dest_mac) = scheduler::get_cn_mac_address(context, target_node_id) else {
+        error!(
+            "[MN] Cannot build SDO ASnd: MAC for Node {} not found.",
+            target_node_id.0
+        );
+        return Err(PowerlinkError::InternalError("Missing CN MAC address"));
+    };
+
+    let sdo_payload = serialize_sdo_asnd_payload(seq_header, cmd)?;
+
+    Ok(PowerlinkFrame::ASnd(ASndFrame::new(
+        context.core.mac_address,
+        dest_mac,
+        target_node_id,
+        NodeId(C_ADR_MN_DEF_NODE_ID),
+        ServiceId::Sdo,
+        sdo_payload,
+    )))
 }

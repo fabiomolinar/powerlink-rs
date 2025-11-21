@@ -1,4 +1,4 @@
-// crates/powerlink-rs/src/node/mn/tick.rs
+// src/node/mn/tick.rs
 //! Handles time-based events for the Managing Node (MN).
 //! Includes Cycle Start, SDO Timeouts, and General NMT/Scheduler Ticks.
 
@@ -11,6 +11,7 @@ use crate::frame::control::SocFrame;
 use crate::nmt::NmtStateMachine;
 use crate::nmt::events::NmtEvent;
 use crate::nmt::states::NmtState;
+use crate::node::mn::payload;
 use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::constants;
 use crate::sdo::SdoTransport;
@@ -18,20 +19,33 @@ use crate::sdo::server::SdoClientInfo;
 use log::{error, info, trace, warn};
 
 /// Handles periodic timer events for the node.
+///
+/// This function is the heartbeat of the MN's scheduling logic. It orchestrates:
+/// 1. The start of the POWERLINK Cycle (SoC) or Reduced Cycle (SoA).
+/// 2. SDO retransmissions and timeouts.
+/// 3. NMT state timeouts (e.g., WaitNotActive).
+/// 4. DLL timeouts (e.g., waiting for PRes).
 pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     // --- 0. Check for Cycle Start ---
+    // Reference: EPSG DS 301, 4.2.4 POWERLINK Cycle
+    // The cycle is strictly time-triggered based on NMT_CycleLen_U32 (0x1006).
     let time_since_last_cycle = current_time_us.saturating_sub(context.current_cycle_start_time_us);
     let current_nmt_state = context.nmt_state_machine.current_state();
 
+    // Spec 7.1.3.2.2.1: In NMT_MS_PRE_OPERATIONAL_1, start Reduced Cycle.
+    // Spec 7.1.3.2.2.2+: In PreOp2/ReadyToOp/Op, start Isochronous Cycle.
+    // Both are triggered here. The distinction is handled inside `cycle::start_cycle`
+    // or `cycle::advance_cycle_phase`.
     if time_since_last_cycle >= context.cycle_time_us
         && current_nmt_state >= NmtState::NmtPreOperational1 
         && context.current_phase == CyclePhase::Idle
     {
-        trace!("[MN] Cycle time elapsed. Starting new cycle.");
+        trace!("[MN] Cycle time elapsed ({}us). Starting new cycle.", context.cycle_time_us);
         return cycle::start_cycle(context, current_time_us);
     }
 
     // --- 1. Check for SDO Client Timeouts ---
+    // Handles timeouts for SDO downloads/uploads initiated by the MN (e.g. Configuration Manager).
     if let Some((target_node_id, seq, cmd)) = context
         .sdo_client_manager
         .tick(current_time_us, &context.core.od)
@@ -40,7 +54,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
             "SDO Client tick generated frame (timeout/abort) for Node {}.",
             target_node_id.0
         );
-        match cycle::build_sdo_asnd_request(context, target_node_id, seq, cmd) {
+        match payload::build_sdo_asnd_request(context, target_node_id, seq, cmd) {
             Ok(frame) => {
                 context.core.od.increment_counter(
                     constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
@@ -53,6 +67,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
     }
 
     // --- 2. Check for SDO Server Timeouts ---
+    // Handles timeouts for SDO requests received from CNs.
     if let Some(deadline) = context.core.sdo_server.next_action_time() {
         if current_time_us >= deadline {
             match context
@@ -96,7 +111,8 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
 
     // --- 3. Check for NMT/Scheduler Timeouts ---
     
-    // Check if we are in the "Bootstrapping" phase.
+    // Check if we are in the "Bootstrapping" phase (NmtNotActive -> PreOp1 transition wait).
+    // Spec 7.1.3.2.1: MNWaitNoAct_U32 (0x1F89/1).
     let is_bootstrapping = current_nmt_state == NmtState::NmtNotActive 
                         && context.next_tick_us.is_none();
 
@@ -116,7 +132,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         );
         context.next_tick_us = None; // Consume deadline
 
-        // Handle NmtNotActive Timeout Expiration
+        // Handle NmtNotActive Timeout Expiration (Spec 7.1.3.3 NMT_MT2)
         if current_nmt_state == NmtState::NmtNotActive {
             info!("[MN] WaitNotActive timeout expired. Assuming MN role.");
             context.nmt_state_machine.process_event(NmtEvent::Timeout, &mut context.core.od);
@@ -124,12 +140,13 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         }
         
         // Handle PRes Timeout (Isochronous Phase)
+        // Spec 4.7.6.2 Loss of PRes
         if let Some(event) = context.pending_timeout_event.take() {
             warn!("[MN] PRes timeout for Node {:?}.", context.current_polled_cn);
             events::handle_dll_event(
                 context,
                 event,
-                // Dummy frame for context
+                // Dummy frame for context logging
                 &PowerlinkFrame::Soc(SocFrame::new(
                     Default::default(),
                     Default::default(),
@@ -137,16 +154,21 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                     RelativeTime { seconds: 0, nanoseconds: 0 },
                 )),
             );
-            // Advance logic will handle jumping to next node or SoA
+            // Timeout occurred, advance logic will handle jumping to next node or SoA.
+            // This ensures the cycle doesn't stall if a CN dies.
             return cycle::advance_cycle_phase(context, current_time_us);
         }
         
+        // Special Case: PreOp1 "Reduced Cycle" Timing
+        // In PreOp1, we send SoC (implemented in start_cycle) then immediately jump to SoA.
         // If we just finished sending SoC in PreOp1, we need to advance immediately to SoA
+        // without waiting for PReq/PRes slots (because there are none in PreOp1).
         if current_nmt_state == NmtState::NmtPreOperational1 && context.current_phase == CyclePhase::SoCSent {
              return cycle::advance_cycle_phase(context, current_time_us);
         }
     }
 
+    // Check for idle phase actions (e.g., preparing next cycle data if needed)
     cycle::tick(context, current_time_us)
 }
 
