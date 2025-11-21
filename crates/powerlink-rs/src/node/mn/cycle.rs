@@ -24,42 +24,54 @@ use crate::sdo::sequence::SequenceLayerHeader;
 
 /// Advances the POWERLINK cycle to the next phase (e.g., next PReq or SoA).
 pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64) -> NodeAction {
-    // Check if there are more isochronous nodes to poll in the current cycle.
-    if let Some(node_id) =
-        scheduler::get_next_isochronous_node_to_poll(context, context.current_multiplex_cycle)
-    {
-        context.current_polled_cn = Some(node_id);
-        context.current_phase = CyclePhase::IsochronousPReq;
-        let timeout_ns = context
-            .core
-            .od
-            .read_u32(constants::IDX_NMT_MN_CN_PRES_TIMEOUT_AU32, node_id.0)
-            .unwrap_or(25000) as u64;
-        scheduler::schedule_timeout(
-            context,
-            current_time_us + (timeout_ns / 1000),
-            DllMsEvent::PresTimeout,
-        );
-        let is_multiplexed = context.multiplex_assign.get(&node_id).copied().unwrap_or(0) > 0;
-        let frame = payload::build_preq_frame(context, node_id, is_multiplexed);
+    let current_nmt_state = context.nmt_state_machine.current_state();
 
-        // Increment Isochronous Tx counter
-        context.core.od.increment_counter(
-            constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
-            constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_TX,
-        );
+    // FIX: In PreOp1, the cycle is "Reduced" (SoC -> SoA). 
+    // We must skip the Isochronous (PReq) phase entirely.
+    // Isochronous phase is only valid for PreOp2 and Operational.
+    let isochronous_allowed = current_nmt_state >= NmtState::NmtPreOperational2;
 
-        return serialize_frame_action(frame, context).unwrap_or(
-            // TODO: handle error
-            NodeAction::NoAction,
-        );
+    if isochronous_allowed {
+        // Check if there are more isochronous nodes to poll in the current cycle.
+        if let Some(node_id) =
+            scheduler::get_next_isochronous_node_to_poll(context, context.current_multiplex_cycle)
+        {
+            context.current_polled_cn = Some(node_id);
+            context.current_phase = CyclePhase::IsochronousPReq;
+            let timeout_ns = context
+                .core
+                .od
+                .read_u32(constants::IDX_NMT_MN_CN_PRES_TIMEOUT_AU32, node_id.0)
+                .unwrap_or(25000) as u64;
+            scheduler::schedule_timeout(
+                context,
+                current_time_us + (timeout_ns / 1000),
+                DllMsEvent::PresTimeout,
+            );
+            let is_multiplexed = context.multiplex_assign.get(&node_id).copied().unwrap_or(0) > 0;
+            let frame = payload::build_preq_frame(context, node_id, is_multiplexed);
+
+            // Increment Isochronous Tx counter
+            context.core.od.increment_counter(
+                constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
+                constants::SUBIDX_DIAG_NMT_COUNT_ISOCHR_TX,
+            );
+
+            return serialize_frame_action(frame, context).unwrap_or(
+                // TODO: handle error
+                NodeAction::NoAction,
+            );
+        }
     }
 
-    // No more isochronous nodes to poll, transition to the asynchronous phase.
-    debug!(
-        "[MN] Isochronous phase complete for cycle {}.",
-        context.current_multiplex_cycle
-    );
+    // No more isochronous nodes to poll (or we are skipping them), transition to the asynchronous phase.
+    if context.current_phase != CyclePhase::IsochronousDone {
+        debug!(
+            "[MN] Isochronous phase complete for cycle {}. Phase: SoCSent -> SoA",
+            context.current_multiplex_cycle
+        );
+    }
+    
     context.current_polled_cn = None;
     context.current_phase = CyclePhase::IsochronousDone;
 
@@ -400,6 +412,9 @@ mod tests {
         context.isochronous_nodes.push(NodeId(2));
 
         // Fix: Set state to Operational so they are polled
+        // Also ensure the NMT state is high enough to allow isochronous
+        context.nmt_state_machine.set_state(NmtState::NmtPreOperational2);        
+
         context.node_info.insert(
             NodeId(1),
             CnInfo {

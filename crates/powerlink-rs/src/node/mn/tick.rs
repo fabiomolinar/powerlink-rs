@@ -13,19 +13,18 @@ use crate::nmt::events::NmtEvent;
 use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::constants;
+use crate::sdo::SdoTransport;
 use crate::sdo::server::SdoClientInfo;
-use crate::sdo::transport::SdoTransport;
 use log::{error, info, trace, warn};
 
 /// Handles periodic timer events for the node.
 pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     // --- 0. Check for Cycle Start ---
-    // This logic is for Isochronous cycles (PreOp2+).
     let time_since_last_cycle = current_time_us.saturating_sub(context.current_cycle_start_time_us);
     let current_nmt_state = context.nmt_state_machine.current_state();
 
     if time_since_last_cycle >= context.cycle_time_us
-        && current_nmt_state >= NmtState::NmtPreOperational2
+        && current_nmt_state >= NmtState::NmtPreOperational1 
         && context.current_phase == CyclePhase::Idle
     {
         trace!("[MN] Cycle time elapsed. Starting new cycle.");
@@ -41,7 +40,6 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
             "SDO Client tick generated frame (timeout/abort) for Node {}.",
             target_node_id.0
         );
-        // An SDO client timeout/abort needs to send a frame.
         match cycle::build_sdo_asnd_request(context, target_node_id, seq, cmd) {
             Ok(frame) => {
                 context.core.od.increment_counter(
@@ -98,9 +96,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
 
     // --- 3. Check for NMT/Scheduler Timeouts ---
     
-    // FIX: Check if we are in the "Bootstrapping" phase.
-    // If we are NotActive and have NO timer set, we must proceed to cycle::tick
-    // to let it initialize the WaitNotActive timer.
+    // Check if we are in the "Bootstrapping" phase.
     let is_bootstrapping = current_nmt_state == NmtState::NmtNotActive 
                         && context.next_tick_us.is_none();
 
@@ -120,13 +116,10 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         );
         context.next_tick_us = None; // Consume deadline
 
-        // FIX: Handle NmtNotActive Timeout Expiration
-        // If the timer expired while in NotActive, it means we heard no other MN.
-        // We trigger the Timeout event to transition to PreOp1/BasicEthernet.
+        // Handle NmtNotActive Timeout Expiration
         if current_nmt_state == NmtState::NmtNotActive {
             info!("[MN] WaitNotActive timeout expired. Assuming MN role.");
             context.nmt_state_machine.process_event(NmtEvent::Timeout, &mut context.core.od);
-            // Return NoAction for this tick; the state change will drive behavior in the next cycles
             return NodeAction::NoAction;
         }
         
@@ -144,13 +137,16 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                     RelativeTime { seconds: 0, nanoseconds: 0 },
                 )),
             );
+            // Advance logic will handle jumping to next node or SoA
             return cycle::advance_cycle_phase(context, current_time_us);
+        }
+        
+        // If we just finished sending SoC in PreOp1, we need to advance immediately to SoA
+        if current_nmt_state == NmtState::NmtPreOperational1 && context.current_phase == CyclePhase::SoCSent {
+             return cycle::advance_cycle_phase(context, current_time_us);
         }
     }
 
-    // Fallthrough:
-    // 1. If is_bootstrapping: calls cycle::tick to set the initial timer.
-    // 2. If deadline passed (but not NotActive/PRes timeout): calls cycle::tick for general scheduling.
     cycle::tick(context, current_time_us)
 }
 
