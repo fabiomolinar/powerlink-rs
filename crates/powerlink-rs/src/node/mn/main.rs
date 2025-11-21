@@ -120,7 +120,17 @@ impl<'s> ManagingNode<'s> {
             initial_operational_actions_done: false,
         };
 
-        Ok(Self { context })
+        let mut node = Self { context };
+
+        // CRITICAL FIX: Run internal initialization to transition from
+        // NmtGsInitialising -> ResetApp -> ResetComm -> ResetConf -> NmtMsNotActive.
+        // This ensures the node starts in NotActive, allowing the tick logic to
+        // start the boot timer.
+        node.context
+            .nmt_state_machine
+            .run_internal_initialisation(&mut node.context.core.od);
+
+        Ok(node)
     }
 
     /// Private helper to process a fully deserialized POWERLINK frame.
