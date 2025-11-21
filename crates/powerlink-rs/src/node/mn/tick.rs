@@ -9,16 +9,18 @@ use crate::common::{NetTime, RelativeTime};
 use crate::frame::PowerlinkFrame;
 use crate::frame::control::SocFrame;
 use crate::nmt::NmtStateMachine;
+use crate::nmt::events::NmtEvent;
 use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::constants;
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
-use log::{error, trace, warn};
+use log::{error, info, trace, warn};
 
 /// Handles periodic timer events for the node.
 pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     // --- 0. Check for Cycle Start ---
+    // This logic is for Isochronous cycles (PreOp2+).
     let time_since_last_cycle = current_time_us.saturating_sub(context.current_cycle_start_time_us);
     let current_nmt_state = context.nmt_state_machine.current_state();
 
@@ -42,7 +44,6 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         // An SDO client timeout/abort needs to send a frame.
         match cycle::build_sdo_asnd_request(context, target_node_id, seq, cmd) {
             Ok(frame) => {
-                // *** INCREMENT SDO TX COUNTER (ASnd Client Abort) ***
                 context.core.od.increment_counter(
                     constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                     constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
@@ -62,11 +63,9 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                 .tick(current_time_us, &context.core.od)
             {
                 Ok(Some(response_data)) => {
-                    // SDO server timed out, needs to send an Abort.
                     warn!("SDO Server tick generated abort frame.");
                     let build_result = match response_data.client_info {
                         SdoClientInfo::Asnd { .. } => {
-                            // *** INCREMENT SDO TX COUNTER (ASnd Server Abort) ***
                             context.core.od.increment_counter(
                                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                                 constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
@@ -77,7 +76,6 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                         }
                         #[cfg(feature = "sdo-udp")]
                         SdoClientInfo::Udp { .. } => {
-                            // *** INCREMENT SDO TX COUNTER (UDP Server Abort) ***
                             context.core.od.increment_counter(
                                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
                                 constants::SUBIDX_DIAG_NMT_COUNT_SDO_TX,
@@ -92,57 +90,68 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                         }
                     }
                 }
-                Ok(None) => {} // Tick processed, no action
+                Ok(None) => {}
                 Err(e) => error!("SDO server tick error: {:?}", e),
             }
         }
     }
 
     // --- 3. Check for NMT/Scheduler Timeouts ---
+    
+    // FIX: Check if we are in the "Bootstrapping" phase.
+    // If we are NotActive and have NO timer set, we must proceed to cycle::tick
+    // to let it initialize the WaitNotActive timer.
+    let is_bootstrapping = current_nmt_state == NmtState::NmtNotActive 
+                        && context.next_tick_us.is_none();
+
     let deadline_passed = context
         .next_tick_us
         .is_some_and(|deadline| current_time_us >= deadline);
 
-    if !deadline_passed {
+    if !deadline_passed && !is_bootstrapping {
         return NodeAction::NoAction;
     }
 
-    // A deadline has passed
-    trace!(
-        "Tick deadline reached at {}us (Deadline was {:?})",
-        current_time_us, context.next_tick_us
-    );
-    context.next_tick_us = None; // Consume deadline
+    // If a deadline passed, consume it and check specific conditions
+    if deadline_passed {
+        trace!(
+            "Tick deadline reached at {}us (Deadline was {:?})",
+            current_time_us, context.next_tick_us
+        );
+        context.next_tick_us = None; // Consume deadline
 
-    // --- Handle PRes Timeout ---
-    if let Some(event) = context.pending_timeout_event.take() {
-        // This is a PRes timeout
-        warn!(
-            "[MN] PRes timeout for Node {:?}.",
-            context.current_polled_cn
-        );
-        events::handle_dll_event(
-            context,
-            event,
-            &PowerlinkFrame::Soc(SocFrame::new(
-                Default::default(),
-                Default::default(),
-                NetTime {
-                    seconds: 0,
-                    nanoseconds: 0,
-                },
-                RelativeTime {
-                    seconds: 0,
-                    nanoseconds: 0,
-                },
-            )),
-        );
-        // A PRes timeout means we must advance the cycle.
-        return cycle::advance_cycle_phase(context, current_time_us);
-    } else {
-        // This is a general NMT tick (e.g., for async SDO polls)
-        cycle::tick(context, current_time_us)
+        // FIX: Handle NmtNotActive Timeout Expiration
+        // If the timer expired while in NotActive, it means we heard no other MN.
+        // We trigger the Timeout event to transition to PreOp1/BasicEthernet.
+        if current_nmt_state == NmtState::NmtNotActive {
+            info!("[MN] WaitNotActive timeout expired. Assuming MN role.");
+            context.nmt_state_machine.process_event(NmtEvent::Timeout, &mut context.core.od);
+            // Return NoAction for this tick; the state change will drive behavior in the next cycles
+            return NodeAction::NoAction;
+        }
+        
+        // Handle PRes Timeout (Isochronous Phase)
+        if let Some(event) = context.pending_timeout_event.take() {
+            warn!("[MN] PRes timeout for Node {:?}.", context.current_polled_cn);
+            events::handle_dll_event(
+                context,
+                event,
+                // Dummy frame for context
+                &PowerlinkFrame::Soc(SocFrame::new(
+                    Default::default(),
+                    Default::default(),
+                    NetTime { seconds: 0, nanoseconds: 0 },
+                    RelativeTime { seconds: 0, nanoseconds: 0 },
+                )),
+            );
+            return cycle::advance_cycle_phase(context, current_time_us);
+        }
     }
+
+    // Fallthrough:
+    // 1. If is_bootstrapping: calls cycle::tick to set the initial timer.
+    // 2. If deadline passed (but not NotActive/PRes timeout): calls cycle::tick for general scheduling.
+    cycle::tick(context, current_time_us)
 }
 
 #[cfg(test)]

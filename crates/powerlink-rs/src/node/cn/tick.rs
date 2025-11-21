@@ -11,7 +11,7 @@ use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::NodeAction;
 use crate::od::constants;
-use crate::od::error_history; // Import error history module
+use crate::od::error_history; 
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
 use alloc::vec::Vec;
@@ -48,14 +48,13 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                     context.udp_transport.build_response(response_data, context)
                 }
             };
-            match build_result {
-                Ok(action) => return action,
-                Err(e) => error!("[CN] Failed to build SDO Abort frame: {:?}", e),
+            if let Ok(action) = build_result {
+                return action;
             }
             // If building the abort frame failed, fall through to other tick logic.
         }
         Err(e) => error!("[CN] SDO Server tick error: {:?}", e),
-        _ => {} // No action or no error
+        _ => {} 
     }
 
     let current_nmt_state = context.nmt_state_machine.current_state();
@@ -68,7 +67,6 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                 // First tick in a valid state, initialize last_seen_us to now
                 *last_seen_us = current_time_us;
             } else if *timeout_us > 0 && (current_time_us - *last_seen_us > *timeout_us) {
-                // Timeout detected!
                 warn!(
                     "[CN] Heartbeat timeout for Node {}! Last seen {}us ago (timeout is {}us).",
                     node_id.0,
@@ -76,81 +74,68 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                     *timeout_us
                 );
                 timed_out_nodes.push(*node_id);
-                // Reset last_seen to prevent continuous error reporting every tick
                 *last_seen_us = current_time_us;
             }
         }
 
         // Handle errors outside the mutable borrow
         for node_id in timed_out_nodes {
-            // We report the error, which will trigger the threshold counter
             let (nmt_action, signaled) = context
                 .dll_error_manager
                 .handle_error(DllError::HeartbeatTimeout { node_id });
 
             if signaled {
                 context.error_status_changed = true;
-                // Update Error Register (0x1001)
+                // Update Error Register logic...
                 let current_err_reg = context
                     .core
                     .od
                     .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
                     .unwrap_or(0);
-                let new_err_reg = current_err_reg | 0b1; // Set Generic Error
+                let new_err_reg = current_err_reg | 0b1; 
                 if current_err_reg != new_err_reg {
-                    // Increment static error change counter
-                    context.core.od.increment_counter(
+                     context.core.od.increment_counter(
                         constants::IDX_DIAG_ERR_STATISTICS_REC,
                         constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
                     );
+                    let _ = context.core.od.write_internal(
+                        constants::IDX_NMT_ERROR_REGISTER_U8,
+                        0,
+                        crate::od::ObjectValue::Unsigned8(new_err_reg),
+                        false,
+                    );
                 }
-                if let Err(e) = context.core.od.write_internal(
-                    constants::IDX_NMT_ERROR_REGISTER_U8,
-                    0,
-                    crate::od::ObjectValue::Unsigned8(new_err_reg),
-                    false,
-                ) {
-                    error!("[CN] Failed to update Error Register: {:?}", e)
-                }
-
-                // *** NEW: Handle error history and emergency queue logic here for consistency if needed ***
-                // Currently HeartbeatTimeout doesn't explicitly push to queue in the original code, 
-                // but it triggers NMT error. The DLL manager handles threshold.
-                // If we want to log it, we should construct an entry. 
-                // However, standard POWERLINK behavior for Heartbeat is primarily NMT Reset.
-                // We'll stick to original logic here unless specified otherwise.
             }
             if nmt_action != NmtAction::None {
                 context
                     .nmt_state_machine
                     .process_event(NmtEvent::Error, &mut context.core.od);
                 context.soc_timeout_check_active = false;
-                // If an NMT reset is triggered, stop further tick processing.
                 return NodeAction::NoAction;
             }
         }
     }
 
-    // Check if a deadline is set and if it has passed
-    let deadline_passed = context
-        .next_tick_us
-        .is_some_and(|deadline| current_time_us >= deadline);
-
-    // --- Handle NmtNotActive Timeout Setup ---
+    // --- Handle NmtNotActive Timeout Setup (Bootstrapping) ---
     if current_nmt_state == NmtState::NmtNotActive && context.next_tick_us.is_none() {
         let timeout_us = context.nmt_state_machine.basic_ethernet_timeout as u64;
         if timeout_us > 0 {
             let deadline = current_time_us + timeout_us;
             context.next_tick_us = Some(deadline);
             debug!(
-                "No SoC/SoA seen, starting BasicEthernet timeout check ({}us). Deadline: {}us",
+                "[CN] NmtNotActive: Starting BasicEthernet timeout check ({}us). Deadline: {}us",
                 timeout_us, deadline
             );
         } else {
-            debug!("BasicEthernet timeout is 0, check disabled.");
+            debug!("[CN] NmtNotActive: BasicEthernet timeout is 0, check disabled.");
         }
-        return NodeAction::NoAction; // Don't act on this first call, just set the timer.
+        return NodeAction::NoAction;
     }
+
+    // Check if a deadline is set and if it has passed
+    let deadline_passed = context
+        .next_tick_us
+        .is_some_and(|deadline| current_time_us >= deadline);
 
     // If no deadline has passed, do nothing else this tick.
     if !deadline_passed {
@@ -165,20 +150,22 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     context.next_tick_us = None; // Consume the deadline
 
     // --- Handle Specific Timeouts ---
-    // NmtNotActive -> BasicEthernet
+    
+    // 1. NmtNotActive -> BasicEthernet
     if current_nmt_state == NmtState::NmtNotActive {
         let timeout_us = context.nmt_state_machine.basic_ethernet_timeout as u64;
         if timeout_us > 0 {
-            warn!("BasicEthernet timeout expired. Transitioning state.");
+            warn!("[CN] BasicEthernet timeout expired. Transitioning state.");
             context
                 .nmt_state_machine
                 .process_event(NmtEvent::Timeout, &mut context.core.od);
             context.soc_timeout_check_active = false;
         }
-        return NodeAction::NoAction; // No further action this tick
+        return NodeAction::NoAction; 
     }
-    // SoC Timeout Check
-    else if context.soc_timeout_check_active {
+    
+    // 2. SoC Timeout Check
+    if context.soc_timeout_check_active {
         warn!(
             "SoC timeout detected at {}us! Last SoC was at {}us.",
             current_time_us, context.last_soc_reception_time_us
@@ -188,12 +175,13 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
             .process_event(DllCsEvent::SocTimeout, current_nmt_state)
         {
             for error in errors {
-                // Increment history write counter
+                // Error logging and NMT reaction logic...
                 context.core.od.increment_counter(
                     constants::IDX_DIAG_ERR_STATISTICS_REC,
                     constants::SUBIDX_DIAG_ERR_STATS_HIST_WRITE,
                 );
                 let (nmt_action, signaled) = context.dll_error_manager.handle_error(error);
+                
                 if signaled {
                     context.error_status_changed = true;
                     // Update Error Register (0x1001)
@@ -240,7 +228,6 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                     };
                     if context.emergency_queue.len() < context.emergency_queue.capacity() {
                         context.emergency_queue.push_back(error_entry.clone());
-                        // *** NEW: Write to Error History OD ***
                         error_history::write_error_to_history(&mut context.core.od, &error_entry);
                         
                         trace!("[CN] New error queued: {:?}", error_entry);
@@ -261,12 +248,13 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                         );
                     }
                 }
+                
                 if nmt_action != NmtAction::None {
                     context
                         .nmt_state_machine
                         .process_event(NmtEvent::Error, &mut context.core.od);
                     context.soc_timeout_check_active = false;
-                    return NodeAction::NoAction; // Stop processing after NMT reset
+                    return NodeAction::NoAction;
                 }
             }
         }
