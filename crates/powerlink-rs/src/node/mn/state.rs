@@ -3,7 +3,8 @@ use crate::ErrorHandler;
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame, ServiceId}; // Import ServiceId
-use crate::hal::ConfigurationInterface; // <-- ADDED: Import ConfigurationInterface
+use crate::hal::ConfigurationInterface; use crate::log::LogMetadata;
+// <-- ADDED: Import ConfigurationInterface
 use crate::nmt::events::MnNmtCommandRequest;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
@@ -222,5 +223,14 @@ impl PartialEq for AsyncRequest {
     fn eq(&self, other: &Self) -> bool {
         // Equal only if both node_id and priority match.
         self.priority == other.priority && self.node_id == other.node_id
+    }
+}
+
+impl LogMetadata for MnContext<'_> {
+    fn meta(&self) -> alloc::string::String {
+        format!(
+            "MN - NodeId: {}",
+            self.nmt_state_machine.node_id.0
+        )
     }
 }

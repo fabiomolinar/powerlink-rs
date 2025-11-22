@@ -5,6 +5,7 @@ use crate::frame::DllCsStateMachine;
 use crate::frame::error::{
     CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler,
 };
+use crate::log::LogMetadata;
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{CnNmtRequest, NmtServiceRequest}; // Import NmtServiceRequest
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
@@ -288,5 +289,14 @@ impl<'s> CnContext<'s> {
         data_slice.copy_from_slice(&bytes_to_pack);
 
         Ok(())
+    }
+}
+
+impl LogMetadata for CnContext<'_> {
+    fn meta(&self) -> alloc::string::String {
+        format!(
+            "CN - NodeId: {}",
+            self.nmt_state_machine.node_id.0
+        )
     }
 }

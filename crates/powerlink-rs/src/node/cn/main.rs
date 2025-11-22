@@ -1,4 +1,7 @@
 use super::events;
+use crate::log::LogMetadata;
+use alloc::string::String;
+use alloc::format;
 use super::state::CnContext;
 use crate::PowerlinkError;
 use crate::frame::basic::MacAddress;
@@ -377,5 +380,14 @@ impl<'s> Node for ControlledNode<'s> {
 
     fn next_action_time(&self) -> Option<u64> {
         self.context.next_tick_us
+    }
+}
+
+impl LogMetadata for ControlledNode<'_> {
+    fn meta(&self) -> String {
+        format!(
+            "CN - NodeId: {}",
+            self.context.nmt_state_machine.node_id.0
+        )
     }
 }

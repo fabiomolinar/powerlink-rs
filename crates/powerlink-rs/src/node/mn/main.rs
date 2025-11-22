@@ -1,6 +1,7 @@
 // crates/powerlink-rs/src/node/mn/main.rs
 use alloc::collections::BTreeMap;
-
+use alloc::string::String;
+use alloc::format;
 use super::events;
 use super::state::{CyclePhase, MnContext};
 use crate::PowerlinkError;
@@ -9,6 +10,7 @@ use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters}
 use crate::frame::ms_state_machine::DllMsStateMachine;
 use crate::frame::{PowerlinkFrame, ServiceId, deserialize_frame};
 use crate::hal::ConfigurationInterface;
+use crate::log::LogMetadata;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
@@ -561,5 +563,14 @@ impl<'s> Node for ManagingNode<'s> {
             .iter()
             .filter_map(|&t| t)
             .min()
+    }
+}
+
+impl LogMetadata for ManagingNode<'_> {
+    fn meta(&self) -> String {
+        format!(
+            "MN - NodeId: {}",
+            self.context.nmt_state_machine.node_id.0
+        )
     }
 }
