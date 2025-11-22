@@ -1,3 +1,4 @@
+// src/frame/basic.rs
 use crate::types::{C_DLL_ETHERTYPE_EPL, UNSIGNED16};
 use core::fmt;
 
@@ -56,13 +57,17 @@ impl From<[u8; 6]> for MacAddress {
 pub struct EthernetHeader {
     pub destination_mac: MacAddress,
     pub source_mac: MacAddress,
+    /// EtherType in Native Endianness (Logical Value).
+    /// Conversion to Big Endian happens only during serialization in `codec.rs`.
     pub ether_type: UNSIGNED16,
 }
 
 impl EthernetHeader {
     /// Checks if the EtherType matches the required POWERLINK value (0x88AB).
     pub fn is_powerlink(&self) -> bool {
-        self.ether_type.to_be() == C_DLL_ETHERTYPE_EPL
+        // FIXED: Compare directly in native endianness.
+        // The value is stored as native u16 (0x88AB).
+        self.ether_type == C_DLL_ETHERTYPE_EPL
     }
 
     /// Creates a new header destined for a specific unicast or multicast MAC address.
@@ -70,7 +75,9 @@ impl EthernetHeader {
         Self {
             destination_mac: dest,
             source_mac: src,
-            ether_type: C_DLL_ETHERTYPE_EPL.to_be(),
+            // FIXED: Store as native u16. 
+            // Serialization handles the Big Endian conversion required for the wire.
+            ether_type: C_DLL_ETHERTYPE_EPL, 
         }
     }
 }
@@ -84,6 +91,7 @@ mod tests {
     #[test]
     fn test_ethernet_header_is_powerlink() {
         let mut header = EthernetHeader::new(MacAddress::new([0; 6]), MacAddress::new([0; 6]));
+        // Internal check uses Native Endian comparison (0x88AB == 0x88AB)
         assert!(header.is_powerlink());
 
         header.ether_type = 0x0800; // IP packet
@@ -98,6 +106,7 @@ mod tests {
 
         assert_eq!(header.destination_mac, dest_mac);
         assert_eq!(header.source_mac, src_mac);
-        assert_eq!(header.ether_type, C_DLL_ETHERTYPE_EPL.to_be());
+        // Check that it stores the native value (0x88AB), NOT the swapped value (0xAB88)
+        assert_eq!(header.ether_type, C_DLL_ETHERTYPE_EPL);
     }
 }
