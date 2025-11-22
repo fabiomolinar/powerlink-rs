@@ -512,7 +512,6 @@ pub(super) fn process_frame(
     }
 
     // --- Generate Response ---
-    // ... [Existing code remains unchanged] ...
     let current_nmt_state = context.nmt_state_machine.current_state();
     let response_frame_opt = if current_nmt_state >= NmtState::NmtNotActive {
         match &frame {
