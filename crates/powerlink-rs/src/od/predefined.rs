@@ -1,6 +1,6 @@
 use super::{ObjectDictionary, ObjectValue};
 use super::entry::{AccessType, Category, Object, ObjectEntry, PdoMapping};
-use crate::PowerlinkError;
+use crate::{NodeId, PowerlinkError};
 use alloc::vec;
 use log::trace;
 
@@ -9,12 +9,11 @@ use log::trace;
 /// This function is NON-DESTRUCTIVE. It only inserts objects if they do not
 /// already exist in the dictionary. This allows applications to provide
 /// their own defaults or load values from storage before calling this.
-pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {
+pub(super) fn populate_protocol_objects(od: &mut ObjectDictionary) {    
     // Helper macro to insert only if missing
     macro_rules! insert_if_missing {
         ($index:expr, $entry:expr) => {
             if !od.entries.contains_key(&$index) {
-                trace!("Populating missing mandatory object {:#06X}", $index);
                 od.insert($index, $entry);
             }
         };

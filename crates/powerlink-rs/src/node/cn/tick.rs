@@ -188,7 +188,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
         // Trigger DLL Event
         if let Some(errors) = context
             .dll_state_machine
-            .process_event(DllCsEvent::SocTimeout, current_nmt_state)
+            .process_event(DllCsEvent::SocTimeout, current_nmt_state, context.nmt_state_machine.node_id)
         {
             for error in errors {
                 context.core.od.increment_counter(
@@ -452,7 +452,7 @@ mod tests {
         // Sending a SocTrig event simulates receiving a valid SoC.
         context
             .dll_state_machine
-            .process_event(DllCsEvent::Soc, NmtState::NmtOperational);
+            .process_event(DllCsEvent::Soc, NmtState::NmtOperational, context.nmt_state_machine.node_id);
 
         context.next_tick_us = Some(2100);
 

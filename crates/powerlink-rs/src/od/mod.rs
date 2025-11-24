@@ -247,8 +247,6 @@ impl<'a> ObjectDictionary<'a> {
     ///
     /// This is used by NMT Reset commands (e.g., ResetCommunication, ResetApplication).
     pub fn restore_power_on_values(&mut self, start_index: u16, end_index: u16) {
-        info!("Restoring PowerOn values for OD range {:#04X}..={:#04X}", start_index, end_index);
-
         // 1. Try to load stored parameters from the backend (if available)
         let stored_params = if let Some(s) = &mut self.storage {
             match s.load() {

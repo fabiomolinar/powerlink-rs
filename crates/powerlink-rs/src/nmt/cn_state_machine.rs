@@ -209,7 +209,7 @@ impl NmtStateMachine for CnNmtStateMachine {
 
 impl Loggable for CnNmtStateMachine {
     fn log_prefix(&self) -> String {
-        format!("CN - Node {}:", self.node_id)
+        format!("[CN - Node {}]", self.node_id)
     }
 }
 

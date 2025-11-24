@@ -59,10 +59,11 @@ impl DllMsStateMachine {
         isochr: bool,
         isochr_out: bool,
         dest_node_id: NodeId,
+        node_id: NodeId,
     ) -> Option<Vec<DllError>> {
         debug!(
-            "DLL_MS processing event {:?} in state {:?} (NMT state: {:?})",
-            event, self.state, nmt_state
+            "[MN - Node {}] DLL_MS processing event {:?} in state {:?} (NMT state: {:?})",
+            node_id, event, self.state, nmt_state
         );
         let mut errors: Vec<DllError> = Vec::new();
         match nmt_state {
@@ -242,6 +243,7 @@ mod tests {
             false,
             false,
             NodeId(1),
+            NodeId(2),
         );
         assert_eq!(sm.current_state(), DllMsState::WaitAsnd);
 
@@ -256,6 +258,7 @@ mod tests {
             false,
             false,
             NodeId(1),
+            NodeId(2),
         );
         assert_eq!(sm.current_state(), DllMsState::WaitSoa);
     }
@@ -278,6 +281,7 @@ mod tests {
             false,
             false,
             NodeId(1),
+            NodeId(2),
         );
         assert_eq!(sm.current_state(), DllMsState::WaitSocTrig);
 
@@ -292,6 +296,7 @@ mod tests {
             true,
             false,
             NodeId(1),
+            NodeId(2),
         );
         assert_eq!(sm.current_state(), DllMsState::WaitPres);
 
@@ -306,6 +311,7 @@ mod tests {
             true,
             false,
             NodeId(1),
+            NodeId(2),
         );
         assert_eq!(sm.current_state(), DllMsState::WaitPres);
 
@@ -320,6 +326,7 @@ mod tests {
             false,
             false,
             NodeId(1),
+            NodeId(2),
         );
         assert_eq!(sm.current_state(), DllMsState::WaitSocTrig);
     }

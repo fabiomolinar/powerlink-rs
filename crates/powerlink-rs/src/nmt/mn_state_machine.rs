@@ -195,7 +195,7 @@ impl NmtStateMachine for MnNmtStateMachine {
 
 impl Loggable for MnNmtStateMachine {
     fn log_prefix(&self) -> String {
-        format!("MN - Node {}:", self.node_id)
+        format!("[MN - Node {}]", self.node_id)
     }
 }
 

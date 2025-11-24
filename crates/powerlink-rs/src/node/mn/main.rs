@@ -576,13 +576,13 @@ impl<'s> Node for ManagingNode<'s> {
 
 impl<'s> Loggable for ManagingNode<'s> {
     fn log_prefix(&self) -> String {
-        format!("MN - Node {}:", self.context.nmt_state_machine.node_id().0)
+        format!("[MN - Node {}]", self.context.nmt_state_machine.node_id().0)
     }
 }
 
 impl Loggable for MnContext<'_> {
     fn log_prefix(&self) -> String {
         // Accessing NodeId from the inner state machine
-        format!("MN - Node {}:", self.nmt_state_machine.node_id().0)
+        format!("[MN - Node {}]", self.nmt_state_machine.node_id().0)
     }
 }

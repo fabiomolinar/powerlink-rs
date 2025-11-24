@@ -380,7 +380,7 @@ pub(super) fn process_frame(
     let dll_event = frame.dll_cn_event();
     if let Some(errors) = context
         .dll_state_machine
-        .process_event(dll_event, context.nmt_state_machine.current_state())
+        .process_event(dll_event, context.nmt_state_machine.current_state(), context.nmt_state_machine.node_id)
     {
         for error in errors {
             pl_warn!(*context, " DLL state machine reported error: {:?}", error);
