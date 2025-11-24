@@ -1,4 +1,4 @@
-// crates/powerlink-rs/tests/boot_up_test.rs
+// tests/boot_up_test.rs
 
 // Import the shared simulator module.
 // Rust looks for `tests/simulator/mod.rs` when we declare `mod simulator;` here.
@@ -22,7 +22,8 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::collections::BTreeMap;
-    use std::fs::File; // <-- Added for file I/O
+    use std::fs::File;
+    use std::fs;
 
     // --- Mock Storage for OD ---
     struct MockStorage;
@@ -86,8 +87,10 @@ mod tests {
     #[test]
     fn test_boot_up_sequence() {
         // 1. Initialize File Logger
+        // Create log folder
+        let _ = fs::create_dir("tests/boot_up_test");
         // File::create truncates the file if it exists, satisfying the overwrite requirement.
-        let log_file = File::create("tests/test_boot_up_sequence.log").expect("Could not create log file");
+        let log_file = File::create("tests/boot_up_test/test_boot_up_sequence.log").expect("Could not create log file");
         
         let _ = env_logger::Builder::new()
             .target(env_logger::Target::Pipe(Box::new(log_file)))
@@ -128,6 +131,11 @@ mod tests {
             }
 
             network.tick(dt);
+        }
+        
+        // Dump history regardless of success/failure to assist debugging
+        if let Err(e) = network.dump_history_to_file("tests/boot_up_test/test_boot_up_sequence_packets.log") {
+            println!("Warning: Failed to dump packet history: {}", e);
         }
 
         assert!(mn_reached_operational, "MN did not reach Operational state. Current: {:?}", mn.node.nmt_state());

@@ -1,4 +1,4 @@
-// crates/powerlink-rs/tests/simulator/mod.rs
+// tests/simulator/mod.rs
 pub mod interface;
 
 use powerlink_rs::node::{Node, NodeAction};
@@ -7,10 +7,13 @@ use powerlink_rs::types::NodeId;
 pub use interface::SimulatedInterface; 
 // Fix E0599: Import trait to use send_frame/receive_frame methods
 use powerlink_rs::NetworkInterface; 
+use powerlink_rs::frame::{deserialize_frame, PowerlinkFrame};
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use std::fs::File;
+use std::io::{Write, BufWriter};
 
 /// Represents a packet in flight on the virtual network.
 #[derive(Debug, Clone)]
@@ -79,6 +82,44 @@ impl VirtualNetwork {
     /// Registers a node (creates an inbox)
     pub fn register_node(&mut self, node_id: u8) {
         self.inboxes.entry(node_id).or_insert_with(VecDeque::new);
+    }
+
+    /// Dumps the entire frame history to a log file.
+    /// 
+    /// format: [Timestamp_us] [NodeType NodeID] -> [FrameType]: Description
+    pub fn dump_history_to_file(&self, path: &str) -> std::io::Result<()> {
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+
+        writeln!(writer, "--- Virtual Network Frame History ---")?;
+        writeln!(writer, "Total Frames: {}", self.packet_history.len())?;
+        writeln!(writer, "-------------------------------------")?;
+
+        for packet in &self.packet_history {
+            let node_type = if packet.src_node_id == 240 { "MN" } else { "CN" };
+            let frame_info = match deserialize_frame(&packet.data) {
+                Ok(frame) => match frame {
+                    PowerlinkFrame::Soc(f) => format!("SoC (RelTime: {:?})", f.relative_time),
+                    PowerlinkFrame::PReq(f) => format!("PReq (Dest: {})", f.destination.0),
+                    PowerlinkFrame::PRes(f) => format!("PRes (Src: {})", f.source.0),
+                    PowerlinkFrame::SoA(f) => format!("SoA (ReqSvc: {:?}, Target: {})", f.req_service_id, f.target_node_id.0),
+                    PowerlinkFrame::ASnd(f) => format!("ASnd (Svc: {:?}, Dest: {})", f.service_id, f.destination.0),
+                },
+                Err(e) => format!("Invalid/Unknown Frame ({:?})", e),
+            };
+
+            writeln!(
+                writer,
+                "[{:08} us] [{} {:03}] -> {}",
+                packet.transmit_time_us,
+                node_type,
+                packet.src_node_id,
+                frame_info
+            )?;
+        }
+        
+        writeln!(writer, "-------------------------------------")?;
+        Ok(())
     }
 }
 
