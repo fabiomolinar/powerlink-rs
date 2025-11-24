@@ -1,9 +1,9 @@
 // src/node/mn/tick.rs
 //! Handles time-based events for the Managing Node (MN).
-//! Includes Cycle Start, SDO Timeouts, and General NMT/Scheduler Ticks.
 
 use super::cycle;
 use super::events;
+use super::payload;
 use super::state::{CyclePhase, MnContext};
 use crate::common::{NetTime, RelativeTime};
 use crate::frame::PowerlinkFrame;
@@ -11,7 +11,6 @@ use crate::frame::control::SocFrame;
 use crate::nmt::NmtStateMachine;
 use crate::nmt::events::NmtEvent;
 use crate::nmt::states::NmtState;
-use crate::node::mn::payload;
 use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::constants;
 use crate::sdo::SdoTransport;
@@ -27,8 +26,6 @@ use log::{error, info, trace, warn};
 /// 4. DLL timeouts (e.g., waiting for PRes).
 pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> NodeAction {
     // --- 0. Check for Cycle Start ---
-    // Reference: EPSG DS 301, 4.2.4 POWERLINK Cycle
-    // The cycle is strictly time-triggered based on NMT_CycleLen_U32 (0x1006).
     let time_since_last_cycle = current_time_us.saturating_sub(context.current_cycle_start_time_us);
     let current_nmt_state = context.nmt_state_machine.current_state();
 
@@ -37,7 +34,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
     // Both are triggered here. The distinction is handled inside `cycle::start_cycle`
     // or `cycle::advance_cycle_phase`.
     if time_since_last_cycle >= context.cycle_time_us
-        && current_nmt_state >= NmtState::NmtPreOperational1 
+        && current_nmt_state >= NmtState::NmtPreOperational1
         && context.current_phase == CyclePhase::Idle
     {
         trace!("[MN] Cycle time elapsed ({}us). Starting new cycle.", context.cycle_time_us);
@@ -45,7 +42,6 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
     }
 
     // --- 1. Check for SDO Client Timeouts ---
-    // Handles timeouts for SDO downloads/uploads initiated by the MN (e.g. Configuration Manager).
     if let Some((target_node_id, seq, cmd)) = context
         .sdo_client_manager
         .tick(current_time_us, &context.core.od)
@@ -67,10 +63,10 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
     }
 
     // --- 2. Check for SDO Server Timeouts ---
-    // Handles timeouts for SDO requests received from CNs.
     if let Some(deadline) = context.core.sdo_server.next_action_time() {
         if current_time_us >= deadline {
-            match context
+            // (Existing SDO Server logic preserved)
+             match context
                 .core
                 .sdo_server
                 .tick(current_time_us, &context.core.od)
@@ -109,10 +105,8 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         }
     }
 
-    // --- 3. Check for NMT/Scheduler Timeouts ---
+    // --- 3. Check for NMT/Scheduler Deadlines ---
     
-    // Check if we are in the "Bootstrapping" phase (NmtNotActive -> PreOp1 transition wait).
-    // Spec 7.1.3.2.1: MNWaitNoAct_U32 (0x1F89/1).
     let is_bootstrapping = current_nmt_state == NmtState::NmtNotActive 
                         && context.next_tick_us.is_none();
 
@@ -120,11 +114,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         .next_tick_us
         .is_some_and(|deadline| current_time_us >= deadline);
 
-    if !deadline_passed && !is_bootstrapping {
-        return NodeAction::NoAction;
-    }
-
-    // If a deadline passed, consume it and check specific conditions
+    // Handle Timeouts
     if deadline_passed {
         trace!(
             "Tick deadline reached at {}us (Deadline was {:?})",
@@ -132,15 +122,14 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         );
         context.next_tick_us = None; // Consume deadline
 
-        // Handle NmtNotActive Timeout Expiration (Spec 7.1.3.3 NMT_MT2)
+        // Handle NmtNotActive Timeout
         if current_nmt_state == NmtState::NmtNotActive {
             info!("[MN] WaitNotActive timeout expired. Assuming MN role.");
             context.nmt_state_machine.process_event(NmtEvent::Timeout, &mut context.core.od);
             return NodeAction::NoAction;
         }
         
-        // Handle PRes Timeout (Isochronous Phase)
-        // Spec 4.7.6.2 Loss of PRes
+        // Handle PRes Timeout
         if let Some(event) = context.pending_timeout_event.take() {
             warn!("[MN] PRes timeout for Node {:?}.", context.current_polled_cn);
             events::handle_dll_event(
@@ -154,21 +143,33 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                     RelativeTime { seconds: 0, nanoseconds: 0 },
                 )),
             );
-            // Timeout occurred, advance logic will handle jumping to next node or SoA.
-            // This ensures the cycle doesn't stall if a CN dies.
             return cycle::advance_cycle_phase(context, current_time_us);
-        }
-        
-        // Special Case: PreOp1 "Reduced Cycle" Timing
-        // In PreOp1, we send SoC (implemented in start_cycle) then immediately jump to SoA.
-        // If we just finished sending SoC in PreOp1, we need to advance immediately to SoA
-        // without waiting for PReq/PRes slots (because there are none in PreOp1).
-        if current_nmt_state == NmtState::NmtPreOperational1 && context.current_phase == CyclePhase::SoCSent {
-             return cycle::advance_cycle_phase(context, current_time_us);
         }
     }
 
-    // Check for idle phase actions (e.g., preparing next cycle data if needed)
+    // --- 4. Cycle Phase Progression (FIXED) ---
+    // Even if no *timeout* occurred, if we are in an active phase (e.g., SoCSent, IsochronousDone),
+    // we must check if logic dictates advancing the phase.
+    // For example: SoCSent -> SoA (in PreOp1) happens immediately without a timer.
+    
+    if context.current_phase != CyclePhase::Idle && context.current_phase != CyclePhase::IsochronousPReq && context.current_phase != CyclePhase::AsynchronousSoA {
+         // If we are PReq or SoA, we are waiting for a specific timeout or response.
+         // If we are SoCSent, IsochronousDone, AwaitingMnAsyncSend, we proceed immediately.
+         
+         // Specifically check PreOp1 skip logic
+         if current_nmt_state == NmtState::NmtPreOperational1 && context.current_phase == CyclePhase::SoCSent {
+             return cycle::advance_cycle_phase(context, current_time_us);
+         }
+
+         // Allow cycle::tick to handle AwaitingMnAsyncSend and other logic
+    }
+
+    // Proceed to standard cycle tick logic (handling queues, etc.)
+    // Only return NoAction if not bootstrapping AND no deadline passed AND phase is Idle.
+    if !deadline_passed && !is_bootstrapping && context.current_phase == CyclePhase::Idle {
+         return NodeAction::NoAction;
+    }
+
     cycle::tick(context, current_time_us)
 }
 
