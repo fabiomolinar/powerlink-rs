@@ -15,7 +15,7 @@ use crate::od::error_history;
 use crate::sdo::server::SdoClientInfo;
 use crate::sdo::transport::SdoTransport;
 use alloc::vec::Vec;
-use crate::log::{my_debug, my_error, my_trace, my_warn};
+use log::{debug, error, trace, warn};
 
 /// Processes a timeout or other periodic check.
 pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> NodeAction {
@@ -53,7 +53,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                 return action;
             }
         }
-        Err(e) => my_error!("[CN] SDO Server tick error: {:?}", e),
+        Err(e) => error!("[CN] SDO Server tick error: {:?}", e),
         _ => {} 
     }
 
@@ -69,7 +69,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                 // First tick in a valid state, initialize last_seen_us to now
                 *last_seen_us = current_time_us;
             } else if *timeout_us > 0 && (current_time_us - *last_seen_us > *timeout_us) {
-                my_warn!(
+                warn!(
                     "[CN] Heartbeat timeout for Node {}! Last seen {}us ago (timeout is {}us).",
                     node_id.0,
                     current_time_us - *last_seen_us,
@@ -129,12 +129,12 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
         if timeout_us > 0 {
             let deadline = current_time_us + timeout_us;
             context.next_tick_us = Some(deadline);
-            my_debug!(
+            debug!(
                 "[CN] NmtNotActive: Starting BasicEthernet timeout check ({}us). Deadline: {}us",
                 timeout_us, deadline
             );
         } else {
-            my_debug!("[CN] NmtNotActive: BasicEthernet timeout is 0, check disabled.");
+            debug!("[CN] NmtNotActive: BasicEthernet timeout is 0, check disabled.");
         }
         return NodeAction::NoAction;
     }
@@ -149,7 +149,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     }
 
     // --- A deadline has passed ---
-    my_trace!(
+    trace!(
         "Tick deadline reached at {}us (Deadline was {:?})",
         current_time_us, context.next_tick_us
     );
@@ -161,7 +161,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     if current_nmt_state == NmtState::NmtNotActive {
         let timeout_us = context.nmt_state_machine.basic_ethernet_timeout as u64;
         if timeout_us > 0 {
-            my_warn!("[CN] BasicEthernet timeout expired. Transitioning state.");
+            warn!("[CN] BasicEthernet timeout expired. Transitioning state.");
             context
                 .nmt_state_machine
                 .process_event(NmtEvent::Timeout, &mut context.core.od);
@@ -172,7 +172,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     
     // 2. SoC Timeout Check (Spec 4.7.7.3.1 Loss of SoC)
     if context.soc_timeout_check_active {
-        my_warn!(
+        warn!(
             "SoC timeout detected at {}us! Last SoC was at {}us.",
             current_time_us, context.last_soc_reception_time_us
         );
@@ -234,14 +234,14 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                         context.emergency_queue.push_back(error_entry.clone());
                         error_history::write_error_to_history(&mut context.core.od, &error_entry);
                         
-                        my_trace!("[CN] New error queued: {:?}", error_entry);
+                        trace!("[CN] New error queued: {:?}", error_entry);
                         // Increment emergency write counter
                         context.core.od.increment_counter(
                             constants::IDX_DIAG_ERR_STATISTICS_REC,
                             constants::SUBIDX_DIAG_ERR_STATS_EMCY_WRITE,
                         );
                     } else {
-                        my_warn!(
+                        warn!(
                             "[CN] Emergency queue full, dropping error: {:?}",
                             error_entry
                         );
@@ -286,7 +286,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
                         context.last_soc_reception_time_us + cycles_missed * cycle_time_us;
                     let next_deadline = next_expected_soc_time + (tolerance_ns / 1000);
                     context.next_tick_us = Some(next_deadline);
-                    my_trace!(
+                    trace!(
                         "SoC timeout occurred, scheduling next check at {}us",
                         next_deadline
                     );
@@ -298,7 +298,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
             }
         }
     } else {
-        my_trace!(
+        trace!(
             "Tick deadline reached, but no specific timeout active (State: {:?}).",
             current_nmt_state
         );

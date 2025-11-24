@@ -3,9 +3,6 @@
 // 'alloc' is used for dynamic allocation (e.g., Vec<u8> in frames)
 extern crate alloc;
 
-// --- Logging Module ---
-pub mod log;
-
 // --- Foundation Modules ---
 pub mod common;
 pub mod hal;

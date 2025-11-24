@@ -16,7 +16,7 @@ use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::constants;
 use crate::sdo::SdoTransport;
 use crate::sdo::server::SdoClientInfo;
-use crate::log::{my_error, my_info, my_trace, my_warn};
+use log::{error, info, trace, warn};
 
 /// Handles periodic timer events for the node.
 ///
@@ -40,7 +40,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         && current_nmt_state >= NmtState::NmtPreOperational1 
         && context.current_phase == CyclePhase::Idle
     {
-        my_trace!("[MN] Cycle time elapsed ({}us). Starting new cycle.", context.cycle_time_us);
+        trace!("[MN] Cycle time elapsed ({}us). Starting new cycle.", context.cycle_time_us);
         return cycle::start_cycle(context, current_time_us);
     }
 
@@ -50,7 +50,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         .sdo_client_manager
         .tick(current_time_us, &context.core.od)
     {
-        my_warn!(
+        warn!(
             "SDO Client tick generated frame (timeout/abort) for Node {}.",
             target_node_id.0
         );
@@ -62,7 +62,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                 );
                 return serialize_frame_action(frame, context).unwrap_or(NodeAction::NoAction);
             }
-            Err(e) => my_error!("Failed to build SDO client tick frame: {:?}", e),
+            Err(e) => error!("Failed to build SDO client tick frame: {:?}", e),
         }
     }
 
@@ -76,7 +76,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                 .tick(current_time_us, &context.core.od)
             {
                 Ok(Some(response_data)) => {
-                    my_warn!("SDO Server tick generated abort frame.");
+                    warn!("SDO Server tick generated abort frame.");
                     let build_result = match response_data.client_info {
                         SdoClientInfo::Asnd { .. } => {
                             context.core.od.increment_counter(
@@ -99,12 +99,12 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                     match build_result {
                         Ok(action) => return action,
                         Err(e) => {
-                            my_error!("Failed to build SDO/ASnd abort response: {:?}", e);
+                            error!("Failed to build SDO/ASnd abort response: {:?}", e);
                         }
                     }
                 }
                 Ok(None) => {}
-                Err(e) => my_error!("SDO server tick error: {:?}", e),
+                Err(e) => error!("SDO server tick error: {:?}", e),
             }
         }
     }
@@ -126,7 +126,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
 
     // If a deadline passed, consume it and check specific conditions
     if deadline_passed {
-        my_trace!(
+        trace!(
             "Tick deadline reached at {}us (Deadline was {:?})",
             current_time_us, context.next_tick_us
         );
@@ -134,7 +134,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
 
         // Handle NmtNotActive Timeout Expiration (Spec 7.1.3.3 NMT_MT2)
         if current_nmt_state == NmtState::NmtNotActive {
-            my_info!("[MN] WaitNotActive timeout expired. Assuming MN role.");
+            info!("[MN] WaitNotActive timeout expired. Assuming MN role.");
             context.nmt_state_machine.process_event(NmtEvent::Timeout, &mut context.core.od);
             return NodeAction::NoAction;
         }
@@ -142,7 +142,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
         // Handle PRes Timeout (Isochronous Phase)
         // Spec 4.7.6.2 Loss of PRes
         if let Some(event) = context.pending_timeout_event.take() {
-            my_warn!("[MN] PRes timeout for Node {:?}.", context.current_polled_cn);
+            warn!("[MN] PRes timeout for Node {:?}.", context.current_polled_cn);
             events::handle_dll_event(
                 context,
                 event,
