@@ -140,7 +140,7 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
                     Default::default(),
                     Default::default(),
                     NetTime { seconds: 0, nanoseconds: 0 },
-                    RelativeTime { seconds: 0, nanoseconds: 0 },
+                    RelativeTime(0),
                 )),
             );
             return cycle::advance_cycle_phase(context, current_time_us);
@@ -178,9 +178,9 @@ mod tests {
     use super::*;
     use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
     use crate::frame::ms_state_machine::DllMsStateMachine;
-    use crate::frame::{DllMsEvent, PowerlinkFrame, deserialize_frame};
+    use crate::frame::{PowerlinkFrame, deserialize_frame, DllMsEvent};
     use crate::nmt::mn_state_machine::MnNmtStateMachine;
-    use crate::node::mn::state::CyclePhase;
+    use crate::node::mn::state::{CnInfo, CnState}; // Import CnState
     use crate::node::{CoreNodeContext, NodeAction};
     use crate::od::ObjectDictionary;
     use crate::sdo::client_manager::SdoClientManager;
@@ -218,7 +218,7 @@ mod tests {
             asnd_transport: AsndTransport,
             #[cfg(feature = "sdo-udp")]
             udp_transport: UdpTransport,
-            cycle_time_us: 1000,
+            cycle_time_us: 10000,
             multiplex_cycle_len: 0,
             multiplex_assign: BTreeMap::new(),
             publish_config: BTreeMap::new(),

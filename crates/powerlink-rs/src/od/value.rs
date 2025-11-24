@@ -2,7 +2,7 @@
 // Added support for serializing/deserializing more types relevant to PDO.
 
 use crate::PowerlinkError;
-use crate::common::{NetTime, TimeDifference, TimeOfDay};
+use crate::common::{NetTime, TimeDifference, TimeOfDay, RelativeTime}; // Added RelativeTime
 use crate::frame::basic::MacAddress;
 use crate::types::{
     BOOLEAN, INTEGER8, INTEGER16, INTEGER32, INTEGER64, IpAddress, REAL32, REAL64, UNSIGNED8,
@@ -32,6 +32,7 @@ pub enum ObjectValue {
     TimeOfDay(TimeOfDay),
     TimeDifference(TimeDifference),
     NetTime(NetTime),
+    RelativeTime(RelativeTime), // Added
     MacAddress(MacAddress), // Array [u8; 6]
     IpAddress(IpAddress),   // Array [u8; 4]
 }
@@ -75,6 +76,7 @@ impl ObjectValue {
                 v.nanoseconds.to_le_bytes().as_slice(), // U32 LE
             ]
             .concat(), // Total 8 bytes
+            ObjectValue::RelativeTime(v) => v.0.to_le_bytes().to_vec(), // 8 bytes
             ObjectValue::MacAddress(v) => v.0.to_vec(), // 6 bytes
             ObjectValue::IpAddress(v) => v.to_vec(),    // 4 bytes
 
@@ -156,6 +158,15 @@ impl ObjectValue {
                     }))
                 }
             }
+            ObjectValue::RelativeTime(_) => {
+                 if data.len() < 8 {
+                    Err(PowerlinkError::BufferTooShort)
+                } else {
+                    Ok(ObjectValue::RelativeTime(RelativeTime(
+                        u64::from_le_bytes(data[0..8].try_into()?)
+                    )))
+                }
+            }
             ObjectValue::MacAddress(_) => {
                 if data.len() < 6 {
                     Err(PowerlinkError::BufferTooShort)
@@ -194,7 +205,7 @@ impl ObjectValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{NetTime, TimeOfDay};
+    use crate::common::{NetTime, TimeOfDay, RelativeTime};
     use crate::frame::basic::MacAddress;
     use alloc::vec;
 
@@ -286,6 +297,12 @@ mod tests {
         let bytes = time.serialize();
         assert_eq!(bytes.len(), 8);
         assert_eq!(ObjectValue::deserialize(&bytes, &time), Ok(time));
+        
+        // RelativeTime
+        let rel_time = ObjectValue::RelativeTime(RelativeTime(0x12345678));
+        let bytes_rel = rel_time.serialize();
+        assert_eq!(bytes_rel.len(), 8);
+        assert_eq!(ObjectValue::deserialize(&bytes_rel, &rel_time), Ok(rel_time));
 
         // TimeOfDay
         let tod = ObjectValue::TimeOfDay(TimeOfDay {

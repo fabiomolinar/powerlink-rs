@@ -78,9 +78,9 @@ impl Codec for SocFrame {
         // NetTime starts at offset 6 (relative to PL frame)
         buffer[6..10].copy_from_slice(&self.net_time.seconds.to_le_bytes());
         buffer[10..14].copy_from_slice(&self.net_time.nanoseconds.to_le_bytes());
-        // RelativeTime starts at offset 14
-        buffer[14..18].copy_from_slice(&self.relative_time.seconds.to_le_bytes());
-        buffer[18..22].copy_from_slice(&self.relative_time.nanoseconds.to_le_bytes());
+        
+        // RelativeTime starts at offset 14. Defined as UNSIGNED64 in microseconds (Table 16).
+        buffer[14..22].copy_from_slice(&self.relative_time.0.to_le_bytes());
 
         // Per spec Table 15, data fields (incl. headers) up to octet 21 (pl_buffer[21])
         // And reserved from 22..45. Total PL frame section = 46 bytes.
@@ -117,7 +117,6 @@ impl Codec for SocFrame {
         };
 
         // NetTime starts at offset 6
-        // Map TryFromSliceError to BufferTooShort
         let net_time = NetTime {
             seconds: u32::from_le_bytes(
                 buffer[6..10]
@@ -131,20 +130,13 @@ impl Codec for SocFrame {
             ),
         };
 
-        // RelativeTime starts at offset 14
-        // Map TryFromSliceError to BufferTooShort
-        let relative_time = RelativeTime {
-            seconds: u32::from_le_bytes(
-                buffer[14..18]
-                    .try_into()
-                    .map_err(|_| PowerlinkError::BufferTooShort)?,
-            ),
-            nanoseconds: u32::from_le_bytes(
-                buffer[18..22]
-                    .try_into()
-                    .map_err(|_| PowerlinkError::BufferTooShort)?,
-            ),
-        };
+        // RelativeTime starts at offset 14 (u64)
+        let relative_time_val = u64::from_le_bytes(
+            buffer[14..22]
+                .try_into()
+                .map_err(|_| PowerlinkError::BufferTooShort)?
+        );
+        let relative_time = RelativeTime(relative_time_val);
 
         Ok(Self {
             eth_header, // Use the passed-in header
@@ -171,10 +163,7 @@ mod tests {
             seconds: 0xABCD,
             nanoseconds: 0xABCD,
         };
-        let dummy_rel_time = RelativeTime {
-            seconds: 0xABCD,
-            nanoseconds: 0xABCD,
-        };
+        let dummy_rel_time = RelativeTime(0x123456789ABC);
         let flags = SocFlags {
             mc: true,
             ps: false,
@@ -197,10 +186,7 @@ mod tests {
             seconds: 123,
             nanoseconds: 456,
         };
-        let relative_time = RelativeTime {
-            seconds: 789,
-            nanoseconds: 101,
-        };
+        let relative_time = RelativeTime(99999999);
         let flags = SocFlags {
             mc: true,
             ps: false,

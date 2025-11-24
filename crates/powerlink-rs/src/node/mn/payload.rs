@@ -40,15 +40,13 @@ pub(super) fn build_soc_frame(
     multiplex_cycle_len: u8,
 ) -> PowerlinkFrame {
     pl_trace!(*context, "Building SoC frame.");
-    // TODO: Get real NetTime and RelativeTime from system clock or PTP
+    // TODO: Get real NetTime from TimeProvider in Step 2
     let net_time = NetTime {
         seconds: (context.current_cycle_start_time_us / 1_000_000) as u32,
         nanoseconds: ((context.current_cycle_start_time_us % 1_000_000) * 1000) as u32,
     };
-    let relative_time = RelativeTime {
-        seconds: 0,
-        nanoseconds: 0,
-    };
+    // TODO: Get real RelativeTime from MnContext in Step 2
+    let relative_time = RelativeTime(0);
 
     // MC flag is toggled when the *last* multiplexed cycle has *ended*
     let mc_flag = multiplex_cycle_len > 0 && current_multiplex_cycle == 0;
@@ -88,10 +86,7 @@ pub(super) fn build_preq_frame(
                 seconds: 0,
                 nanoseconds: 0,
             },
-            RelativeTime {
-                seconds: 0,
-                nanoseconds: 0,
-            },
+            RelativeTime(0),
         ));
     };
 
@@ -153,10 +148,7 @@ pub(super) fn build_preq_frame(
                     seconds: 0,
                     nanoseconds: 0,
                 },
-                RelativeTime {
-                    seconds: 0,
-                    nanoseconds: 0,
-                },
+                RelativeTime(0),
             ))
         }
     }
@@ -357,10 +349,7 @@ pub(super) fn build_nmt_command_frame(
                     seconds: 0,
                     nanoseconds: 0,
                 },
-                RelativeTime {
-                    seconds: 0,
-                    nanoseconds: 0,
-                },
+                RelativeTime(0),
             ));
         };
         mac

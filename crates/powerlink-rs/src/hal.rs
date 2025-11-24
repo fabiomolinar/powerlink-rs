@@ -3,6 +3,7 @@ use crate::od::ObjectValue;
 use crate::pdo::PayloadSizeError;
 use crate::pdo::PdoError;
 use crate::types::{InvalidMessageTypeError, NodeIdError};
+use crate::common::NetTime; // Imported NetTime
 use alloc::collections::BTreeMap;
 use core::array::TryFromSliceError;
 use core::fmt;
@@ -205,6 +206,23 @@ pub trait NetworkInterface {
     fn local_ip_address(&self) -> crate::types::IpAddress;
 }
 
+/// Abstraction for a hardware clock provider.
+///
+/// Real-time Ethernet protocols require precise timing. This trait splits time into:
+/// 1. **Monotonic Time:** Used for internal scheduling, timeouts, and cycle measurements.
+///    Must be monotonic (never decreases) and high resolution.
+/// 2. **Wall Clock (Net) Time:** Used for IEEE 1588 synchronization (PTP) and timestamping
+///    SoC frames. This time can be adjusted by the PTP algorithm.
+pub trait TimeProvider {
+    /// Returns the current monotonic time in microseconds.
+    /// This is the primary time source for the `Node::run_cycle` loop.
+    fn now_monotonic_us(&self) -> u64;
+
+    /// Returns the current "Network Time" (PTP / IEEE 1588).
+    /// This is used to populate the `NetTime` field in the SoC frame.
+    fn now_net_time(&self) -> NetTime;
+}
+
 /// A trait for abstracting the non-volatile storage of OD parameters.
 /// This abstraction is crucial for the "Restore Defaults" functionality,
 /// which must persist across device reboots.
@@ -267,7 +285,7 @@ pub trait ConfigurationInterface {
     /// Retrieves the configuration data for a specific Node ID.
     ///
     /// The returned data MUST be in the **Concise Device Configuration (CDC)** format
-    /// as defined in EPSG 301, Table 102[cite: 1461].
+    /// as defined in EPSG 301, Table 102.
     ///
     /// # Why a byte slice?
     /// Returning a full `ObjectDictionary` struct for every node would consume excessive
@@ -283,7 +301,7 @@ pub trait ConfigurationInterface {
 
     /// Checks if a software update is required for the node.
     ///
-    /// This corresponds to the `CHECK_SOFTWARE` step in the boot-up process[cite: 1550].
+    /// This corresponds to the `CHECK_SOFTWARE` step in the boot-up process.
     /// The application should compare the `current_version` (received from the CN's
     /// `IdentResponse`) against its stored firmware repository.
     ///
