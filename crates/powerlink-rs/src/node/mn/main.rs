@@ -36,6 +36,10 @@ use crate::types::IpAddress;
 use crate::nmt::events::{MnNmtCommandRequest, NmtManagingCommand, NmtStateCommand};
 use crate::node::mn::state::NmtCommandData;
 
+use crate::log::{Loggable, pl_info, pl_warn, pl_error, pl_trace, pl_debug};
+use alloc::string::String;
+use alloc::format;
+
 /// Represents a complete POWERLINK Managing Node (MN).
 /// This struct is now a thin wrapper around the MnContext.
 pub struct ManagingNode<'s> {
@@ -54,7 +58,6 @@ impl<'s> ManagingNode<'s> {
         mac_address: MacAddress,
         configuration_interface: Option<&'s dyn ConfigurationInterface>,
     ) -> Result<Self, PowerlinkError> {
-        info!("Creating new Managing Node.");
         od.init()?;
         od.validate_mandatory_objects(true)?;
 
@@ -121,6 +124,8 @@ impl<'s> ManagingNode<'s> {
         };
 
         let mut node = Self { context };
+
+        pl_info!(node, "Creating new Managing Node.");
 
         // CRITICAL FIX: Run internal initialization to transition from
         // NmtGsInitialising -> ResetApp -> ResetComm -> ResetConf -> NmtMsNotActive.
@@ -561,5 +566,15 @@ impl<'s> Node for ManagingNode<'s> {
             .iter()
             .filter_map(|&t| t)
             .min()
+    }
+
+    fn id(&self) -> NodeId {
+        self.context.nmt_state_machine.node_id
+    }
+}
+
+impl<'s> Loggable for ManagingNode<'s> {
+    fn log_prefix(&self) -> String {
+        format!("MN - Node {}:", self.context.nmt_state_machine.node_id().0)
     }
 }

@@ -29,6 +29,18 @@ impl SimulatedInterface {
         self.rx_queue.push_back(frame);
     }
 
+    // Method required by NodeAction handler
+    pub fn push_tx(&mut self, frame: Vec<u8>) {
+        // Logic to push the frame into the TX buffer/queue
+        self.tx_queue.push_back(frame); 
+    }
+
+    // Method required by simulator driver
+    pub fn pop_tx(&mut self) -> Option<Vec<u8>> {
+        // Logic to pop the frame from the TX buffer/queue
+        self.tx_queue.pop_front()
+    }
+
     /// Extracts all pending transmitted frames.
     pub fn take_tx_frames(&mut self) -> Vec<Vec<u8>> {
         self.tx_queue.drain(..).collect()

@@ -8,6 +8,9 @@ pub mod common;
 pub mod hal;
 pub mod types;
 
+// --- Logging ---
+pub mod log;
+
 // --- Node Abstraction ---
 pub mod node;
 

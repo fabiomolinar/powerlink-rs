@@ -28,6 +28,10 @@ use alloc::vec::Vec;
 use log::debug;
 use log::{error, info, warn};
 
+use crate::log::{Loggable, pl_info, pl_warn, pl_error, pl_trace, pl_debug};
+use alloc::string::String;
+use alloc::format;
+
 /// Represents a complete POWERLINK Controlled Node (CN).
 /// This struct is a thin wrapper around a context object that holds all state.
 pub struct ControlledNode<'s> {
@@ -45,7 +49,6 @@ impl<'s> ControlledNode<'s> {
         mut od: ObjectDictionary<'s>,
         mac_address: MacAddress,
     ) -> Result<Self, PowerlinkError> {
-        info!("Creating new Controlled Node.");
         // Initialise the OD, which involves loading from storage or applying defaults.
         od.init()?;
 
@@ -123,6 +126,8 @@ impl<'s> ControlledNode<'s> {
                 error_status_changed: false,
             },
         };
+
+        pl_info!(node, "Creating new Controlled Node.");
 
         // Run the initial state transitions to get to NmtNotActive.
         node.context
@@ -377,5 +382,16 @@ impl<'s> Node for ControlledNode<'s> {
 
     fn next_action_time(&self) -> Option<u64> {
         self.context.next_tick_us
+    }
+
+    fn id(&self) -> NodeId {
+        self.context.nmt_state_machine.node_id
+    }
+}
+
+impl<'s> Loggable for ControlledNode<'s> {
+    fn log_prefix(&self) -> String {
+        // Accessing NodeId from the inner state machine
+        format!("CN - Node {}:", self.context.nmt_state_machine.node_id().0)
     }
 }

@@ -120,6 +120,11 @@ pub trait Node {
     /// This allows the application's main loop to sleep efficiently until the node
     /// needs to be ticked again. Returns `None` if no time-based events are pending.
     fn next_action_time(&self) -> Option<u64>;
+
+    /// Returns the unique node ID of this POWERLINK node.
+    fn id(&self) -> NodeId;
+
+    
 }
 
 pub trait NodeContext<'s> {
