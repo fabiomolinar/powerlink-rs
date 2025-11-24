@@ -20,6 +20,8 @@ use crate::types::IpAddress;
 use crate::{NodeId, PowerlinkError};
 use alloc::vec;
 use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::format;
 
 /// Holds state and components common to all POWERLINK node types (MN and CN).
 pub struct CoreNodeContext<'s> {
