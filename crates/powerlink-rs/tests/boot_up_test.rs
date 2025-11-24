@@ -10,6 +10,7 @@ mod tests {
     // Use the local simulator module we declared above
     use super::simulator::{NodeHarness, SimulatedInterface, VirtualNetwork};
     
+    // Fix E0432: Import specific items from their submodules
     use powerlink_rs::{
         ControlledNode, Node, NodeId, 
         ObjectDictionaryStorage, PowerlinkError,
@@ -18,11 +19,10 @@ mod tests {
     use powerlink_rs::node::ManagingNode;
 
     use powerlink_rs::nmt::states::NmtState;
-    use powerlink_rs::od::{ObjectDictionary, ObjectEntry, ObjectValue, Category, AccessType}; 
+    use powerlink_rs::od::{ObjectDictionary, ObjectEntry, ObjectValue, Category, AccessType}; // Added Category/AccessType
     use std::cell::RefCell;
     use std::rc::Rc;
     use std::collections::BTreeMap;
-    use std::fs::File; // <-- Added for file I/O
 
     // --- Mock Storage for OD ---
     struct MockStorage;
@@ -54,6 +54,7 @@ mod tests {
         // Setup minimal OD
         let mut od = powerlink_rs::od::utils::new_cn_default(NodeId(node_id)).unwrap();
         // Required by IdentResponse
+        // Fix E0277: Construct ObjectEntry manually
         od.insert(0x1000, default_object_entry(ObjectValue::Unsigned32(0x12345678)));
         
         let node = ControlledNode::new(od, mac).unwrap();
@@ -85,16 +86,6 @@ mod tests {
 
     #[test]
     fn test_boot_up_sequence() {
-        // 1. Initialize File Logger
-        // File::create truncates the file if it exists, satisfying the overwrite requirement.
-        let log_file = File::create("tests/test_boot_up_sequence.log").expect("Could not create log file");
-        
-        let _ = env_logger::Builder::new()
-            .target(env_logger::Target::Pipe(Box::new(log_file)))
-            .filter_level(log::LevelFilter::Trace)
-            .format_timestamp_micros() // High precision timing is useful for PLK
-            .try_init();
-
         let mut network = VirtualNetwork::new();
         network.register_node(1);
         network.register_node(240);
