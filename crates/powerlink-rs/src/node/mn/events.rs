@@ -1,7 +1,7 @@
 // crates/powerlink-rs/src/node/mn/events.rs
 use super::scheduler;
 use super::state::{AsyncRequest, CnState, CyclePhase, MnContext};
-use super::validation; // <-- ADDED import
+use super::validation;
 use crate::frame::{
     ASndFrame, DllMsEvent, PResFrame, PowerlinkFrame, ServiceId,
     control::{IdentResponsePayload, StatusResponsePayload},
@@ -15,7 +15,7 @@ use crate::node::mn::ip_from_node_id;
 use crate::node::mn::state::NmtCommandData;
 use crate::od::constants;
 use crate::types::NodeId;
-use log::{debug, error, info, trace, warn};
+use crate::log::{pl_debug, pl_error, pl_info, pl_trace, pl_warn};
 
 /// Processes a `PowerlinkFrame` after it has been identified as
 /// non-SDO or not for the MN. This handles NMT state changes and
@@ -43,21 +43,23 @@ pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, curr
             );
             // --- End of Diagnostic Counters ---
 
-            trace!("[MN] Received PRes from Node {}", pres_frame.source.0);
+            pl_trace!(*context,"Received PRes from Node {}", pres_frame.source.0);
+            
+            // Updates to node info must be scoped to avoid conflicts with later method calls
             if let Some(cn_info) = context.node_info.get_mut(&pres_frame.source) {
                 cn_info.nmt_state = pres_frame.nmt_state;
                 cn_info.last_pres_time_us = current_time_us;
                 cn_info.dll_errors = 0; // Clear error count on successful PRes
-                // Update the CN's state in the MN's tracker
-                update_cn_state(context, pres_frame.source, pres_frame.nmt_state);
             }
+            // Update the CN's state in the MN's tracker (Separate call to avoid borrow issues)
+            update_cn_state(context, pres_frame.source, pres_frame.nmt_state);
 
             // Check if this PRes corresponds to the node we polled
             if context.current_phase == CyclePhase::IsochronousPReq
                 && context.current_polled_cn == Some(pres_frame.source)
             {
-                trace!(
-                    "[MN] Received expected PRes from Node {}",
+                pl_trace!(*context,
+                    "Received expected PRes from Node {}",
                     pres_frame.source.0
                 );
                 // Cancel pending PRes timeout
@@ -75,8 +77,8 @@ pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, curr
                 // The action is returned by `tick` in the scheduler, so we don't need to capture it here.
                 let _action = super::cycle::advance_cycle_phase(context, current_time_us);
             } else {
-                warn!(
-                    "[MN] Received unexpected PRes from Node {}.",
+                pl_warn!(*context,
+                    "Received unexpected PRes from Node {}.",
                     pres_frame.source.0
                 );
                 handle_pres_frame(context, &pres_frame);
@@ -92,8 +94,8 @@ pub(super) fn process_frame(context: &mut MnContext, frame: PowerlinkFrame, curr
             // --- End of Diagnostic Counters ---
 
             if context.current_phase == CyclePhase::AsynchronousSoA {
-                trace!(
-                    "[MN] Received ASnd from Node {} during Async phase.",
+                pl_trace!(*context,
+                    "Received ASnd from Node {} during Async phase.",
                     asnd_frame.source.0
                 );
                 context.pending_timeout_event = None;
@@ -136,7 +138,7 @@ pub(super) fn handle_dll_event(
         reporting_node_id,
     ) {
         for error in errors {
-            warn!("[MN] DLL state machine reported error: {:?}", error);
+            pl_warn!(*context,"DLL state machine reported error: {:?}", error);
             let error_with_node = match error {
                 DllError::LossOfPres { .. } => DllError::LossOfPres {
                     node_id: reporting_node_id,
@@ -146,8 +148,8 @@ pub(super) fn handle_dll_event(
             let (nmt_action, _) = context.dll_error_manager.handle_error(error_with_node);
             match nmt_action {
                 NmtAction::ResetNode(node_id) => {
-                    warn!(
-                        "[MN] DLL Error threshold met for Node {}. Requesting Node Reset.",
+                    pl_warn!(*context,
+                        "DLL Error threshold met for Node {}. Requesting Node Reset.",
                         node_id.0
                     );
                     if let Some(info) = context.node_info.get_mut(&node_id) {
@@ -160,7 +162,7 @@ pub(super) fn handle_dll_event(
                     ));
                 }
                 NmtAction::ResetCommunication => {
-                    warn!("[MN] DLL Error threshold met. Requesting Communication Reset.");
+                    pl_warn!(*context,"DLL Error threshold met. Requesting Communication Reset.");
                     context
                         .nmt_state_machine
                         .process_event(NmtEvent::Error, &mut context.core.od);
@@ -192,8 +194,8 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame, current_time_us
                                 &payload,
                                 current_time_us,
                             ) {
-                                info!(
-                                    "[MN] Node {} successfully identified and validated.",
+                                pl_info!(*context,
+                                    "Node {} successfully identified and validated.",
                                     node_id.0
                                 );
 
@@ -203,7 +205,7 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame, current_time_us
                                 let cn_ip = ip_from_node_id(node_id);
                                 let cn_mac = frame.eth_header.source_mac;
                                 context.arp_cache.insert(cn_ip, cn_mac);
-                                info!(
+                                pl_info!(*context,
                                     "[MN-ARP] Cached MAC {} for Node {} (IP {}).",
                                     cn_mac,
                                     node_id.0,
@@ -228,69 +230,78 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame, current_time_us
                                 // Validation failed, OR remediation (download) started.
                                 // We stay in Unknown/Missing effectively, waiting for the next IdentResponse
                                 // (after reset) or for the SDO download to complete.
-                                info!(
-                                    "[MN] Node {} failed BOOT_STEP1 validation or is updating. Remaining in {:?} state.",
+                                pl_info!(*context,
+                                    "Node {} failed BOOT_STEP1 validation or is updating. Remaining in {:?} state.",
                                     node_id.0, state
                                 );
                             }
                         }
                         Err(e) => {
-                            error!(
-                                "[MN] Failed to deserialize IdentResponse from Node {}: {:?}",
+                            pl_error!(*context,
+                                "Failed to deserialize IdentResponse from Node {}: {:?}",
                                 node_id.0, e
                             );
                         }
                     }
                 }
             } else {
-                warn!(
-                    "[MN] Received IdentResponse from unconfigured Node {}.",
+                pl_warn!(*context,
+                    "Received IdentResponse from unconfigured Node {}.",
                     node_id.0
                 );
             }
         }
         ServiceId::StatusResponse => {
             let node_id = frame.source;
-            trace!("[MN] Received StatusResponse from CN {}.", frame.source.0);
-            if let Some(info) = context.node_info.get_mut(&node_id) {
+            pl_trace!(*context,"Received StatusResponse from CN {}.", frame.source.0);
+
+            // Refactor: Separate Mutation from Logging to appease borrow checker
+            let ea_flag_update = if let Some(info) = context.node_info.get_mut(&node_id) {
                 // The handshake is complete. Update the MN's EA flag to match the CN's EN flag.
                 // This new EA value will be sent in the next PReq.
                 info.ea_flag = info.en_flag;
-                info!(
-                    "[MN] StatusResponse from Node {} processed. Updated EA flag to {}.",
-                    node_id.0, info.ea_flag
+                Some(info.ea_flag)
+            } else {
+                None
+            };
+
+            // Now context is free to be borrowed by the logger
+            if let Some(ea_flag) = ea_flag_update {
+                pl_info!(*context,
+                    "StatusResponse from Node {} processed. Updated EA flag to {}.",
+                    node_id.0, ea_flag
                 );
+            }
 
-                match StatusResponsePayload::deserialize(&frame.payload) {
-                    Ok(payload) => {
-                        info!(
-                            "[MN] StatusResponse from Node {}: ErrorRegister = {:#04x}, SpecificErrors = {:02X?}",
-                            node_id.0,
-                            payload.static_error_bit_field.error_register,
-                            payload.static_error_bit_field.specific_errors
-                        );
-                        // Update the CN's state in the MN's tracker
-                        update_cn_state(context, node_id, payload.nmt_state);
+            match StatusResponsePayload::deserialize(&frame.payload) {
+                Ok(payload) => {
+                    pl_info!(*context,
+                        "StatusResponse from Node {}: ErrorRegister = {:#04x}, SpecificErrors = {:02X?}",
+                        node_id.0,
+                        payload.static_error_bit_field.error_register,
+                        payload.static_error_bit_field.specific_errors
+                    );
+                    // Update the CN's state in the MN's tracker
+                    update_cn_state(context, node_id, payload.nmt_state);
 
-                        for entry in payload.error_entries {
-                            warn!(
-                                "[MN] StatusResponse from Node {}: Received Error/Event Entry: {:?}",
-                                node_id.0, entry
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "[MN] Failed to deserialize StatusResponse from Node {}: {:?}",
-                            node_id.0, e
+                    for entry in payload.error_entries {
+                        pl_warn!(*context,
+                            "StatusResponse from Node {}: Received Error/Event Entry: {:?}",
+                            node_id.0, entry
                         );
                     }
+                }
+                Err(e) => {
+                    pl_error!(*context,
+                        "Failed to deserialize StatusResponse from Node {}: {:?}",
+                        node_id.0, e
+                    );
                 }
             }
         }
         _ => {
-            trace!(
-                "[MN] Received unhandled ASnd with ServiceID {:?}.",
+            pl_trace!(*context,
+                "Received unhandled ASnd with ServiceID {:?}.",
                 frame.service_id
             );
         }
@@ -301,7 +312,7 @@ fn handle_asnd_frame(context: &mut MnContext, frame: &ASndFrame, current_time_us
 fn handle_pres_frame(context: &mut MnContext, pres: &PResFrame) {
     // 1. Handle async requests flagged by RS.
     if pres.flags.rs.get() > 0 {
-        debug!("[MN] Node {} requesting async transmission.", pres.source.0);
+        pl_debug!(*context,"Node {} requesting async transmission.", pres.source.0);
         context.async_request_queue.push(AsyncRequest {
             node_id: pres.source,
             priority: pres.flags.pr as u8,
@@ -309,63 +320,82 @@ fn handle_pres_frame(context: &mut MnContext, pres: &PResFrame) {
     }
 
     // 2. Handle error signaling with EN/EA flags.
-    if let Some(info) = context.node_info.get_mut(&pres.source) {
-        // Store the received EN flag from the CN
-        info.en_flag = pres.flags.en;
-
-        // Spec 6.5.6: If the MN detects that the last sent EA bit is different to
-        // the last received EN bit, it shall send a StatusRequest frame to the CN.
-        if info.en_flag != info.ea_flag {
-            info!(
-                "[MN] Detected EN/EA mismatch for Node {}. (EN={}, EA={}). Queuing StatusRequest.",
-                pres.source.0, info.en_flag, info.ea_flag
-            );
-            // Add the node to a queue to be polled with a StatusRequest.
-            // Avoid adding duplicates if a request is already pending.
-            if !context.pending_status_requests.contains(&pres.source) {
-                context.pending_status_requests.push(pres.source);
-            }
-        }
-
-        // --- Phase 1.5: CHECK_COMMUNICATION ---
-        // This check is performed when the MN is in ReadyToOperate, before moving to Operational.
-        if context.nmt_state_machine.current_state() == NmtState::NmtReadyToOperate
-            && !info.communication_ok
-        {
-            let expected_payload_size = context
-                .core
-                .od
-                .read_u16(constants::IDX_NMT_PRES_PAYLOAD_LIMIT_AU16, pres.source.0)
-                .unwrap_or(0) as usize;
-
-            // Check payload size. We already checked for timeouts when the PRes was received.
-            // Spec 7.4.2.2.3: check payload length is "less or equal than the length configured"
-            if pres.payload.len() <= expected_payload_size {
-                trace!(
-                    "[MN] CHECK_COMMUNICATION passed for Node {}. (Payload size {} <= {}).",
-                    pres.source.0,
-                    pres.payload.len(),
-                    expected_payload_size
-                );
-                info.communication_ok = true;
-                // Immediately check if this was the last node needed for NMT transition
-                scheduler::check_bootup_state(context);
+    // Refactor: We must perform updates, exit the scope, THEN log.
+    
+    // Step A: Update info and determine if events occurred
+    let (mismatch_detected, communication_check_needed) = 
+        if let Some(info) = context.node_info.get_mut(&pres.source) {
+            // Store the received EN flag from the CN
+            info.en_flag = pres.flags.en;
+            
+            // Spec 6.5.6 Check
+            let mismatch = if info.en_flag != info.ea_flag {
+                Some((info.en_flag, info.ea_flag))
             } else {
-                error!(
-                    "[MN] CHECK_COMMUNICATION failed for Node {}: PRes payload size mismatch. Expected <= {}, got {}.",
-                    pres.source.0,
-                    expected_payload_size,
-                    pres.payload.len()
-                );
-                // TODO: Handle error (e.g., E_NMT_BRO)
+                None
+            };
+            
+            // Communication Check Check (Needs to happen later, but we check if we need to do it)
+            let check_needed = !info.communication_ok;
+
+            (mismatch, check_needed)
+        } else {
+            (None, false)
+        };
+
+    // Step B: Handle Mismatch (Context is free)
+    if let Some((en, ea)) = mismatch_detected {
+        pl_info!(*context,
+            "Detected EN/EA mismatch for Node {}. (EN={}, EA={}). Queuing StatusRequest.",
+            pres.source.0, en, ea
+        );
+        // Add the node to a queue to be polled with a StatusRequest.
+        if !context.pending_status_requests.contains(&pres.source) {
+            context.pending_status_requests.push(pres.source);
+        }
+    }
+
+    // Step C: Handle Communication Check (Phase 1.5)
+    if context.nmt_state_machine.current_state() == NmtState::NmtReadyToOperate 
+        && communication_check_needed 
+    {
+         let expected_payload_size = context
+            .core
+            .od
+            .read_u16(constants::IDX_NMT_PRES_PAYLOAD_LIMIT_AU16, pres.source.0)
+            .unwrap_or(0) as usize;
+
+        // Spec 7.4.2.2.3: check payload length
+        if pres.payload.len() <= expected_payload_size {
+            pl_trace!(*context,
+                "CHECK_COMMUNICATION passed for Node {}. (Payload size {} <= {}).",
+                pres.source.0,
+                pres.payload.len(),
+                expected_payload_size
+            );
+            
+            // RE-ACQUIRE mutable borrow to update status
+            if let Some(info) = context.node_info.get_mut(&pres.source) {
+                info.communication_ok = true;
             }
+            // Immediately check if this was the last node needed for NMT transition
+            scheduler::check_bootup_state(context);
+        } else {
+            pl_error!(*context,
+                "CHECK_COMMUNICATION failed for Node {}: PRes payload size mismatch. Expected <= {}, got {}.",
+                pres.source.0,
+                expected_payload_size,
+                pres.payload.len()
+            );
+            // TODO: Handle error (e.g., E_NMT_BRO)
         }
     }
 }
 
 /// Updates the MN's internal state tracker for a CN based on its reported NMT state.
 fn update_cn_state(context: &mut MnContext, node_id: NodeId, reported_state: NmtState) {
-    if let Some(current_info) = context.node_info.get_mut(&node_id) {
+    // Refactor: Separation of concerns to satisfy borrow checker
+    let state_change = if let Some(current_info) = context.node_info.get_mut(&node_id) {
         let new_state = match reported_state {
             NmtState::NmtPreOperational1 => CnState::Identified,
             NmtState::NmtPreOperational2 | NmtState::NmtReadyToOperate => CnState::PreOperational,
@@ -373,19 +403,31 @@ fn update_cn_state(context: &mut MnContext, node_id: NodeId, reported_state: Nmt
             NmtState::NmtCsStopped => CnState::Stopped,
             _ => current_info.state,
         };
-        if current_info.state != new_state {
-            info!(
-                "[MN] Node {} state changed: {:?} -> {:?}",
-                node_id.0, current_info.state, new_state
-            );
-            current_info.state = new_state;
 
+        if current_info.state != new_state {
+            let old_state = current_info.state;
+            current_info.state = new_state;
+            
             // If a node resets (e.g., error) or stops, its communication
             // must be re-verified when it comes back online.
             if new_state < CnState::PreOperational {
                 current_info.communication_ok = false;
             }
-            scheduler::check_bootup_state(context);
+            
+            Some((old_state, new_state))
+        } else {
+            None
         }
+    } else {
+        None
+    };
+
+    // Logging and side effects happen after the mutable borrow is dropped
+    if let Some((old, new)) = state_change {
+        pl_info!(*context,
+            "Node {} state changed: {:?} -> {:?}",
+            node_id.0, old, new
+        );
+        scheduler::check_bootup_state(context);
     }
 }

@@ -343,6 +343,7 @@ mod tests {
 
     struct TestNode {
         core: CoreNodeContext<'static>,
+        node_id: NodeId,
         dll_error_manager: DllErrorManager<CnErrorCounters, LoggingErrorHandler>,
         nmt_state_machine: CnNmtStateMachine,
     }
@@ -359,6 +360,9 @@ mod tests {
         }
         fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine {
             &self.nmt_state_machine
+        }
+        fn node_id(&self) -> NodeId {
+            self.node_id
         }
     }
 
@@ -438,6 +442,7 @@ mod tests {
 
         let core = CoreNodeContext {
             od,
+            node_id: NodeId(1),
             mac_address: MacAddress::default(),
             sdo_server: SdoServer::new(),
             sdo_client: SdoClient::new(),
@@ -447,6 +452,7 @@ mod tests {
 
         TestNode {
             core,
+            node_id: NodeId(1),
             dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
             nmt_state_machine: CnNmtStateMachine::new(NodeId(1), Default::default(), 0),
         }

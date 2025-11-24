@@ -1,3 +1,4 @@
+// src/node/cn/main.rs
 use super::events;
 use super::state::CnContext;
 use crate::PowerlinkError;
@@ -26,7 +27,7 @@ use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 #[cfg(feature = "sdo-udp")]
 use log::debug;
-use log::{error, info, warn};
+use log::{info, warn};
 
 use crate::log::{Loggable, pl_info, pl_warn, pl_error, pl_trace, pl_debug};
 use alloc::string::String;
@@ -77,14 +78,17 @@ impl<'s> ControlledNode<'s> {
                             let timeout_us = (heartbeat_time_ms as u64) * 1000;
                             // Initialize last_seen_us to 0. It will be set on the first tick or frame.
                             heartbeat_consumers.insert(node_id, (timeout_us, 0));
+                            
+                            // Use standard log::info here as `node` (the Loggable target) doesn't exist yet
                             info!(
-                                "[CN] Added heartbeat consumer: Node {} with timeout {}ms",
-                                node_id.0, heartbeat_time_ms
+                                "[CN boot up - MAC: {}] Added heartbeat consumer: Node {} with timeout {}ms",
+                                mac_address, node_id.0, heartbeat_time_ms
                             );
                         } else {
+                            // Use standard log::warn here
                             warn!(
-                                "[CN] Invalid Node ID {} in heartbeat configuration (0x1016).",
-                                node_id_val
+                                "[CN boot up - MAC: {}] Invalid Node ID {} in heartbeat configuration (0x1016).",
+                                mac_address, node_id_val
                             );
                         }
                     }
@@ -95,6 +99,7 @@ impl<'s> ControlledNode<'s> {
         // --- Instantiate CoreNodeContext ---
         let core_context = CoreNodeContext {
             od,
+            node_id: nmt_state_machine.node_id,
             mac_address,
             sdo_server: SdoServer::new(),
             sdo_client: SdoClient::new(),
@@ -147,7 +152,8 @@ impl<'s> ControlledNode<'s> {
     /// Allows the application to queue an NMT state command request to be sent to the MN.
     /// (Reference: EPSG DS 301, Section 7.3.6)
     pub fn queue_nmt_request(&mut self, command: NmtStateCommand, target: NodeId) {
-        info!(
+        // Use *self to dereference &mut self so it matches the Loggable trait bound
+        pl_info!(*self, 
             "Queueing NMT State Command request: Command={:?}, Target={}",
             command, target.0
         );
@@ -160,7 +166,7 @@ impl<'s> ControlledNode<'s> {
     fn process_ethernet_frame(&mut self, buffer: &[u8], current_time_us: u64) -> NodeAction {
         // Check if we are in BasicEthernet
         if self.nmt_state() == NmtState::NmtBasicEthernet {
-            info!(
+            pl_info!(*self, 
                 "[CN] POWERLINK frame detected in NmtBasicEthernet. Transitioning to NmtPreOperational1."
             );
             // Trigger the NMT transition
@@ -192,7 +198,7 @@ impl<'s> ControlledNode<'s> {
             Ok(frame) => events::process_frame(&mut self.context, frame, current_time_us),
             Err(e) if e != PowerlinkError::InvalidEthernetFrame => {
                 // Looked like POWERLINK (correct EtherType) but malformed. Log as warning.
-                warn!(
+                pl_warn!(*self, 
                     "[CN] Could not deserialize potential POWERLINK frame: {:?} (Buffer len: {})",
                     e,
                     buffer.len()
@@ -218,7 +224,7 @@ impl<'s> ControlledNode<'s> {
                         crate::od::ObjectValue::Unsigned8(new_err_reg),
                         false,
                     ) {
-                        error!("[CN] Failed to update Error Register: {:?}", e);
+                        pl_error!(*self, "[CN] Failed to update Error Register: {:?}", e);
                     }
                 }
                 // Trigger NMT error handling if required
@@ -253,7 +259,7 @@ impl<'s> ControlledNode<'s> {
         let (seq_header, cmd) = match deserialize_sdo_udp_payload(buffer) {
             Ok((seq, cmd)) => (seq, cmd),
             Err(e) => {
-                warn!("[CN] Failed to deserialize SDO/UDP payload: {:?}", e);
+                pl_warn!(*self, "[CN] Failed to deserialize SDO/UDP payload: {:?}", e);
                 // Cannot send a response if we can't parse the request
                 return NodeAction::NoAction;
             }
@@ -294,13 +300,13 @@ impl<'s> ControlledNode<'s> {
                 {
                     Ok(action) => action,
                     Err(e) => {
-                        error!("[CN] Failed to build SDO/UDP response: {:?}", e);
+                        pl_error!(*self, "[CN] Failed to build SDO/UDP response: {:?}", e);
                         NodeAction::NoAction
                     }
                 }
             }
             Err(e) => {
-                error!("[CN] SDO server error (UDP): {:?}", e);
+                pl_error!(*self, "[CN] SDO server error (UDP): {:?}", e);
                 NodeAction::NoAction
             }
         }
@@ -392,6 +398,13 @@ impl<'s> Node for ControlledNode<'s> {
 impl<'s> Loggable for ControlledNode<'s> {
     fn log_prefix(&self) -> String {
         // Accessing NodeId from the inner state machine
-        format!("CN - Node {}:", self.context.nmt_state_machine.node_id().0)
+        format!("[CN - Node {}]", self.context.nmt_state_machine.node_id().0)
+    }
+}
+
+impl Loggable for CnContext<'_> {
+    fn log_prefix(&self) -> String {
+        // Accessing NodeId from the inner state machine
+        format!("[CN - Node {}]", self.nmt_state_machine.node_id().0)
     }
 }

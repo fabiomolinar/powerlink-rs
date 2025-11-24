@@ -60,14 +60,14 @@ pub(crate) fn parse_mn_node_lists(
             }
         }
     } else {
-        error!("Failed to read NMT_NodeAssignment_AU32 (0x1F81)");
+        error!("[MN] Failed to read NMT_NodeAssignment_AU32 (0x1F81)");
         return Err(PowerlinkError::ValidationError(
             "Missing 0x1F81 NMT_NodeAssignment_AU32",
         ));
     }
 
     info!(
-        "MN configured to manage {} nodes ({} mandatory, {} isochronous, {} async-only).",
+        "[MN] Configured to manage {} nodes ({} mandatory, {} isochronous, {} async-only).",
         node_info.len(),
         mandatory_nodes.len(),
         isochronous_nodes.len(),
@@ -100,14 +100,14 @@ pub(crate) fn parse_publish_config(od: &ObjectDictionary) -> BTreeMap<u8, Servic
                     match ServiceId::try_from(service_id_byte) {
                         Ok(service_id) => {
                             info!(
-                                "Configuring NMT Info Service: {:?} for Mux Cycle {}",
+                                "[MN] Configuring NMT Info Service: {:?} for Mux Cycle {}",
                                 service_id, cycle_num
                             );
                             publish_config.insert(cycle_num, service_id);
                         }
                         Err(_) => {
                             warn!(
-                                "Ignoring invalid ServiceId {:#04x} in 0x1F9E/{}",
+                                "[MN] Ignoring invalid ServiceId {:#04x} in 0x1F9E/{}",
                                 service_id_byte, sub_index
                             );
                         }
@@ -116,7 +116,7 @@ pub(crate) fn parse_publish_config(od: &ObjectDictionary) -> BTreeMap<u8, Servic
             }
         }
     } else {
-        info!("NMT Publish Config (0x1F9E) not found. NMT Info Services disabled.");
+        info!("[MN] NMT Publish Config (0x1F9E) not found. NMT Info Services disabled.");
     }
     publish_config
 }

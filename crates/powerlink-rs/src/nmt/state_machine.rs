@@ -6,11 +6,24 @@ use crate::frame::DllError;
 use crate::od::{ObjectDictionary, ObjectValue};
 use alloc::vec::Vec;
 use log::{error, info};
+use alloc::string::String;
+use alloc::format;
 
 /// A trait defining the common behavior for all NMT state machines (MN and CN).
 pub trait NmtStateMachine {
     /// Returns the Node ID associated with this NMT state machine.
     fn node_id(&self) -> NodeId;
+
+    /// Returns the node type
+    fn is_cn(&self) -> bool;
+    fn is_mn(&self) -> bool {
+        !self.is_cn()
+    }
+
+    /// Log message prefix for this NMT state machine
+    fn log_prefix(&self) -> String{
+        format!("[{} - Node {}]", if self.is_cn() { "CN" } else { "MN" }, self.node_id())
+    }
 
     /// Returns the current NMT state.
     fn current_state(&self) -> NmtState;
@@ -37,7 +50,7 @@ pub trait NmtStateMachine {
             ObjectValue::Unsigned8(self.current_state() as u8),
             false,
         ) {
-            error!("[NMT] Failed to update NMT state in OD (0x1F8C): {:?}", e);
+            error!("{} Failed to update NMT state in OD (0x1F8C): {:?}", self.log_prefix(), e);
         }
     }
 
@@ -53,7 +66,8 @@ pub trait NmtStateMachine {
         };
 
         info!(
-            "[NMT] Reset Sequence initiated from {:?} (Target: {:?}, Event: {:?})",
+            "{} Reset Sequence initiated from {:?} (Target: {:?}, Event: {:?})",
+            self.log_prefix(),
             self.current_state(),
             initial_reset_state,
             event
@@ -77,7 +91,7 @@ pub trait NmtStateMachine {
             self.set_state(NmtState::NmtGsResetApplication);
             self.update_od_state(od);
             
-            info!("[NMT] NMT_GS_RESET_APPLICATION: Resetting App Parameters (0x6000-0x9FFF) and Manuf. (0x2000-0x5FFF)");
+            info!("{} NMT_GS_RESET_APPLICATION: Resetting App Parameters (0x6000-0x9FFF) and Manuf. (0x2000-0x5FFF)", self.log_prefix());
             // Reset Manufacturer Specific Profile Area (0x2000 - 0x5FFF)
             od.restore_power_on_values(0x2000, 0x5FFF);
             // Reset Standardised Device Profile Area (0x6000 - 0x9FFF)
@@ -93,7 +107,7 @@ pub trait NmtStateMachine {
             self.set_state(NmtState::NmtGsResetCommunication);
             self.update_od_state(od);
             
-            info!("[NMT] NMT_GS_RESET_COMMUNICATION: Resetting Comm Parameters (0x1000-0x1FFF)");
+            info!("{} NMT_GS_RESET_COMMUNICATION: Resetting Comm Parameters (0x1000-0x1FFF)", self.log_prefix());
             // Reset Communication Profile Area (0x1000 - 0x1FFF), excluding Error History
             od.restore_power_on_values(0x1000, 0x1FFF);
         }
@@ -117,7 +131,7 @@ pub trait NmtStateMachine {
         // Since this trait is shared, we can default to NotActive.
         self.set_state(NmtState::NmtNotActive);
         self.update_od_state(od);
-        info!("[NMT] Reset Sequence complete. Entered NmtNotActive.");
+        info!("{} Reset Sequence complete. Entered NmtNotActive.", self.log_prefix());
     }
 
     /// Handles automatic, internal state transitions that don't require an external event.

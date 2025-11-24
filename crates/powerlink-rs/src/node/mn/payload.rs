@@ -19,7 +19,7 @@ use crate::sdo::sequence::SequenceLayerHeader;
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, EPLVersion, NodeId};
 use alloc::vec;
 use alloc::vec::Vec;
-use log::{debug, error, trace, warn};
+use crate::log::{pl_debug, pl_error, pl_trace, pl_warn};
 
 // Import NmtCommandData
 use crate::nmt::states::NmtState;
@@ -39,7 +39,7 @@ pub(super) fn build_soc_frame(
     current_multiplex_cycle: u8,
     multiplex_cycle_len: u8,
 ) -> PowerlinkFrame {
-    trace!("[MN] Building SoC frame.");
+    pl_trace!(*context, "Building SoC frame.");
     // TODO: Get real NetTime and RelativeTime from system clock or PTP
     let net_time = NetTime {
         seconds: (context.current_cycle_start_time_us / 1_000_000) as u32,
@@ -73,11 +73,11 @@ pub(super) fn build_preq_frame(
     target_node_id: NodeId,
     is_multiplexed: bool,
 ) -> PowerlinkFrame {
-    trace!("[MN] Building PReq for Node {}.", target_node_id.0);
+    pl_trace!(*context, "Building PReq for Node {}.", target_node_id.0);
     let mac_addr = scheduler::get_cn_mac_address(context, target_node_id);
     let Some(dest_mac) = mac_addr else {
-        error!(
-            "[MN] Cannot build PReq: MAC address for Node {} not found.",
+        pl_error!(*context, 
+            "Cannot build PReq: MAC address for Node {} not found.",
             target_node_id.0
         );
         // Return a dummy frame that will fail serialization if used
@@ -141,8 +141,8 @@ pub(super) fn build_preq_frame(
             ))
         }
         Err(e) => {
-            error!(
-                "[MN] Failed to build PReq payload for Node {}: {:?}",
+            pl_error!(*context, 
+                "Failed to build PReq payload for Node {}: {:?}",
                 target_node_id.0, e
             );
             // Return a dummy frame
@@ -188,21 +188,21 @@ pub(super) fn build_tpdo_payload(
 
     if let Some(ObjectValue::Unsigned8(num_entries)) = od.read(mapping_index, 0).as_deref() {
         if *num_entries > 0 {
-            trace!(
+            pl_trace!(*context, 
                 "Building MN TPDO for channel {} with {} entries.",
                 channel_index, num_entries
             );
             for i in 1..=*num_entries {
                 let Some(entry_cow) = od.read(mapping_index, i) else {
-                    warn!(
-                        "[MN] Could not read mapping entry {} for TPDO channel {}",
+                    pl_warn!(*context, 
+                        "Could not read mapping entry {} for TPDO channel {}",
                         i, channel_index
                     );
                     continue;
                 };
                 let ObjectValue::Unsigned64(raw_mapping) = *entry_cow else {
-                    warn!(
-                        "[MN] Mapping entry {} for TPDO channel {} is not U64",
+                    pl_warn!(*context, 
+                        "Mapping entry {} for TPDO channel {} is not U64",
                         i, channel_index
                     );
                     continue;
@@ -211,8 +211,8 @@ pub(super) fn build_tpdo_payload(
                 let entry = PdoMappingEntry::from_u64(raw_mapping);
                 let (Some(offset), Some(length)) = (entry.byte_offset(), entry.byte_length())
                 else {
-                    warn!(
-                        "[MN] Bit-level TPDO mapping not supported for PReq 0x{:04X}/{}",
+                    pl_warn!(*context, 
+                        "Bit-level TPDO mapping not supported for PReq 0x{:04X}/{}",
                         entry.index, entry.sub_index
                     );
                     continue;
@@ -220,8 +220,8 @@ pub(super) fn build_tpdo_payload(
 
                 let end_pos = offset + length;
                 if end_pos > payload_limit {
-                    error!(
-                        "[MN] TPDO mapping for PReq exceeds payload limit for Node {}. [E_PDO_MAP_OVERRUN]",
+                    pl_error!(*context, 
+                        "TPDO mapping for PReq exceeds payload limit for Node {}. [E_PDO_MAP_OVERRUN]",
                         target_node_id
                     );
                     return Err(PowerlinkError::PdoMapOverrun);
@@ -233,7 +233,7 @@ pub(super) fn build_tpdo_payload(
                 match entry.index {
                     // SDO Server Channel (0x1200 - 0x127F): Container for a response from the MN.
                     0x1200..=0x127F => {
-                        trace!(
+                        pl_trace!(*context, 
                             "[SDO-PDO] MN Server: Building response for TPDO channel {:#06X}",
                             entry.index
                         );
@@ -245,7 +245,7 @@ pub(super) fn build_tpdo_payload(
                     }
                     // SDO Client Channel (0x1280 - 0x12FF): Container for a request from the MN.
                     0x1280..=0x12FF => {
-                        trace!(
+                        pl_trace!(*context, 
                             "[SDO-PDO] MN Client: Building request for TPDO channel {:#06X}",
                             entry.index
                         );
@@ -259,8 +259,8 @@ pub(super) fn build_tpdo_payload(
                     _ => {
                         // --- This is the OLD logic, now in the 'else' branch ---
                         let Some(value_cow) = od.read(entry.index, entry.sub_index) else {
-                            warn!(
-                                "[MN] TPDO mapping for PReq 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
+                            pl_warn!(*context, 
+                                "TPDO mapping for PReq 0x{:04X}/{} failed: OD entry not found. Filling with zeros.",
                                 entry.index, entry.sub_index
                             );
                             // data_slice is already zeros, so just continue
@@ -268,8 +268,8 @@ pub(super) fn build_tpdo_payload(
                         };
                         let serialized_data = value_cow.serialize();
                         if serialized_data.len() != length {
-                            warn!(
-                                "[MN] TPDO mapping for PReq 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes.",
+                            pl_warn!(*context, 
+                                "TPDO mapping for PReq 0x{:04X}/{} length mismatch. Mapped: {} bytes, Object: {} bytes.",
                                 entry.index,
                                 entry.sub_index,
                                 length,
@@ -286,8 +286,8 @@ pub(super) fn build_tpdo_payload(
             }
         }
     } else {
-        warn!(
-            "[MN] TPDO Mapping object {:#06X} not found or is invalid.",
+        pl_warn!(*context, 
+            "TPDO Mapping object {:#06X} not found or is invalid.",
             mapping_index
         );
     }
@@ -304,8 +304,8 @@ pub(super) fn build_soa_frame(
     target_node: NodeId,
     set_er_flag: bool,
 ) -> PowerlinkFrame {
-    trace!(
-        "[MN] Building SoA frame with service {:?} for Node {}",
+    pl_trace!(*context, 
+        "Building SoA frame with service {:?} for Node {}",
         req_service, target_node.0
     );
     let epl_version = EPLVersion(
@@ -336,8 +336,8 @@ pub(super) fn build_nmt_command_frame(
     target_node_id: NodeId,
     command_data: NmtCommandData,
 ) -> PowerlinkFrame {
-    debug!(
-        "[MN] Building ASnd(NMT Command={:?}) for Node {}",
+    pl_debug!(*context, 
+        "Building ASnd(NMT Command={:?}) for Node {}",
         command, target_node_id.0
     );
     let is_broadcast = target_node_id.0 == C_ADR_BROADCAST_NODE_ID;
@@ -345,8 +345,8 @@ pub(super) fn build_nmt_command_frame(
         MacAddress(crate::types::C_DLL_MULTICAST_ASND)
     } else {
         let Some(mac) = scheduler::get_cn_mac_address(context, target_node_id) else {
-            error!(
-                "[MN] Cannot build NMT Command: MAC for Node {} not found.",
+            pl_error!(*context, 
+                "Cannot build NMT Command: MAC for Node {} not found.",
                 target_node_id.0
             );
             // Return a dummy frame that will fail serialization
@@ -404,7 +404,7 @@ pub(super) fn build_nmt_command_frame(
 /// Builds an ASnd(NMT Info) broadcast frame.
 /// (Reference: EPSG DS 301, Section 7.3.4)
 pub(super) fn build_nmt_info_frame(context: &MnContext, service_id: ServiceId) -> PowerlinkFrame {
-    debug!("[MN] Building ASnd(NMT Info={:?}) broadcast.", service_id);
+    pl_debug!(*context, "Building ASnd(NMT Info={:?}) broadcast.", service_id);
 
     let nmt_payload = match service_id {
         ServiceId::NMTPublishTime => build_publish_time_payload(context),
@@ -424,12 +424,12 @@ pub(super) fn build_nmt_info_frame(context: &MnContext, service_id: ServiceId) -
         }
         ServiceId::NMTPublishHeartbeat => {
             // TODO: Implement tracking of heartbeat events
-            warn!("[MN] NMTPublishHeartbeat not fully implemented. Sending empty node list.");
+            pl_warn!(*context, "NMTPublishHeartbeat not fully implemented. Sending empty node list.");
             vec![0u8; 32]
         }
         _ => {
-            error!(
-                "[MN] Invalid call to build_nmt_info_frame with ServiceId {:?}",
+            pl_error!(*context, 
+                "Invalid call to build_nmt_info_frame with ServiceId {:?}",
                 service_id
             );
             Vec::new()
@@ -529,13 +529,13 @@ pub(super) fn build_sdo_asnd_request(
     seq_header: SequenceLayerHeader,
     cmd: SdoCommand,
 ) -> Result<PowerlinkFrame, PowerlinkError> {
-    trace!(
+    pl_trace!(*context, 
         "Building SDO ASnd request for Node {} (TID {})",
         target_node_id.0, cmd.header.transaction_id
     );
     let Some(dest_mac) = scheduler::get_cn_mac_address(context, target_node_id) else {
-        error!(
-            "[MN] Cannot build SDO ASnd: MAC for Node {} not found.",
+        pl_error!(*context, 
+            "Cannot build SDO ASnd: MAC for Node {} not found.",
             target_node_id.0
         );
         return Err(PowerlinkError::InternalError("Missing CN MAC address"));

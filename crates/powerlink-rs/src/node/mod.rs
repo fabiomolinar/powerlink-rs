@@ -24,6 +24,7 @@ use alloc::vec::Vec;
 /// Holds state and components common to all POWERLINK node types (MN and CN).
 pub struct CoreNodeContext<'s> {
     pub od: ObjectDictionary<'s>,
+    pub node_id: NodeId,
     pub mac_address: MacAddress,
     pub sdo_server: SdoServer,
     pub sdo_client: SdoClient,
@@ -58,6 +59,9 @@ impl<'s> CoreNodeContext<'s> {
     ) -> Result<(), PowerlinkError> {
         self.embedded_sdo_client
             .queue_write(channel_index, index, sub_index, data)
+    }
+    fn get_node_id(&self) -> NodeId {
+        self.node_id
     }
 }
 
@@ -132,6 +136,14 @@ pub trait NodeContext<'s> {
     fn is_mn(&self) -> bool {
         !self.is_cn()
     }
+    fn log_prefix(&self) -> String {
+        if self.is_cn() {
+            format!("[CN - Node {}]", self.node_id())
+        } else {
+            format!("[MN - Node {}]", self.node_id())
+        }
+    }
+    fn node_id(&self) -> NodeId;
     fn core(&self) -> &CoreNodeContext<'s>;
     fn core_mut(&mut self) -> &mut CoreNodeContext<'s>;
     fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine;
@@ -152,7 +164,8 @@ pub(super) fn serialize_frame_action<'a>(
     if context.is_cn() {
         if !matches!(frame, PowerlinkFrame::PRes(_) | PowerlinkFrame::ASnd(_)) {
             error!(
-                "[CN] Attempted to serialize unexpected response frame type: {:?}",
+                "{} Attempted to serialize unexpected response frame type: {:?}",
+                context.log_prefix(),
                 frame
             );
             return Ok(NodeAction::NoAction);
@@ -160,7 +173,7 @@ pub(super) fn serialize_frame_action<'a>(
     } else {
         // is_mn()
         if matches!(frame, PowerlinkFrame::PRes(_)) {
-            error!("[MN] Attempted to serialize a PRes frame, which is invalid for an MN.");
+            error!("{} Attempted to serialize a PRes frame, which is invalid for an MN.", context.log_prefix());
             return Ok(NodeAction::NoAction);
         }
     }
@@ -179,12 +192,12 @@ pub(super) fn serialize_frame_action<'a>(
                     buf[i] = 0;
                 }
             }
-            info!("Sending frame type: {:?} ({} bytes)", frame, buf.len());
-            trace!("Sending frame bytes ({}): {:02X?}", buf.len(), &buf);
+            info!("{} Sending frame type: {:?} ({} bytes)", context.log_prefix(), frame, buf.len());
+            trace!("{} Sending frame bytes ({}): {:02X?}", context.log_prefix(), buf.len(), &buf);
             Ok(NodeAction::SendFrame(buf))
         }
         Err(e) => {
-            error!("Failed to serialize response frame: {:?}", e);
+            error!("{} Failed to serialize response frame: {:?}", context.log_prefix(), e);
             Err(e)
         }
     }

@@ -78,6 +78,7 @@ impl<'s> ManagingNode<'s> {
         // --- Initialize Core Context ---
         let core = CoreNodeContext {
             od, // OD is moved into context
+            node_id: nmt_state_machine.node_id,
             sdo_server: SdoServer::new(),
             // The CN's SdoClient is not used by the MN.
             sdo_client: Default::default(),
@@ -576,5 +577,12 @@ impl<'s> Node for ManagingNode<'s> {
 impl<'s> Loggable for ManagingNode<'s> {
     fn log_prefix(&self) -> String {
         format!("MN - Node {}:", self.context.nmt_state_machine.node_id().0)
+    }
+}
+
+impl Loggable for MnContext<'_> {
+    fn log_prefix(&self) -> String {
+        // Accessing NodeId from the inner state machine
+        format!("MN - Node {}:", self.nmt_state_machine.node_id().0)
     }
 }

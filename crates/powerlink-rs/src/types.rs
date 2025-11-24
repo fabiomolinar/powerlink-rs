@@ -42,6 +42,13 @@ pub type IpAddress = [u8; 4];
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(pub u8);
 
+// Implements Display for NodeId for easier debugging and logging.
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Represents the POWERLINK Version.
 /// (EPSG DS 301, Table 112)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

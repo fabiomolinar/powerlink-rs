@@ -18,7 +18,7 @@ use crate::od::ObjectValue;
 use crate::od::error_history; // Import the new module
 use alloc::string::String;
 // --- END IMPORTS ---
-use log::{debug, error, info, trace, warn};
+use crate::log::{pl_debug, pl_error, pl_info, pl_trace, pl_warn};
 
 /// Processes a deserialized `PowerlinkFrame`.
 pub(super) fn process_frame(
@@ -41,7 +41,7 @@ pub(super) fn process_frame(
             );
             // SDO Rx logic is in main.rs, which has already incremented SdoRx.
             // We just need to handle the SDO Server logic here.
-            debug!("Received SDO/ASnd frame for processing.");
+            pl_debug!(*context, "Received SDO/ASnd frame for processing.");
             let sdo_payload = &asnd_frame.payload;
             let client_info = SdoClientInfo::Asnd {
                 source_node_id: asnd_frame.source,
@@ -69,20 +69,20 @@ pub(super) fn process_frame(
                             return action;
                         }
                         Err(e) => {
-                            error!("Failed to build SDO/ASnd response: {:?}", e);
+                            pl_error!(*context, " Failed to build SDO/ASnd response: {:?}", e);
                             return NodeAction::NoAction;
                         }
                     }
                 }
                 Err(e) => {
-                    error!("SDO server error (ASnd): {:?}", e);
+                    pl_error!(*context, " SDO server error (ASnd): {:?}", e);
                     // Abort is often handled internally and returned as Ok(AbortCommand),
                     // so an Err here is likely a sequence or buffer error.
                     return NodeAction::NoAction;
                 }
             };
         } else if asnd_frame.destination == context.nmt_state_machine.node_id {
-            trace!("Received non-SDO ASnd frame: {:?}", asnd_frame);
+            pl_trace!(*context, " Received non-SDO ASnd frame: {:?}", asnd_frame);
             // Increment general AsyncRx counter for non-SDO ASnd frames
             context.core.od.increment_counter(
                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
@@ -98,7 +98,7 @@ pub(super) fn process_frame(
     // ... [Existing SoC/PReq/PRes/SoA handling remains unchanged] ...
     // --- Handle SoC Frame specific logic ---
     if let PowerlinkFrame::Soc(_) = &frame {
-        trace!("SoC received at time {}", current_time_us);
+        pl_trace!(*context, " SoC received at time {}", current_time_us);
         context.last_soc_reception_time_us = current_time_us;
         context.soc_timeout_check_active = true;
 
@@ -109,7 +109,7 @@ pub(super) fn process_frame(
         );
 
         if context.dll_error_manager.on_cycle_complete() {
-            info!("[CN] All DLL errors cleared, resetting Generic Error bit.");
+            pl_info!(*context, " [CN] All DLL errors cleared, resetting Generic Error bit.");
             let current_err_reg = context
                 .core
                 .od
@@ -122,7 +122,7 @@ pub(super) fn process_frame(
                 crate::od::ObjectValue::Unsigned8(new_err_reg),
                 false,
             ) {
-                error!("[CN] Failed to clear Error Register: {:?}", e);
+                pl_error!(*context, " [CN] Failed to clear Error Register: {:?}", e);
             }
             context.error_status_changed = true;
             // Increment Static Error Bit Field Changed counter
@@ -150,20 +150,20 @@ pub(super) fn process_frame(
                 match context.next_tick_us {
                     Some(current_deadline) if deadline < current_deadline => {
                         context.next_tick_us = Some(deadline);
-                        trace!("Scheduled SoC timeout check at {}us (earlier)", deadline);
+                        pl_trace!(*context, " Scheduled SoC timeout check at {}us (earlier)", deadline);
                     }
                     None => {
                         context.next_tick_us = Some(deadline);
-                        trace!("Scheduled SoC timeout check at {}us (first)", deadline);
+                        pl_trace!(*context, " Scheduled SoC timeout check at {}us (first)", deadline);
                     }
                     _ => {}
                 }
             } else {
-                warn!("Cycle Time (0x1006) is 0, cannot schedule SoC timeout.");
+                pl_warn!(*context, " Cycle Time (0x1006) is 0, cannot schedule SoC timeout.");
                 context.soc_timeout_check_active = false;
             }
         } else {
-            warn!(
+            pl_warn!(*context,
                 "Could not read Cycle Time (0x1006) or SoC Tolerance (0x1C14) from OD. SoC timeout check disabled."
             );
             context.soc_timeout_check_active = false;
@@ -222,12 +222,12 @@ pub(super) fn process_frame(
             PowerlinkFrame::PReq(preq) => {
                 if preq.destination == context.nmt_state_machine.node_id {
                     if preq.flags.ea == context.en_flag {
-                        trace!(
+                        pl_trace!(*context,
                             "Received matching EA flag ({}) from MN in PReq.",
                             preq.flags.ea
                         );
                     } else {
-                        trace!(
+                        pl_trace!(*context,
                             "Received mismatched EA flag ({}, EN is {}) from MN in PReq.",
                             preq.flags.ea, context.en_flag
                         );
@@ -237,7 +237,7 @@ pub(super) fn process_frame(
             PowerlinkFrame::SoA(soa) => {
                 if soa.target_node_id == context.nmt_state_machine.node_id {
                     if soa.flags.er {
-                        info!(
+                        pl_info!(*context,
                             "Received ER flag from MN in SoA, resetting EN flag and Emergency Queue."
                         );
                         context.en_flag = false;
@@ -249,17 +249,17 @@ pub(super) fn process_frame(
                         );
                     }
                     context.ec_flag = soa.flags.er;
-                    trace!(
+                    pl_trace!(*context,
                         "Processed SoA flags: ER={}, EC set to {}",
                         soa.flags.er, context.ec_flag
                     );
                     if soa.flags.ea == context.en_flag {
-                        trace!(
+                        pl_trace!(*context,
                             "Received matching EA flag ({}) from MN in SoA.",
                             soa.flags.ea
                         );
                     } else {
-                        trace!(
+                        pl_trace!(*context,
                             "Received mismatched EA flag ({}, EN is {}) from MN in SoA.",
                             soa.flags.ea, context.en_flag
                         );
@@ -307,7 +307,7 @@ pub(super) fn process_frame(
                                 let len = hostname_bytes.iter().position(|&b| b == 0).unwrap_or(32);
                                 match String::from_utf8(hostname_bytes[..len].to_vec()) {
                                     Ok(hostname) => {
-                                        info!("[CN] Received NmtNetHostNameSet: '{}'", hostname);
+                                        pl_info!(*context, " [CN] Received NmtNetHostNameSet: '{}'", hostname);
                                         // Write to OD 0x1F9A
                                         if let Err(e) = context.core.od.write_internal(
                                             constants::IDX_NMT_HOST_NAME_VSTR, // 0x1F9A
@@ -315,14 +315,14 @@ pub(super) fn process_frame(
                                             ObjectValue::VisibleString(hostname),
                                             false, // Bypass access checks for internal write
                                         ) {
-                                            error!(
+                                            pl_error!(*context,
                                                 "[CN] Failed to write new hostname to OD: {:?}",
                                                 e
                                             );
                                         }
 
                                         // Spec: "CN requests an IdentRequest to itself"
-                                        info!(
+                                        pl_info!(*context,
                                             "[CN] NmtNetHostNameSet: Queueing IdentRequest service."
                                         );
                                         // Use the new helper method on CnContext
@@ -332,14 +332,14 @@ pub(super) fn process_frame(
                                         );
                                     }
                                     Err(e) => {
-                                        error!(
+                                        pl_error!(*context,
                                             "[CN] Failed to parse hostname from NmtNetHostNameSet: {:?}",
                                             e
                                         );
                                     }
                                 }
                             } else {
-                                warn!(
+                                pl_warn!(*context,
                                     "[CN] Received NmtNetHostNameSet with invalid payload length ({} bytes)",
                                     asnd_frame.payload.len()
                                 );
@@ -350,13 +350,13 @@ pub(super) fn process_frame(
                             // Payload is [CmdID(1), Reserved(1), NodeID(1)]
                             if asnd_frame.payload.len() >= 3 {
                                 let node_to_flush = asnd_frame.payload[2];
-                                info!(
+                                pl_info!(*context,
                                     "[CN] Received NmtFlushArpEntry for Node ID {}. (ARP cache not yet implemented).",
                                     node_to_flush
                                 );
                                 // TODO: Add call to cn.arp_cache.flush(node_to_flush)
                             } else {
-                                warn!(
+                                pl_warn!(*context,
                                     "[CN] Received NmtFlushArpEntry with invalid payload length ({} bytes)",
                                     asnd_frame.payload.len()
                                 );
@@ -364,7 +364,7 @@ pub(super) fn process_frame(
                         }
                     }
                 } else {
-                    warn!("Received unknown NMT Command ID: {:#04x}", cmd_id_byte);
+                    pl_warn!(*context, " Received unknown NMT Command ID: {:#04x}", cmd_id_byte);
                 }
             }
         }
@@ -383,7 +383,7 @@ pub(super) fn process_frame(
         .process_event(dll_event, context.nmt_state_machine.current_state())
     {
         for error in errors {
-            warn!("DLL state machine reported error: {:?}", error);
+            pl_warn!(*context, " DLL state machine reported error: {:?}", error);
             // Increment history write counter for every error handled
             context.core.od.increment_counter(
                 constants::IDX_DIAG_ERR_STATISTICS_REC,
@@ -412,7 +412,7 @@ pub(super) fn process_frame(
                     crate::od::ObjectValue::Unsigned8(new_err_reg),
                     false,
                 ) {
-                    error!("[CN] Failed to update Error Register: {:?}", e)
+                    pl_error!(*context, " [CN] Failed to update Error Register: {:?}", e)
                 }
 
                 let error_entry = ErrorEntry {
@@ -439,14 +439,14 @@ pub(super) fn process_frame(
                     // *** NEW: Write to Error History OD ***
                     error_history::write_error_to_history(&mut context.core.od, &error_entry);
                     
-                    info!("[CN] New error queued: {:?}", error_entry);
+                    pl_info!(*context, " [CN] New error queued: {:?}", error_entry);
                     // Increment emergency write counter
                     context.core.od.increment_counter(
                         constants::IDX_DIAG_ERR_STATISTICS_REC,
                         constants::SUBIDX_DIAG_ERR_STATS_EMCY_WRITE,
                     );
                 } else {
-                    warn!(
+                    pl_warn!(*context,
                         "[CN] Emergency queue full, dropping error: {:?}",
                         error_entry
                     );
@@ -458,7 +458,7 @@ pub(super) fn process_frame(
                 }
             }
             if nmt_action != NmtAction::None {
-                info!("DLL error triggered NMT action: {:?}", nmt_action);
+                pl_info!(*context, " DLL error triggered NMT action: {:?}", nmt_action);
                 context
                     .nmt_state_machine
                     .process_event(NmtEvent::Error, &mut context.core.od);
@@ -500,7 +500,7 @@ pub(super) fn process_frame(
     if context.error_status_changed {
         context.en_flag = !context.en_flag;
         context.error_status_changed = false;
-        info!(
+        pl_info!(*context,
             "New error detected or acknowledged, toggling EN flag to: {}",
             context.en_flag
         );
@@ -629,7 +629,7 @@ pub(super) fn process_frame(
         match serialize_frame_action(response_frame, context) {
             Ok(action) => return action,
             Err(e) => {
-                error!("Failed to prepare response action: {:?}", e);
+                pl_error!(*context, " Failed to prepare response action: {:?}", e);
                 return NodeAction::NoAction;
             }
         }

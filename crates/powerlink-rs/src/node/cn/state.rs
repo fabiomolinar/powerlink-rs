@@ -71,6 +71,9 @@ impl<'s> NodeContext<'s> for CnContext<'s> {
     fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine {
         &self.nmt_state_machine
     }
+    fn node_id(&self) -> NodeId {
+        self.core.node_id
+    }
 }
 
 /// Inherent methods for CN-specific logic, including the moved TPDO logic.

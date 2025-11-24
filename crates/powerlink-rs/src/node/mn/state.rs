@@ -100,7 +100,10 @@ impl<'s> NodeContext<'s> for MnContext<'s> {
     }
     fn nmt_state_machine(&self) -> &dyn crate::nmt::NmtStateMachine {
         &self.nmt_state_machine
-    }
+    }   
+    fn node_id(&self) -> NodeId {
+        self.core.node_id
+    } 
 }
 
 /// Internal state tracking for each configured CN.

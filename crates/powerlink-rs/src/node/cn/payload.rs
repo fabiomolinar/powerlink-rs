@@ -27,7 +27,7 @@ pub(super) fn build_ident_response(
     sdo_client: &SdoClient,
     pending_nmt_requests: &[(CnNmtRequest, NodeId)],
 ) -> PowerlinkFrame {
-    debug!("Building IdentResponse for SoA from node {}", soa.source.0);
+    debug!("[CN - Node {}] Building IdentResponse for SoA from node {}", node_id, soa.source.0);
 
     let mut payload_struct = IdentResponsePayload::new(od);
 
@@ -49,7 +49,7 @@ pub(super) fn build_ident_response(
     let payload_len = match payload_struct.serialize(&mut payload_buf) {
         Ok(len) => len,
         Err(e) => {
-            error!("Failed to serialize IdentResponsePayload: {:?}", e);
+            error!("[CN - Node {}] Failed to serialize IdentResponsePayload: {:?}", node_id, e);
             // Fallback: minimal length or zeroed
             158
         }
@@ -79,7 +79,7 @@ pub(super) fn build_status_response(
     sdo_client: &SdoClient,
     pending_nmt_requests: &[(CnNmtRequest, NodeId)],
 ) -> PowerlinkFrame {
-    debug!("Building StatusResponse for SoA from node {}", soa.source.0);
+    debug!("[CN - Node {}] Building StatusResponse for SoA from node {}", node_id, soa.source.0);
 
     let nmt_state = od
         .read_u8(constants::IDX_NMT_CURR_NMT_STATE_U8, 0)
@@ -132,7 +132,7 @@ pub(super) fn build_status_response(
     let payload_len = match payload_struct.serialize(&mut payload_buf) {
         Ok(len) => len,
         Err(e) => {
-            error!("Failed to serialize StatusResponsePayload: {:?}", e);
+            error!("[CN - Node {}] Failed to serialize StatusResponsePayload: {:?}", node_id, e);
             payload_buf.truncate(14 + 20);
             payload_buf.fill(0);
             payload_struct.error_entries = Vec::new();
@@ -162,8 +162,8 @@ pub(super) fn build_nmt_request(
     soa: &crate::frame::SoAFrame,
 ) -> PowerlinkFrame {
     debug!(
-        "Building NMTRequest(CommandID={:#04x}, Target={}) for SoA from node {}",
-        command_id, target.0, soa.source.0
+        "[CN - Node {}] Building NMTRequest(CommandID={:#04x}, Target={}) for SoA from node {}",
+        node_id, command_id, target.0, soa.source.0
     );
     let payload = vec![command_id, target.0];
 
@@ -183,14 +183,14 @@ pub(super) fn build_pres_response(context: &mut CnContext, en_flag: bool) -> Pow
     let nmt_state = context.nmt_state_machine.current_state();
     let mac_address = context.core.mac_address;
 
-    debug!("Building PRes in response to PReq for node {}", node_id.0);
+    debug!("[CN - Node {}] Building PRes in response to PReq for node {}", node_id, node_id.0);
 
     let (payload, pdo_version, payload_is_valid) = match context.build_tpdo_payload() {
         Ok((payload, version)) => (payload, version, true),
         Err(e) => {
             error!(
-                "Failed to build TPDO payload for PRes: {:?}. Sending empty PRes with RD=0.",
-                e
+                "[CN - Node {}] Failed to build TPDO payload for PRes: {:?}. Sending empty PRes with RD=0.",
+                node_id, e
             );
             let payload_limit = context
                 .core

@@ -5,11 +5,15 @@ use super::state_machine::NmtStateMachine;
 use super::states::NmtState;
 use crate::PowerlinkError;
 use crate::frame::DllError;
+use crate::log::Loggable;
 use crate::nmt::events::NmtEvent;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::types::NodeId;
 use alloc::vec::Vec;
-use log::{debug, info, trace};
+use log::{debug, info};
+use crate::log::{pl_debug, pl_info, pl_trace};
+use alloc::string::String;
+use alloc::format;
 
 /// Manages the NMT state for a Controlled Node.
 pub struct CnNmtStateMachine {
@@ -32,7 +36,6 @@ impl CnNmtStateMachine {
 
     /// A fallible constructor that reads its configuration from an Object Dictionary.
     pub fn from_od(od: &ObjectDictionary) -> Result<Self, PowerlinkError> {
-        debug!("Initializing CN NMT state machine from Object Dictionary.");
         // Read Node ID from OD entry 0x1F93, sub-index 1.
         let node_id_val = od.read(0x1F93, 1).ok_or(PowerlinkError::ObjectNotFound)?;
         let node_id = if let ObjectValue::Unsigned8(val) = &*node_id_val {
@@ -40,6 +43,8 @@ impl CnNmtStateMachine {
         } else {
             return Err(PowerlinkError::TypeMismatch);
         };
+        
+        debug!("[CN - Node {}] Initializing CN NMT state machine from Object Dictionary.", node_id);
 
         // Read Feature Flags from OD entry 0x1F82, sub-index 0.
         let feature_flags_val = od.read(0x1F82, 0).ok_or(PowerlinkError::ObjectNotFound)?;
@@ -60,8 +65,8 @@ impl CnNmtStateMachine {
             };
 
         info!(
-            "CN NMT configured with NodeId: {}, FeatureFlags: {:?}, BasicEthTimeout: {}",
-            node_id.0, feature_flags, basic_ethernet_timeout
+            "[CN - Node {}] CN NMT configured with NodeId: {}, FeatureFlags: {:?}, BasicEthTimeout: {}",
+            node_id, node_id, feature_flags, basic_ethernet_timeout
         );
 
         Ok(Self::new(node_id, feature_flags, basic_ethernet_timeout))
@@ -71,6 +76,10 @@ impl CnNmtStateMachine {
 impl NmtStateMachine for CnNmtStateMachine {
     fn node_id(&self) -> NodeId {
         self.node_id
+    }
+
+    fn is_cn(&self) -> bool {
+        true
     }
 
     fn current_state(&self) -> NmtState {
@@ -110,7 +119,7 @@ impl NmtStateMachine for CnNmtStateMachine {
             return None;
         }
 
-        trace!(
+        pl_trace!(*self, 
             "[NMT] Processing event {:?} in state {:?}",
             event, old_state
         );
@@ -129,7 +138,7 @@ impl NmtStateMachine for CnNmtStateMachine {
 
             // (NMT_CT5) The MN enables the next state, but we wait for application readiness.
             (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => {
-                debug!("Received EnableReadyToOperate, waiting for application confirmation.");
+                pl_debug!(*self, "Received EnableReadyToOperate, waiting for application confirmation.");
                 NmtState::NmtPreOperational2
             }
             // (NMT_CT6) The application signals it's ready, moving to ReadyToOperate.
@@ -182,7 +191,7 @@ impl NmtStateMachine for CnNmtStateMachine {
         };
 
         if old_state != next_state {
-            info!(
+            pl_info!(*self, 
                 "[NMT] State changed from {:?} to {:?}",
                 old_state, next_state
             );
@@ -195,6 +204,12 @@ impl NmtStateMachine for CnNmtStateMachine {
         } else {
             Some(errors)
         }
+    }
+}
+
+impl Loggable for CnNmtStateMachine {
+    fn log_prefix(&self) -> String {
+        format!("CN - Node {}:", self.node_id)
     }
 }
 

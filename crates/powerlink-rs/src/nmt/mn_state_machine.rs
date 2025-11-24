@@ -2,13 +2,17 @@
 use super::flags::FeatureFlags;
 use super::state_machine::NmtStateMachine;
 use super::states::NmtState;
-use crate::PowerlinkError;
+use crate::{PowerlinkError, node};
 use crate::frame::DllError;
+use crate::log::Loggable;
 use crate::nmt::events::NmtEvent;
 use crate::od::{ObjectDictionary, ObjectValue};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::vec::Vec;
-use log::{debug, info, warn};
+use log::{debug, info};
+use crate::log::{pl_info, pl_warn};
+use alloc::string::String;
+use alloc::format;
 
 /// Manages the NMT state for a Managing Node.
 pub struct MnNmtStateMachine {
@@ -38,7 +42,8 @@ impl MnNmtStateMachine {
 
     /// A fallible constructor that reads its configuration from an Object Dictionary.
     pub fn from_od(od: &ObjectDictionary) -> Result<Self, PowerlinkError> {
-        debug!("Initializing MN NMT state machine from Object Dictionary.");
+        let node_id = NodeId(C_ADR_MN_DEF_NODE_ID);
+        debug!("[MN - Node {}] Initializing MN NMT state machine from Object Dictionary.", node_id);
         // Feature Flags from OD entry 0x1F82, sub-index 0.
         let feature_flags_val = od.read(0x1F82, 0).ok_or(PowerlinkError::ObjectNotFound)?;
         let feature_flags = if let ObjectValue::Unsigned32(val) = &*feature_flags_val {
@@ -66,12 +71,12 @@ impl MnNmtStateMachine {
         };
 
         info!(
-            "MN NMT configured with FeatureFlags: {:?}, WaitNotActiveTimeout: {}, StartupFlags: {:#010x}",
-            feature_flags, wait_not_active_timeout, startup_flags
+            "[MN - Node {}] MN NMT configured with FeatureFlags: {:?}, WaitNotActiveTimeout: {}, StartupFlags: {:#010x}",
+            node_id, feature_flags, wait_not_active_timeout, startup_flags
         );
 
         Ok(Self::new(
-            NodeId(C_ADR_MN_DEF_NODE_ID),
+            node_id,
             feature_flags,
             wait_not_active_timeout,
             startup_flags,
@@ -82,6 +87,10 @@ impl MnNmtStateMachine {
 impl NmtStateMachine for MnNmtStateMachine {
     fn node_id(&self) -> NodeId {
         self.node_id
+    }
+
+    fn is_cn(&self) -> bool {
+        false
     }
 
     fn current_state(&self) -> NmtState {
@@ -162,13 +171,13 @@ impl NmtStateMachine for MnNmtStateMachine {
 
             // If no specific transition is defined, remain in the current state.
             (current, _) => {
-                warn!("[NMT] Unhandled event {:?} in state {:?}", event, current);
+                pl_warn!(*self, "Unhandled event {:?} in state {:?}", event, current);
                 current
             }
         };
 
         if old_state != next_state {
-            info!(
+            pl_info!(*self,
                 "MN NMT state transition: {:?} -> {:?} (on event: {:?})",
                 old_state, next_state, event
             );
@@ -181,6 +190,12 @@ impl NmtStateMachine for MnNmtStateMachine {
         } else {
             Some(errors)
         }
+    }
+}
+
+impl Loggable for MnNmtStateMachine {
+    fn log_prefix(&self) -> String {
+        format!("MN - Node {}:", self.node_id)
     }
 }
 

@@ -7,17 +7,12 @@ use crate::nmt::states::NmtState;
 use crate::node::{NodeAction, serialize_frame_action};
 use crate::od::constants;
 use crate::types::{C_ADR_BROADCAST_NODE_ID, C_ADR_MN_DEF_NODE_ID, NodeId};
-use log::{debug, error, info, trace};
+use crate::log::{pl_debug, pl_error, pl_info};
 
 use super::events;
 use super::payload;
 use super::scheduler;
-use crate::PowerlinkError;
-use crate::frame::ASndFrame;
-use crate::frame::ServiceId;
 use crate::node::mn::state::NmtCommandData;
-use crate::sdo::command::SdoCommand;
-use crate::sdo::sequence::SequenceLayerHeader;
 
 /// Advances the POWERLINK cycle to the next phase.
 ///
@@ -78,7 +73,7 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
     // --- Transition to Asynchronous Phase ---
     // No more isochronous nodes to poll (or we are skipping them).
     if context.current_phase != CyclePhase::IsochronousDone {
-        debug!(
+        pl_debug!(*context, 
             "[MN] Isochronous phase complete for cycle {}. Phase: SoCSent -> SoA",
             context.current_multiplex_cycle
         );
@@ -91,7 +86,7 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
     // Mapped via OD 0x1F9E (Publish Config)
     let current_mux_cycle_1_based = context.current_multiplex_cycle.wrapping_add(1);
     if let Some(&service_id) = context.publish_config.get(&current_mux_cycle_1_based) {
-        info!(
+        pl_info!(*context, 
             "[MN] Publishing NMT Info Service {:?} for Mux Cycle {}.",
             service_id, current_mux_cycle_1_based
         );
@@ -205,7 +200,7 @@ pub(super) fn start_cycle(context: &mut MnContext, current_time_us: u64) -> Node
     match serialize_frame_action(soc_frame, context) {
         Ok(action) => action,
         Err(e) => {
-            error!("[MN] Failed to serialize SoC frame: {:?}", e);
+            pl_error!(*context, "[MN] Failed to serialize SoC frame: {:?}", e);
             NodeAction::NoAction
         }
     }
@@ -220,7 +215,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
     if current_nmt_state == NmtState::NmtOperational && !context.initial_operational_actions_done {
         context.initial_operational_actions_done = true;
         if (context.nmt_state_machine.startup_flags & (1 << 1)) != 0 {
-            info!("[MN] Sending NMTStartNode (Broadcast).");
+            pl_info!(*context, "[MN] Sending NMTStartNode (Broadcast).");
             // *** INCREMENT ASYNC TX COUNTER ***
             context.core.od.increment_counter(
                 constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
@@ -239,7 +234,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                 NodeAction::NoAction,
             );
         } else if let Some(&node_id) = context.mandatory_nodes.first() {
-            info!("[MN] Queuing NMTStartNode (Unicast).");
+            pl_info!(*context, "[MN] Queuing NMTStartNode (Unicast).");
             context.pending_nmt_commands.push((
                 MnNmtCommandRequest::State(NmtStateCommand::StartNode),
                 node_id,
@@ -292,7 +287,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
                         return serialize_frame_action(frame, context)
                             .unwrap_or(NodeAction::NoAction);
                     }
-                    Err(e) => error!("Failed to build SDO client request frame: {:?}", e),
+                    Err(e) => pl_error!(*context, "Failed to build SDO client request frame: {:?}", e),
                 }
             }
 
@@ -307,7 +302,7 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
             }
 
             // If we got here, we invited ourselves but had nothing to send.
-            debug!("[MN] Awaited async send, but no frames were queued.");
+            pl_debug!(*context, "[MN] Awaited async send, but no frames were queued.");
             return NodeAction::NoAction;
         }
         CyclePhase::SoCSent => {
@@ -351,6 +346,7 @@ mod tests {
         let od = ObjectDictionary::new(None);
         let core = CoreNodeContext {
             od,
+            node_id: NodeId(C_ADR_MN_DEF_NODE_ID),
             mac_address: Default::default(),
             sdo_server: SdoServer::new(),
             sdo_client: SdoClient::new(),
