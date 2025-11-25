@@ -323,6 +323,7 @@ mod tests {
     use crate::frame::DllCsEvent;
     use crate::frame::cs_state_machine::DllCsStateMachine;
     use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler};
+    use crate::hal::TimeProvider;
     use crate::nmt::cn_state_machine::CnNmtStateMachine;
     use crate::node::CoreNodeContext;
     use crate::node::cn::state::CnContext;
@@ -336,7 +337,14 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    fn create_context<'a>() -> CnContext<'a> {
+    // --- Mock TimeProvider ---
+    struct MockTimeProvider;
+    impl TimeProvider for MockTimeProvider {
+        fn now_monotonic_us(&self) -> u64 { 0 }
+        fn now_net_time(&self) -> NetTime { NetTime::default() }
+    }
+
+    fn create_context<'a>(time_provider: &'a dyn TimeProvider) -> CnContext<'a> {
         let mut od = ObjectDictionary::new(None);
         od.insert(
             constants::IDX_NMT_CYCLE_LEN_U32,
@@ -382,6 +390,7 @@ mod tests {
             nmt_state_machine: CnNmtStateMachine::new(NodeId(1), Default::default(), 0),
             dll_state_machine: DllCsStateMachine::default(),
             dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
+            time_provider,
             asnd_transport: AsndTransport,
             #[cfg(feature = "sdo-udp")]
             udp_transport: UdpTransport,            
@@ -402,7 +411,8 @@ mod tests {
 
     #[test]
     fn test_heartbeat_timeout() {
-        let mut context = create_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_context(&mock_time);
         context.heartbeat_consumers.insert(NodeId(240), (1000, 0));
         context
             .nmt_state_machine
@@ -425,7 +435,8 @@ mod tests {
 
     #[test]
     fn test_soc_timeout_logic() {
-        let mut context = create_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_context(&mock_time);
         context
             .core
             .od
@@ -476,7 +487,8 @@ mod tests {
 
     #[test]
     fn test_heartbeat_alive() {
-        let mut context = create_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_context(&mock_time);
         context.heartbeat_consumers.insert(NodeId(240), (1000, 0));
         context
             .nmt_state_machine
