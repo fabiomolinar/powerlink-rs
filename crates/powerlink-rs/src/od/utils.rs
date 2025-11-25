@@ -16,7 +16,7 @@ use alloc::vec;
 /// CN to be identified and brought to an operational state.
 ///
 /// Returns `Result` to allow for future fallible validation or allocation checks.
-pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, PowerlinkError> {
+pub fn new_cn_default<'a>(node_id: NodeId) -> Result<ObjectDictionary<'a>, PowerlinkError> {
     let mut od = ObjectDictionary::new(None);
 
     // --- Mandatory Objects (DS 301, 7.2.2.1.1) ---
@@ -83,9 +83,9 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         ObjectEntry {
             object: Object::Record(vec![
                 // Sub-index 0 (Count) is implicit. Vector starts at Sub 1.
-                ObjectValue::Unsigned32(0), // 1: All parameters
-                ObjectValue::Unsigned32(0), // 2: Communication
-                ObjectValue::Unsigned32(0), // 3: Application
+                ObjectValue::Unsigned32(0), // 1: Save All Parameters
+                ObjectValue::Unsigned32(0), // 2: Save Communication Parameters
+                ObjectValue::Unsigned32(0), // 3: Save Application Parameters
                 ObjectValue::Unsigned32(0), // 4: Manufacturer
             ]),
             name: "NMT_StoreParam_REC",
@@ -103,9 +103,9 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
         ObjectEntry {
             object: Object::Record(vec![
                 // Sub-index 0 (Count) is implicit.
-                ObjectValue::Unsigned32(0), // 1: All parameters
-                ObjectValue::Unsigned32(0), // 2: Communication
-                ObjectValue::Unsigned32(0), // 3: Application
+                ObjectValue::Unsigned32(0), // 1: Restore All Parameters
+                ObjectValue::Unsigned32(0), // 2: Restore Communication Parameters
+                ObjectValue::Unsigned32(0), // 3: Restore Application Parameters
                 ObjectValue::Unsigned32(0), // 4: Manufacturer
             ]),
             name: "NMT_RestoreParam_REC",
@@ -204,7 +204,7 @@ pub fn new_cn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
 
 /// Creates a minimal, compliant Object Dictionary for a POWERLINK
 /// Managing Node (MN).
-pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, PowerlinkError> {
+pub fn new_mn_default<'a>(node_id: NodeId) -> Result<ObjectDictionary<'a>, PowerlinkError> {
     // Start with a CN default OD
     let mut od = new_cn_default(node_id)?;
 
@@ -371,7 +371,7 @@ pub fn new_mn_default(node_id: NodeId) -> Result<ObjectDictionary<'static>, Powe
 }
 
 /// Helper to add standard diagnostic objects (0x1101, 0x1102) to an OD.
-fn add_diagnostic_objects(od: &mut ObjectDictionary<'static>) -> Result<(), PowerlinkError> {
+fn add_diagnostic_objects<'a>(od: &mut ObjectDictionary<'a>) -> Result<(), PowerlinkError> {
     // 0x1101: DIA_NMTTelegrCount_REC (DS 301, 8.1.1)
     od.insert(
         0x1101,

@@ -8,6 +8,9 @@ pub use interface::SimulatedInterface;
 // Fix E0599: Import trait to use send_frame/receive_frame methods
 use powerlink_rs::NetworkInterface; 
 use powerlink_rs::frame::{deserialize_frame, PowerlinkFrame};
+// Import TimeProvider traits
+use powerlink_rs::hal::TimeProvider;
+use powerlink_rs::common::NetTime;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -26,7 +29,8 @@ pub struct Packet {
 /// A virtual POWERLINK network that manages time and packet delivery.
 pub struct VirtualNetwork {
     /// Current simulation time in microseconds.
-    current_time_us: u64,
+    /// Shared with TimeProviders via Rc<RefCell>.
+    current_time_us: Rc<RefCell<u64>>,
     /// Pending packets to be delivered to nodes.
     /// Map: NodeId (Destination) -> Queue of Packets
     inboxes: HashMap<u8, VecDeque<Packet>>,
@@ -37,7 +41,16 @@ pub struct VirtualNetwork {
 impl VirtualNetwork {
     pub fn new() -> Self {
         Self {
-            current_time_us: 0,
+            current_time_us: Rc::new(RefCell::new(0)),
+            inboxes: HashMap::new(),
+            packet_history: Vec::new(),
+        }
+    }
+    
+    /// Creates a new VirtualNetwork sharing the time with the provided Rc.
+    pub fn new_with_shared_time(time: Rc<RefCell<u64>>) -> Self {
+        Self {
+            current_time_us: time,
             inboxes: HashMap::new(),
             packet_history: Vec::new(),
         }
@@ -45,15 +58,14 @@ impl VirtualNetwork {
 
     /// Advances simulation time.
     pub fn tick(&mut self, duration_us: u64) {
-        self.current_time_us += duration_us;
+        *self.current_time_us.borrow_mut() += duration_us;
     }
 
     pub fn current_time(&self) -> u64 {
-        self.current_time_us
+        *self.current_time_us.borrow()
     }
 
     /// Simulates sending a frame from a source to a destination (or broadcast).
-    /// This is called by the `SimulatedInterface` internals.
     pub fn transmit(&mut self, packet: Packet, dest_node_id: Option<u8>) {
         self.packet_history.push(packet.clone());
 
@@ -85,8 +97,6 @@ impl VirtualNetwork {
     }
 
     /// Dumps the entire frame history to a log file.
-    /// 
-    /// format: [Timestamp_us] [NodeType NodeID] -> [FrameType]: Description
     pub fn dump_history_to_file(&self, path: &str) -> std::io::Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
@@ -123,6 +133,33 @@ impl VirtualNetwork {
     }
 }
 
+/// A TimeProvider implementation that syncs with the VirtualNetwork.
+#[derive(Clone)]
+pub struct SimulatedTimeProvider {
+    pub current_time_us: Rc<RefCell<u64>>,
+}
+
+impl SimulatedTimeProvider {
+    pub fn new(time: Rc<RefCell<u64>>) -> Self {
+        Self { current_time_us: time }
+    }
+}
+
+impl TimeProvider for SimulatedTimeProvider {
+    fn now_monotonic_us(&self) -> u64 {
+        *self.current_time_us.borrow()
+    }
+
+    fn now_net_time(&self) -> NetTime {
+        NetTime::from_micros(*self.current_time_us.borrow())
+    }
+
+    fn on_soc_received(&self, _received_net_time: NetTime) {
+        // In a simulation, we might just log this, or we might assume perfect sync.
+        // For now, we do nothing as the nodes share the same underlying time source.
+    }
+}
+
 /// Wraps a `Node` (MN or CN) and its `SimulatedInterface` for the test harness.
 pub struct NodeHarness<N: Node> {
     pub node: N,
@@ -142,12 +179,10 @@ impl<N: Node> NodeHarness<N> {
     /// runs a single cycle of the node logic
     pub fn run_cycle(&mut self, network: &mut VirtualNetwork) {
         // 1. Check if we have a frame waiting in the network for us
-        // We peel frames from the network inbox into the interface's internal rx queue
         while let Some(packet) = network.receive(self.node_id.0) {
             self.interface.borrow_mut().push_rx(packet.data);
         }
         
-        // Now the interface has data. We "receive" it from the interface into a buffer.
         let mut rx_buffer = [0u8; 1518];
         let rx_len = match self.interface.borrow_mut().receive_frame(&mut rx_buffer) {
              Ok(len) => len,
@@ -155,7 +190,6 @@ impl<N: Node> NodeHarness<N> {
         };
 
         // 2. Run the node cycle
-        // Fix E0061: Handle argument mismatch based on feature flags
         #[cfg(feature = "sdo-udp")]
         let action = if rx_len > 0 {
              self.node.run_cycle(Some(&rx_buffer[..rx_len]), None, network.current_time())
@@ -173,17 +207,15 @@ impl<N: Node> NodeHarness<N> {
         // 3. Handle output actions
         match action {
             NodeAction::SendFrame(frame) => {
-                // Send via interface (which pushes to network)
                 self.interface.borrow_mut().send_frame(&frame).unwrap();
                 
                 let tx_frames = self.interface.borrow_mut().take_tx_frames();
                 for data in tx_frames {
-                    // Simple broadcast logic for now.
                     network.transmit(Packet {
                         data,
                         src_node_id: self.node_id.0,
                         transmit_time_us: network.current_time(),
-                    }, None); // None = Broadcast
+                    }, None);
                 }
             }
             _ => {}

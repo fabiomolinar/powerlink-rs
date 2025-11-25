@@ -1,18 +1,17 @@
 // tests/boot_up_test.rs
 
-// Import the shared simulator module.
-// Rust looks for `tests/simulator/mod.rs` when we declare `mod simulator;` here.
 #[cfg(feature = "std")]
 mod simulator;
 
 #[cfg(feature = "std")]
 mod tests {
     // Use the local simulator module we declared above
-    use super::simulator::{NodeHarness, SimulatedInterface, VirtualNetwork};
+    use super::simulator::{NodeHarness, SimulatedInterface, VirtualNetwork, SimulatedTimeProvider};
     
     use powerlink_rs::{
         ControlledNode, Node, NodeId, 
         ObjectDictionaryStorage, PowerlinkError,
+        hal::TimeProvider,
     };
     use powerlink_rs::frame::basic::MacAddress;
     use powerlink_rs::node::ManagingNode;
@@ -36,7 +35,6 @@ mod tests {
         fn clear_restore_defaults_flag(&mut self) -> Result<(), PowerlinkError> { Ok(()) }
     }
 
-    // Helper to create a default ObjectEntry since the trait impl isn't visible here
     fn default_object_entry(value: ObjectValue) -> ObjectEntry {
         ObjectEntry {
             object: powerlink_rs::od::Object::Variable(value),
@@ -49,36 +47,27 @@ mod tests {
         }
     }
 
-    fn create_cn(node_id: u8) -> NodeHarness<ControlledNode<'static>> {
+    fn create_cn(node_id: u8, time_provider: &dyn TimeProvider) -> NodeHarness<ControlledNode<'_>> {
         let mac = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, node_id]);
         
-        // Setup minimal OD
         let mut od = powerlink_rs::od::utils::new_cn_default(NodeId(node_id)).unwrap();
-        // Required by IdentResponse
         od.insert(0x1000, default_object_entry(ObjectValue::Unsigned32(0x12345678)));
         
-        let node = ControlledNode::new(od, mac).unwrap();
+        let node = ControlledNode::new(od, mac, time_provider).unwrap();
         let interface = Rc::new(RefCell::new(SimulatedInterface::new(node_id, mac.0)));
         
         NodeHarness::new(node, interface, NodeId(node_id))
     }
 
-    fn create_mn() -> NodeHarness<ManagingNode<'static>> {
+    fn create_mn(time_provider: &dyn TimeProvider) -> NodeHarness<ManagingNode<'_>> {
         let node_id = 240;
         let mac = MacAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0xF0]);
         
-        // Setup minimal OD for MN
         let mut od = powerlink_rs::od::utils::new_mn_default(NodeId(node_id)).unwrap();
-        
-        // Configure Node 1 as mandatory
-        // 0x1F81 sub 1: NodeAssignment for Node 1
-        // Bits: 0(Exists)=1, 1(IsCN)=1, 3(Mandatory)=1, 8(Isochr)=0(default) -> 0b1011 = 0xB
         od.write(0x1F81, 1, ObjectValue::Unsigned32(0xB)).unwrap();
+        od.write(0x1F84, 1, ObjectValue::Unsigned32(0)).unwrap(); 
         
-        // Configure Expected Ident for Node 1 (match CN's default)
-        od.write(0x1F84, 1, ObjectValue::Unsigned32(0)).unwrap(); // DeviceType (0=don't check)
-        
-        let node = ManagingNode::new(od, mac, None).unwrap();
+        let node = ManagingNode::new(od, mac, None, time_provider).unwrap();
         let interface = Rc::new(RefCell::new(SimulatedInterface::new(node_id, mac.0)));
         
         NodeHarness::new(node, interface, NodeId(node_id))
@@ -86,39 +75,39 @@ mod tests {
 
     #[test]
     fn test_boot_up_sequence() {
-        // 1. Initialize File Logger
-        // Create log folder
         let _ = fs::create_dir("tests/boot_up_test");
-        // File::create truncates the file if it exists, satisfying the overwrite requirement.
         let log_file = File::create("tests/boot_up_test/test_boot_up_sequence.log").expect("Could not create log file");
         
         let _ = env_logger::Builder::new()
             .target(env_logger::Target::Pipe(Box::new(log_file)))
             .filter_level(log::LevelFilter::Trace)
-            .format_timestamp_micros() // High precision timing is useful for PLK
+            .format_timestamp_micros()
             .try_init();
 
-        let mut network = VirtualNetwork::new();
+        // Shared time source
+        let shared_time = Rc::new(RefCell::new(0u64));
+        
+        // Network uses shared time
+        let mut network = VirtualNetwork::new_with_shared_time(shared_time.clone());
         network.register_node(1);
         network.register_node(240);
 
-        let mut cn = create_cn(1);
-        let mut mn = create_mn();
+        // Provider for nodes uses same shared time
+        let time_provider = SimulatedTimeProvider::new(shared_time.clone());
 
-        // Run simulation loop
-        // We tick in 1ms increments (1000us)
+        let mut cn = create_cn(1, &time_provider);
+        let mut mn = create_mn(&time_provider);
+
         let dt = 1000; 
-        let max_time = 5_000_000; // 5 seconds max
+        let max_time = 5_000_000; 
         
         let mut mn_reached_operational = false;
         let mut cn_reached_operational = false;
 
         while network.current_time() < max_time {
-            // Run cycles
             mn.run_cycle(&mut network);
             cn.run_cycle(&mut network);
             
-            // Check states
             if mn.node.nmt_state() == NmtState::NmtOperational {
                 mn_reached_operational = true;
             }
@@ -133,7 +122,6 @@ mod tests {
             network.tick(dt);
         }
         
-        // Dump history regardless of success/failure to assist debugging
         if let Err(e) = network.dump_history_to_file("tests/boot_up_test/test_boot_up_sequence_packets.log") {
             println!("Warning: Failed to dump packet history: {}", e);
         }
