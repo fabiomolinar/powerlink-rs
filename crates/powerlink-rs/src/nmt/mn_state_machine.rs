@@ -2,7 +2,7 @@
 use super::flags::FeatureFlags;
 use super::state_machine::NmtStateMachine;
 use super::states::NmtState;
-use crate::{PowerlinkError, node};
+use crate::PowerlinkError;
 use crate::frame::DllError;
 use crate::log::Loggable;
 use crate::nmt::events::NmtEvent;

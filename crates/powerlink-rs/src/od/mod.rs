@@ -16,7 +16,7 @@ use crate::hal::ObjectDictionaryStorage;
 use crate::{NodeId, PowerlinkError};
 use alloc::{borrow::Cow, collections::BTreeMap, vec::Vec};
 use core::fmt;
-use log::{error, info, trace, warn};
+use log::{error, trace, warn};
 
 /// The main Object Dictionary structure.
 pub struct ObjectDictionary<'a> {

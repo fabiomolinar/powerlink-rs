@@ -1,6 +1,6 @@
 // src/node/mn/cycle.rs
 use super::state::{CyclePhase, MnContext};
-use crate::frame::{DllMsEvent, PowerlinkFrame};
+use crate::frame::DllMsEvent;
 use crate::nmt::NmtStateMachine;
 use crate::nmt::events::{MnNmtCommandRequest, NmtStateCommand};
 use crate::nmt::states::NmtState;

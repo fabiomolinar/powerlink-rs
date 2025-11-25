@@ -1,8 +1,7 @@
 use super::{ObjectDictionary, ObjectValue};
 use super::entry::{AccessType, Category, Object, ObjectEntry, PdoMapping};
-use crate::{NodeId, PowerlinkError};
+use crate::PowerlinkError;
 use alloc::vec;
-use log::trace;
 
 /// Populates the OD with mandatory objects that define protocol mechanisms.
 ///

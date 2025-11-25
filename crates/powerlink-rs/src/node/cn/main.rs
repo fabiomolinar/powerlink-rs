@@ -29,7 +29,7 @@ use alloc::vec::Vec;
 use log::debug;
 use log::{info, warn};
 
-use crate::log::{Loggable, pl_info, pl_warn, pl_error, pl_trace, pl_debug};
+use crate::log::{Loggable, pl_info, pl_warn, pl_error};
 use alloc::string::String;
 use alloc::format;
 

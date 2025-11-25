@@ -1,6 +1,5 @@
 // src/log.rs
 use alloc::string::String;
-use alloc::format;
 
 /// A trait for objects that can provide a contextual prefix for log messages.
 /// 
