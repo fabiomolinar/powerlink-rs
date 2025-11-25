@@ -176,11 +176,13 @@ pub(crate) fn handle_tick(context: &mut MnContext, current_time_us: u64) -> Node
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::{NetTime, RelativeTime}; // Added imports for mock
     use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
     use crate::frame::ms_state_machine::DllMsStateMachine;
     use crate::frame::{PowerlinkFrame, deserialize_frame, DllMsEvent};
+    use crate::hal::TimeProvider; // Added import
     use crate::nmt::mn_state_machine::MnNmtStateMachine;
-    use crate::node::mn::state::{CnInfo, CnState}; // Import CnState
+    use crate::node::mn::state::{CnInfo, CnState}; 
     use crate::node::{CoreNodeContext, NodeAction};
     use crate::od::ObjectDictionary;
     use crate::sdo::client_manager::SdoClientManager;
@@ -192,7 +194,14 @@ mod tests {
     use alloc::collections::{BTreeMap, BinaryHeap};
     use alloc::vec::Vec;
 
-    fn create_test_context<'a>() -> MnContext<'a> {
+    // --- Mock TimeProvider ---
+    struct MockTimeProvider;
+    impl TimeProvider for MockTimeProvider {
+        fn now_monotonic_us(&self) -> u64 { 0 }
+        fn now_net_time(&self) -> NetTime { NetTime::default() }
+    }
+
+    fn create_test_context<'a>(time_provider: &'a dyn TimeProvider) -> MnContext<'a> {
         let od = ObjectDictionary::new(None);
         let core = CoreNodeContext {
             od,
@@ -207,6 +216,8 @@ mod tests {
         MnContext {
             core,
             configuration_interface: None,
+            time_provider, // Injected
+            relative_time_accumulator: RelativeTime::default(),
             nmt_state_machine: MnNmtStateMachine::new(
                 NodeId(C_ADR_MN_DEF_NODE_ID),
                 Default::default(),
@@ -248,7 +259,8 @@ mod tests {
 
     #[test]
     fn test_handle_tick_starts_cycle() {
-        let mut context = create_test_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_test_context(&mock_time);
         context.cycle_time_us = 1000;
         context.current_cycle_start_time_us = 1000;
 
@@ -275,7 +287,8 @@ mod tests {
 
     #[test]
     fn test_handle_tick_pres_timeout() {
-        let mut context = create_test_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_test_context(&mock_time);
         context
             .nmt_state_machine
             .set_state(NmtState::NmtOperational);

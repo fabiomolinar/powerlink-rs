@@ -1,9 +1,10 @@
 // crates/powerlink-rs/src/node/mn/state.rs
 use crate::ErrorHandler;
+use crate::common::RelativeTime; // Added RelativeTime
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, ErrorCounters, LoggingErrorHandler, MnErrorCounters};
-use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame, ServiceId}; // Import ServiceId
-use crate::hal::ConfigurationInterface; // <-- ADDED: Import ConfigurationInterface
+use crate::frame::{DllMsEvent, DllMsStateMachine, PowerlinkFrame, ServiceId}; 
+use crate::hal::{ConfigurationInterface, TimeProvider}; // Added TimeProvider
 use crate::nmt::events::MnNmtCommandRequest;
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::states::NmtState;
@@ -14,7 +15,7 @@ use crate::sdo::transport::AsndTransport;
 use crate::sdo::transport::UdpTransport;
 use crate::types::{IpAddress, NodeId};
 use alloc::collections::{BTreeMap, BinaryHeap};
-use alloc::string::String; // Import String
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
@@ -36,7 +37,15 @@ pub struct MnContext<'s> {
 
     /// The Configuration Manager interface.
     /// Allows the MN to retrieve expected configuration data for CNs.
-    pub configuration_interface: Option<&'s dyn ConfigurationInterface>, // <-- ADDED
+    pub configuration_interface: Option<&'s dyn ConfigurationInterface>,
+
+    /// The Time Provider interface for real-time clock access.
+    /// Used for IEEE 1588 NetTime and RelativeTime calculation.
+    pub time_provider: &'s dyn TimeProvider, // Added
+
+    /// Accumulator for the RelativeTime field in SoC frames.
+    /// Incremented by the cycle time at the start of each cycle.
+    pub relative_time_accumulator: RelativeTime, // Added
 
     pub nmt_state_machine: MnNmtStateMachine,
     pub dll_state_machine: DllMsStateMachine,
@@ -135,7 +144,6 @@ pub struct CnIdentity {
 }
 
 /// A struct holding all state information for a single CN, as tracked by the MN.
-// We can now re-add Copy and Eq because CnIdentity is Copy and Eq.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CnInfo {
     /// The high-level boot-up state of the CN.

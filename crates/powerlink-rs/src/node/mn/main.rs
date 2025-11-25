@@ -4,17 +4,18 @@ use alloc::collections::BTreeMap;
 use super::events;
 use super::state::{CyclePhase, MnContext};
 use crate::PowerlinkError;
+use crate::common::RelativeTime; // Added
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
 use crate::frame::ms_state_machine::DllMsStateMachine;
 use crate::frame::{PowerlinkFrame, ServiceId, deserialize_frame};
-use crate::hal::ConfigurationInterface;
+use crate::hal::{ConfigurationInterface, TimeProvider}; // Added TimeProvider
 use crate::nmt::mn_state_machine::MnNmtStateMachine;
 use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::mn::config;
 use crate::node::{CoreNodeContext, Node, NodeAction};
-use crate::od::{ObjectDictionary, constants};
+use crate::od::{Object, ObjectDictionary, constants};
 use crate::sdo::client_manager::SdoClientManager;
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
@@ -53,10 +54,12 @@ impl<'s> ManagingNode<'s> {
     /// * `od` - The Object Dictionary containing the node's configuration.
     /// * `mac_address` - The physical MAC address of the node.
     /// * `configuration_interface` - An optional interface to an external Configuration Manager (CFM).
+    /// * `time_provider` - The interface to the hardware clock.
     pub fn new(
         mut od: ObjectDictionary<'s>,
         mac_address: MacAddress,
         configuration_interface: Option<&'s dyn ConfigurationInterface>,
+        time_provider: &'s dyn TimeProvider, // Added
     ) -> Result<Self, PowerlinkError> {
         od.init()?;
         od.validate_mandatory_objects(true)?;
@@ -91,6 +94,8 @@ impl<'s> ManagingNode<'s> {
         let context = MnContext {
             core,
             configuration_interface,
+            time_provider, // Added
+            relative_time_accumulator: RelativeTime::default(), // Added, starts at 0
             nmt_state_machine,
             dll_state_machine: DllMsStateMachine::new(),
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),

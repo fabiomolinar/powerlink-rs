@@ -405,6 +405,8 @@ pub(super) fn schedule_timeout(context: &mut MnContext, deadline_us: u64, event:
 
 #[cfg(test)]
 mod tests {
+    use crate::{NetTime, RelativeTime};
+    use crate::hal::TimeProvider;
     use crate::node::mn::state::AsyncRequest;
     use alloc::collections::{BTreeMap, BinaryHeap};
 
@@ -423,8 +425,15 @@ mod tests {
     use alloc::vec::Vec;
     use crate::node::mn::state::{CnInfo, CnState};
 
+    // --- Mock TimeProvider ---
+    struct MockTimeProvider;
+    impl TimeProvider for MockTimeProvider {
+        fn now_monotonic_us(&self) -> u64 { 0 }
+        fn now_net_time(&self) -> NetTime { NetTime::default() }
+    }
+
     // --- Helper to create a minimal MnContext for testing ---
-    fn create_test_context<'a>() -> MnContext<'a> {
+    fn create_test_context<'a>(time_provider: &'a dyn TimeProvider) -> MnContext<'a> {
         let od = ObjectDictionary::new(None);
         let core = CoreNodeContext {
             od,
@@ -439,6 +448,8 @@ mod tests {
         MnContext {
             core,
             configuration_interface: None,
+            time_provider, 
+            relative_time_accumulator: RelativeTime::default(),
             nmt_state_machine: MnNmtStateMachine::new(
                 NodeId(C_ADR_MN_DEF_NODE_ID),
                 Default::default(),
@@ -480,7 +491,8 @@ mod tests {
 
     #[test]
     fn test_priority_er_requests() {
-        let mut context = create_test_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_test_context(&mock_time);
         let node_id = NodeId(10);
 
         // Setup: Add a pending ER request
@@ -498,7 +510,8 @@ mod tests {
 
     #[test]
     fn test_priority_status_requests() {
-        let mut context = create_test_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_test_context(&mock_time);
         let node_id = NodeId(20);
 
         // Setup: Add a pending Status request
@@ -515,7 +528,8 @@ mod tests {
 
     #[test]
     fn test_priority_nmt_command_over_generic() {
-        let mut context = create_test_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_test_context(&mock_time);
         let target_node = NodeId(5);
 
         // Setup: Add both an NMT command and a generic ASnd frame
@@ -547,7 +561,8 @@ mod tests {
 
     #[test]
     fn test_priority_cn_async_request() {
-        let mut context = create_test_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_test_context(&mock_time);
         let node_high = NodeId(10);
         let node_low = NodeId(11);
 
@@ -574,7 +589,8 @@ mod tests {
 
     #[test]
     fn test_find_next_node_to_identify() {
-        let mut context = create_test_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_test_context(&mock_time);
 
         // Setup: Add nodes in various states
         // Node 1: Operational (Known)
@@ -617,7 +633,8 @@ mod tests {
 
     #[test]
     fn test_find_next_async_only_to_poll() {
-        let mut context = create_test_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_test_context(&mock_time);
 
         // Setup: Two async-only nodes
         context.async_only_nodes.push(NodeId(10));
@@ -653,7 +670,8 @@ mod tests {
 
     #[test]
     fn test_isochronous_scheduler_skips_stopped_nodes() {
-        let mut context = create_test_context();
+        let mock_time = MockTimeProvider;
+        let mut context = create_test_context(&mock_time);
         context.isochronous_nodes.push(NodeId(1));
         context.isochronous_nodes.push(NodeId(2));
         context.isochronous_nodes.push(NodeId(3));

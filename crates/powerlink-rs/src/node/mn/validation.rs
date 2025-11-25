@@ -265,9 +265,11 @@ pub fn check_all_mandatory_comm_verified(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{NetTime, RelativeTime};
     use crate::frame::error::{DllErrorManager, LoggingErrorHandler, MnErrorCounters};
     use crate::frame::ms_state_machine::DllMsStateMachine;
     use crate::frame::poll::{PRFlag, RSFlag};
+    use crate::hal::TimeProvider;
     use crate::nmt::flags::FeatureFlags;
     use crate::nmt::mn_state_machine::MnNmtStateMachine;
     use crate::nmt::states::NmtState;
@@ -303,6 +305,13 @@ mod tests {
         fn is_software_update_required(&self, _node_id: u8, _d: u32, _t: u32) -> bool {
             self.should_update_sw
         }
+    }
+
+    // --- Mock TimeProvider ---
+    struct MockTimeProvider;
+    impl TimeProvider for MockTimeProvider {
+        fn now_monotonic_us(&self) -> u64 { 0 }
+        fn now_net_time(&self) -> NetTime { NetTime::default() }
     }
 
     // --- Helper to create a valid payload ---
@@ -374,7 +383,7 @@ mod tests {
         );
     }
 
-    fn create_context<'a>(od: ObjectDictionary<'a>) -> MnContext<'a> {
+    fn create_context<'a>(od: ObjectDictionary<'a>, time_provider: &'a dyn TimeProvider) -> MnContext<'a> {
         let core = CoreNodeContext {
             od,
             node_id: NodeId(C_ADR_MN_DEF_NODE_ID),
@@ -386,7 +395,9 @@ mod tests {
         };
         MnContext {
             core,
-            configuration_interface: None,
+            configuration_interface: None,            
+            time_provider, 
+            relative_time_accumulator: RelativeTime::default(),
             nmt_state_machine: MnNmtStateMachine::new(
                 NodeId(C_ADR_MN_DEF_NODE_ID),
                 Default::default(),
@@ -431,7 +442,8 @@ mod tests {
         let mut od = ObjectDictionary::new(None);
         let node_id = NodeId(1);
         setup_od(&mut od, node_id.0);
-        let mut context = create_context(od);
+        let mock_time = MockTimeProvider;
+        let mut context = create_context(od, &mock_time);
         let payload = create_valid_payload();
 
         // Act
@@ -446,7 +458,8 @@ mod tests {
         let mut od = ObjectDictionary::new(None);
         let node_id = NodeId(1);
         setup_od(&mut od, node_id.0);
-        let mut context = create_context(od);
+        let mock_time = MockTimeProvider;
+        let mut context = create_context(od, &mock_time);
 
         let mut payload = create_valid_payload();
         payload.device_type = 0x9999; // Mismatch
@@ -472,7 +485,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut context = create_context(od);
+        let mock_time = MockTimeProvider;
+        let mut context = create_context(od, &mock_time);
 
         // Payload has date=0, but we set expected date in OD
         context.core.od.insert(
@@ -515,7 +529,8 @@ mod tests {
         )
         .unwrap();
 
-        let mut context = create_context(od);
+        let mock_time = MockTimeProvider;
+        let mut context = create_context(od, &mock_time);
 
         // Set expected date
         context.core.od.insert(
