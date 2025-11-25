@@ -319,6 +319,7 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RelativeTime;
     use crate::frame::DllCsEvent;
     use crate::frame::cs_state_machine::DllCsStateMachine;
     use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler};
@@ -383,7 +384,10 @@ mod tests {
             dll_error_manager: DllErrorManager::new(CnErrorCounters::new(), LoggingErrorHandler),
             asnd_transport: AsndTransport,
             #[cfg(feature = "sdo-udp")]
-            udp_transport: UdpTransport,
+            udp_transport: UdpTransport,            
+            last_soc_net_time: NetTime::default(),
+            last_soc_relative_time: RelativeTime::default(),
+            last_soc_arrival_time_us: 0,
             pending_nmt_requests: Vec::new(),
             emergency_queue: VecDeque::new(),
             heartbeat_consumers: BTreeMap::new(),

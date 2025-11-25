@@ -1,7 +1,7 @@
 // src/node/cn/main.rs
 use super::events;
 use super::state::CnContext;
-use crate::PowerlinkError;
+use crate::{NetTime, PowerlinkError, RelativeTime};
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler};
 use crate::frame::{DllError, NmtAction, ServiceId, deserialize_frame};
@@ -119,6 +119,9 @@ impl<'s> ControlledNode<'s> {
                 asnd_transport: AsndTransport,
                 #[cfg(feature = "sdo-udp")]
                 udp_transport: UdpTransport,
+                last_soc_net_time: NetTime::default(),
+                last_soc_relative_time: RelativeTime::default(),
+                last_soc_arrival_time_us: 0,
                 pending_nmt_requests: Vec::new(),
                 emergency_queue: VecDeque::with_capacity(10), // Default capacity for 10 errors
                 heartbeat_consumers,                          // Add the new map
