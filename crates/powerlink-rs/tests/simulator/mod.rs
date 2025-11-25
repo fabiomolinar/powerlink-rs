@@ -8,7 +8,6 @@ pub use interface::SimulatedInterface;
 // Fix E0599: Import trait to use send_frame/receive_frame methods
 use powerlink_rs::NetworkInterface; 
 use powerlink_rs::frame::{deserialize_frame, PowerlinkFrame};
-// Import TimeProvider traits
 use powerlink_rs::hal::TimeProvider;
 use powerlink_rs::common::NetTime;
 
@@ -66,6 +65,7 @@ impl VirtualNetwork {
     }
 
     /// Simulates sending a frame from a source to a destination (or broadcast).
+    /// This is called by the `SimulatedInterface` internals.
     pub fn transmit(&mut self, packet: Packet, dest_node_id: Option<u8>) {
         self.packet_history.push(packet.clone());
 
@@ -97,6 +97,8 @@ impl VirtualNetwork {
     }
 
     /// Dumps the entire frame history to a log file.
+    /// 
+    /// format: [Timestamp_us] [NodeType NodeID] -> [FrameType]: Description
     pub fn dump_history_to_file(&self, path: &str) -> std::io::Result<()> {
         let file = File::create(path)?;
         let mut writer = BufWriter::new(file);
@@ -165,6 +167,8 @@ pub struct NodeHarness<N: Node> {
     pub node: N,
     pub interface: Rc<RefCell<SimulatedInterface>>,
     pub node_id: NodeId,
+    /// Stores a copy of every frame sent by this node for verification.
+    pub sent_frames: Vec<PowerlinkFrame>, 
 }
 
 impl<N: Node> NodeHarness<N> {
@@ -173,16 +177,19 @@ impl<N: Node> NodeHarness<N> {
             node,
             interface,
             node_id,
+            sent_frames: Vec::new(),
         }
     }
 
     /// runs a single cycle of the node logic
     pub fn run_cycle(&mut self, network: &mut VirtualNetwork) {
         // 1. Check if we have a frame waiting in the network for us
+        // We peel frames from the network inbox into the interface's internal rx queue
         while let Some(packet) = network.receive(self.node_id.0) {
             self.interface.borrow_mut().push_rx(packet.data);
         }
         
+        // Now the interface has data. We "receive" it from the interface into a buffer.
         let mut rx_buffer = [0u8; 1518];
         let rx_len = match self.interface.borrow_mut().receive_frame(&mut rx_buffer) {
              Ok(len) => len,
@@ -190,6 +197,7 @@ impl<N: Node> NodeHarness<N> {
         };
 
         // 2. Run the node cycle
+        // Fix E0061: Handle argument mismatch based on feature flags
         #[cfg(feature = "sdo-udp")]
         let action = if rx_len > 0 {
              self.node.run_cycle(Some(&rx_buffer[..rx_len]), None, network.current_time())
@@ -207,15 +215,27 @@ impl<N: Node> NodeHarness<N> {
         // 3. Handle output actions
         match action {
             NodeAction::SendFrame(frame) => {
+                // Parse the frame to PowerlinkFrame struct for easier test assertions
+                match deserialize_frame(&frame) {
+                    Ok(parsed_frame) => self.sent_frames.push(parsed_frame),
+                    Err(e) => {
+                        // In a test harness, it is useful to know if a node generated garbage.
+                        // We panic here to fail the test immediately.
+                        panic!("Node {} generated an invalid POWERLINK frame: {:?}", self.node_id.0, e);
+                    }
+                }
+
+                // Send via interface (which pushes to network)
                 self.interface.borrow_mut().send_frame(&frame).unwrap();
                 
                 let tx_frames = self.interface.borrow_mut().take_tx_frames();
                 for data in tx_frames {
+                    // Simple broadcast logic for now.
                     network.transmit(Packet {
                         data,
                         src_node_id: self.node_id.0,
                         transmit_time_us: network.current_time(),
-                    }, None);
+                    }, None); // None = Broadcast
                 }
             }
             _ => {}
