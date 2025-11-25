@@ -1,16 +1,17 @@
-// crates/powerlink-rs/src/node/cn/state.rs
+// src/node/cn/state.rs
 use crate::ErrorHandler;
 use crate::PowerlinkError;
-use crate::common::{NetTime, RelativeTime}; // Added RelativeTime
+use crate::common::{NetTime, RelativeTime};
 use crate::frame::DllCsStateMachine;
 use crate::frame::error::{
     CnErrorCounters, DllErrorManager, ErrorCounters, ErrorEntry, LoggingErrorHandler,
 };
+use crate::hal::TimeProvider; // Added import
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::{CnNmtRequest, NmtServiceRequest};
 use crate::node::{CoreNodeContext, NodeContext, PdoHandler};
 use crate::od::{ObjectValue, constants};
-use crate::pdo::{PDOVersion, PdoMappingEntry, error::PdoError};
+use crate::pdo::{PDOVersion, PdoMappingEntry, PdoError};
 use crate::sdo::transport::AsndTransport;
 #[cfg(feature = "sdo-udp")]
 use crate::sdo::transport::UdpTransport;
@@ -23,6 +24,11 @@ use log::{error, info, trace, warn};
 /// Holds the complete state for a Controlled Node.
 pub struct CnContext<'s> {
     pub core: CoreNodeContext<'s>, // Use CoreNodeContext for shared state
+    
+    /// The Time Provider interface for real-time clock access.
+    /// Used for IEEE 1588 NetTime synchronization.
+    pub time_provider: &'s dyn TimeProvider, // Added
+
     pub nmt_state_machine: CnNmtStateMachine,
     pub dll_state_machine: DllCsStateMachine,
     // dll_error_manager is separated due to its generic parameters
@@ -33,7 +39,7 @@ pub struct CnContext<'s> {
     #[cfg(feature = "sdo-udp")]
     pub udp_transport: UdpTransport,
     
-    // --- Synchronization Hooks (Added in Step 4) ---
+    // --- Synchronization Hooks ---
     /// The NetTime extracted from the last received SoC frame.
     pub last_soc_net_time: NetTime,
     /// The RelativeTime extracted from the last received SoC frame.

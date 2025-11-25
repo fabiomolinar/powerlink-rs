@@ -5,6 +5,7 @@ use crate::{NetTime, PowerlinkError, RelativeTime};
 use crate::frame::basic::MacAddress;
 use crate::frame::error::{CnErrorCounters, DllErrorManager, LoggingErrorHandler};
 use crate::frame::{DllError, NmtAction, ServiceId, deserialize_frame};
+use crate::hal::TimeProvider; // Added import
 use crate::nmt::cn_state_machine::CnNmtStateMachine;
 use crate::nmt::events::NmtEvent;
 use crate::nmt::events::{CnNmtRequest, NmtStateCommand};
@@ -29,7 +30,7 @@ use alloc::vec::Vec;
 use log::debug;
 use log::{info, warn};
 
-use crate::log::{Loggable, pl_info, pl_warn, pl_error};
+use crate::log::{Loggable, pl_info, pl_warn, pl_error, pl_trace, pl_debug};
 use alloc::string::String;
 use alloc::format;
 
@@ -46,9 +47,15 @@ impl<'s> ControlledNode<'s> {
     /// with device-specific parameters (e.g., Identity Object 0x1018) before passing
     /// it to this constructor. This function will then read the necessary configuration
     /// from the OD to initialize the NMT state machine.
+    ///
+    /// # Arguments
+    /// * `od` - The Object Dictionary containing the node's configuration.
+    /// * `mac_address` - The physical MAC address of the node.
+    /// * `time_provider` - The interface to the hardware clock.
     pub fn new(
         mut od: ObjectDictionary<'s>,
         mac_address: MacAddress,
+        time_provider: &'s dyn TimeProvider, // Added argument
     ) -> Result<Self, PowerlinkError> {
         // Initialise the OD, which involves loading from storage or applying defaults.
         od.init()?;
@@ -110,6 +117,7 @@ impl<'s> ControlledNode<'s> {
         let mut node = Self {
             context: CnContext {
                 core: core_context, // Use the new core context
+                time_provider,      // Store the time provider
                 nmt_state_machine,
                 dll_state_machine: Default::default(),
                 dll_error_manager: DllErrorManager::new(

@@ -86,12 +86,21 @@ pub(super) fn process_frame(
     } 
     // --- Handle SoC Frame specific logic WITH SYNC HOOKS ---
     if let PowerlinkFrame::Soc(ref soc_frame) = frame {
-        pl_trace!(*context, " SoC received at time {}", current_time_us);
         
         // *** Synchronization Hooks ***
         context.last_soc_net_time = soc_frame.net_time;
         context.last_soc_relative_time = soc_frame.relative_time;
         context.last_soc_arrival_time_us = current_time_us;
+        
+        // Calculate offset between local time and received SoC time
+        let local_net_time = context.time_provider.now_net_time();
+        let offset_ns = local_net_time.sub_net_time(soc_frame.net_time);
+
+        pl_trace!(*context, " SoC received at {}us. Local Time: {:?}, SoC Time: {:?}, Offset: {}ns", 
+            current_time_us, local_net_time, soc_frame.net_time, offset_ns);
+
+        // Trigger HAL adjustment
+        context.time_provider.on_soc_received(soc_frame.net_time);
         // *****************************
 
         context.last_soc_reception_time_us = current_time_us;
@@ -394,6 +403,7 @@ pub(super) fn process_frame(
                         send_to_queue: true,
                         mode: ErrorEntryMode::EventOccurred,
                         profile: 0x002,
+                        // FIXME: Missing profile field in ErrorEntry
                     },
                     error_code: error.to_error_code(),
                     timestamp: NetTime {
