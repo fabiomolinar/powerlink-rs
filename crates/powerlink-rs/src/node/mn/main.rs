@@ -15,7 +15,7 @@ use crate::nmt::state_machine::NmtStateMachine;
 use crate::nmt::states::NmtState;
 use crate::node::mn::config;
 use crate::node::{CoreNodeContext, Node, NodeAction};
-use crate::od::{ObjectDictionary, constants};
+use crate::od::{Object, ObjectDictionary, constants};
 use crate::sdo::client_manager::SdoClientManager;
 use crate::sdo::command::SdoCommand;
 use crate::sdo::sequence::SequenceLayerHeader;
@@ -37,7 +37,7 @@ use crate::types::IpAddress;
 use crate::nmt::events::{MnNmtCommandRequest, NmtManagingCommand, NmtStateCommand};
 use crate::node::mn::state::NmtCommandData;
 
-use crate::log::{Loggable, pl_info};
+use crate::log::{Loggable, pl_info, pl_warn, pl_error, pl_trace, pl_debug};
 use alloc::string::String;
 use alloc::format;
 
@@ -96,6 +96,7 @@ impl<'s> ManagingNode<'s> {
             configuration_interface,
             time_provider, // Added
             relative_time_accumulator: RelativeTime::default(), // Added, starts at 0
+            prescaler_cycle_count: 0, // Added, starts at 0
             nmt_state_machine,
             dll_state_machine: DllMsStateMachine::new(),
             dll_error_manager: DllErrorManager::new(MnErrorCounters::new(), LoggingErrorHandler),

@@ -32,9 +32,9 @@ const OD_SUBIDX_PDO_COMM_NODEID: u8 = 1;
 const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
 const OD_IDX_MN_PREQ_PAYLOAD_LIMIT_LIST: u16 = 0x1F8B;
 const OD_IDX_EPL_VERSION: u16 = 0x1F83;
-// OD 0x1F98/5: NMT_CycleTiming_REC.PrescaledSlot
+// OD 0x1F98/9: NMT_CycleTiming_REC.PrescaledSlot (Prescaler_U16)
 const OD_IDX_NMT_CYCLE_TIMING: u16 = 0x1F98; 
-const OD_SUBIDX_PRESCALED_SLOT: u8 = 5;
+const OD_SUBIDX_PRESCALER: u8 = 9; // Corrected sub-index (was 5, which is PresActPayloadLimit)
 
 /// Builds a SoC frame.
 pub(super) fn build_soc_frame(
@@ -60,10 +60,19 @@ pub(super) fn build_soc_frame(
     let mc_flag = multiplex_cycle_len > 0 && current_multiplex_cycle == 0;
 
     // PS (Prescaled Slot) flag: Indicates if a prescaled slot is available in this cycle.
-    // EPSG 301 4.6.1.1.2: "PS: Prescaled Slot. This flag shall be set to 1 if a prescaled slot is available."
-    // We check the configuration in OD 0x1F98.
-    // TODO: Implement full Prescaled Slot scheduling logic. For now, we check if it's configured.
-    let ps_flag = context.core.od.read_u32(OD_IDX_NMT_CYCLE_TIMING, OD_SUBIDX_PRESCALED_SLOT).unwrap_or(0) > 0;
+    // EPSG 301 4.6.1.1.2  and 7.2.1.5.2:
+    // "Prescaler_U16 (0x1F98/9): This sub-index configures the toggle rate of the SoC PS flag."
+    // "If Prescaler_U16 is 0, there shall be no toggling of the SoC PS flag."
+    // "If Prescaler_U16 is 1 the flag shall be toggled every cycle, if its value is 2 every 2nd cycle and so on."
+    
+    let prescaler = context.core.od.read_u16(OD_IDX_NMT_CYCLE_TIMING, OD_SUBIDX_PRESCALER).unwrap_or(2);
+    let ps_flag = if prescaler > 0 {
+        // Logic: Toggle when current cycle count is a multiple of prescaler.
+        // context.prescaler_cycle_count is incremented every cycle in start_cycle().
+        (context.prescaler_cycle_count % prescaler) == 0
+    } else {
+        false
+    };
 
     let soc_flags = SocFlags {
         mc: mc_flag,

@@ -1,6 +1,6 @@
 // src/node/mn/cycle.rs
 use super::state::{CyclePhase, MnContext};
-use crate::frame::DllMsEvent;
+use crate::frame::{DllMsEvent, PowerlinkFrame};
 use crate::nmt::NmtStateMachine;
 use crate::nmt::events::{MnNmtCommandRequest, NmtStateCommand};
 use crate::nmt::states::NmtState;
@@ -174,24 +174,27 @@ pub(super) fn start_cycle(context: &mut MnContext, current_time_us: u64) -> Node
     }
     context.next_isoch_node_idx = 0; // Reset for this cycle's polling
 
-    // 3. Build the SoC frame
+    // 3. Increment Prescaler Cycle Count for PS flag logic (See 7.2.1.5.2)
+    context.prescaler_cycle_count = context.prescaler_cycle_count.wrapping_add(1);
+
+    // 4. Build the SoC frame
     let soc_frame = payload::build_soc_frame(
         context,
         context.current_multiplex_cycle,
         context.multiplex_cycle_len,
     );
 
-    // 4. Notify the DLL state machine of the SocTrig
+    // 5. Notify the DLL state machine of the SocTrig
     // We pass the frame we're *about* to send as the context
     events::handle_dll_event(context, DllMsEvent::SocTrig, &soc_frame);
 
-    // 5. Update internal state
+    // 6. Update internal state
     // The DLL state machine (handle_dll_event) should have moved us to a new state.
     // Based on spec, it's likely WaitPres (DLL_MT1) or WaitAsnd (DLL_MT6)
     // We set our phase to SoCSent so the *next* tick in main.rs triggers advance_cycle_phase
     context.current_phase = CyclePhase::SoCSent;
 
-    // 6. Return the frame to be sent
+    // 7. Return the frame to be sent
     // Increment Isochronous Cycle counter (this is also done by CN)
     context.core.od.increment_counter(
         constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
@@ -370,6 +373,7 @@ mod tests {
             configuration_interface: None,
             time_provider,
             relative_time_accumulator: RelativeTime::default(),
+            prescaler_cycle_count: 0, // Initialize to 0
             nmt_state_machine: MnNmtStateMachine::new(
                 NodeId(C_ADR_MN_DEF_NODE_ID),
                 Default::default(),

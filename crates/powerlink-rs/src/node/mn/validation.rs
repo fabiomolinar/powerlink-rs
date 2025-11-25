@@ -397,6 +397,7 @@ mod tests {
             core,
             configuration_interface: None,            
             time_provider, 
+            prescaler_cycle_count: 0,
             relative_time_accumulator: RelativeTime::default(),
             nmt_state_machine: MnNmtStateMachine::new(
                 NodeId(C_ADR_MN_DEF_NODE_ID),

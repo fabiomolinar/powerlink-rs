@@ -47,6 +47,10 @@ pub struct MnContext<'s> {
     /// Incremented by the cycle time at the start of each cycle.
     pub relative_time_accumulator: RelativeTime, // Added
 
+    /// Counter for the Prescaled Slot (PS) logic.
+    /// Incremented every cycle to determine when to toggle the PS flag.
+    pub prescaler_cycle_count: u16, // Added
+
     pub nmt_state_machine: MnNmtStateMachine,
     pub dll_state_machine: DllMsStateMachine,
     // dll_error_manager is separated due to its generic parameters
