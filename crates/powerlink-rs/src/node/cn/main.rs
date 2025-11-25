@@ -130,6 +130,8 @@ impl<'s> ControlledNode<'s> {
                 last_soc_net_time: NetTime::default(),
                 last_soc_relative_time: RelativeTime::default(),
                 last_soc_arrival_time_us: 0,
+                last_soc_mc_flag: false,
+                last_soc_ps_flag: false,
                 pending_nmt_requests: Vec::new(),
                 emergency_queue: VecDeque::with_capacity(10), // Default capacity for 10 errors
                 heartbeat_consumers,                          // Add the new map

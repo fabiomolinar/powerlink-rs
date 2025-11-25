@@ -91,6 +91,9 @@ pub(super) fn process_frame(
         context.last_soc_net_time = soc_frame.net_time;
         context.last_soc_relative_time = soc_frame.relative_time;
         context.last_soc_arrival_time_us = current_time_us;
+        // Store flags for diagnostics
+        context.last_soc_ps_flag = soc_frame.flags.ps;
+        context.last_soc_mc_flag = soc_frame.flags.mc;
         
         // Calculate offset between local time and received SoC time
         let local_net_time = context.time_provider.now_net_time();

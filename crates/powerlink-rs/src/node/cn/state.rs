@@ -38,16 +38,16 @@ pub struct CnContext<'s> {
     /// SDO transport handler for UDP.
     #[cfg(feature = "sdo-udp")]
     pub udp_transport: UdpTransport,
-    
-    // --- Synchronization Hooks ---
     /// The NetTime extracted from the last received SoC frame.
     pub last_soc_net_time: NetTime,
     /// The RelativeTime extracted from the last received SoC frame.
     pub last_soc_relative_time: RelativeTime,
     /// The local monotonic timestamp (in microseconds) when the last SoC was received.
     pub last_soc_arrival_time_us: u64,
-    // -----------------------------------------------
-
+    /// The state of the Prescaled Slot (PS) flag from the last SoC.
+    pub last_soc_ps_flag: bool, // Added
+    /// The state of the Multiplex Cycle (MC) flag from the last SoC.
+    pub last_soc_mc_flag: bool, // Added
     /// Queue for NMT commands this CN wants the MN to execute.
     pub pending_nmt_requests: Vec<(CnNmtRequest, NodeId)>,
     /// Queue for detailed error/event entries to be reported in StatusResponse.
