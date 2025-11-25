@@ -1,4 +1,6 @@
-// crates/powerlink-rs/src/hal.rs
+// src/hal.rs
+// Path: src/hal.rs
+
 use crate::od::ObjectValue;
 use crate::pdo::PayloadSizeError;
 use crate::pdo::PdoError;
@@ -221,6 +223,18 @@ pub trait TimeProvider {
     /// Returns the current "Network Time" (PTP / IEEE 1588).
     /// This is used to populate the `NetTime` field in the SoC frame.
     fn now_net_time(&self) -> NetTime;
+
+    /// Called by the CN logic when a valid SoC frame with `NetTime` is received.
+    ///
+    /// This allows the hardware abstraction layer to perform clock synchronization
+    /// (e.g., PLL adjustment or step correction) to align the local clock with the MN.
+    ///
+    /// # Arguments
+    /// * `received_net_time` - The `NetTime` timestamp extracted from the SoC frame.
+    fn on_soc_received(&self, _received_net_time: NetTime) {
+        // Default implementation does nothing.
+        // Drivers should implement this to adjust their internal clock/timer.
+    }
 }
 
 /// A trait for abstracting the non-volatile storage of OD parameters.
