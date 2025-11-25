@@ -159,13 +159,14 @@ pub(super) fn advance_cycle_phase(context: &mut MnContext, current_time_us: u64)
 
 /// Starts a new cycle by sending a SoC.
 /// This is the implementation of the SocTrig event.
-///
-/// NOTE: According to EPSG DS 301 4.2.4.2, "The Reduced POWERLINK Cycle shall consist of queued asynchronous phases only."
-/// However, standard implementations often send SoC to synchronize time even in PreOp1.
-/// This implementation sends SoC in all states >= PreOp1 to drive the cycle timer.
-/// In PreOp1, `advance_cycle_phase` skips the PReqs, resulting in SoC -> SoA -> ASnd.
 pub(super) fn start_cycle(context: &mut MnContext, current_time_us: u64) -> NodeAction {
-    // 1. Update cycle timing and multiplexing
+    // 1. Update RelativeTime Accumulator
+    // EPSG 301 4.6.1.1.2: "The RelativeTime shall be incremented by the value of NMT_CycleLen_U32."
+    // It starts at 0 on boot and accumulates every cycle.
+    // NMT_CycleLen is stored in context.cycle_time_us (read from OD 0x1006).
+    context.relative_time_accumulator.add_micros(context.cycle_time_us);
+
+    // 2. Update cycle timing and multiplexing
     context.current_cycle_start_time_us = current_time_us;
     if context.multiplex_cycle_len > 0 {
         context.current_multiplex_cycle =
@@ -173,24 +174,24 @@ pub(super) fn start_cycle(context: &mut MnContext, current_time_us: u64) -> Node
     }
     context.next_isoch_node_idx = 0; // Reset for this cycle's polling
 
-    // 2. Build the SoC frame
+    // 3. Build the SoC frame
     let soc_frame = payload::build_soc_frame(
         context,
         context.current_multiplex_cycle,
         context.multiplex_cycle_len,
     );
 
-    // 3. Notify the DLL state machine of the SocTrig
+    // 4. Notify the DLL state machine of the SocTrig
     // We pass the frame we're *about* to send as the context
     events::handle_dll_event(context, DllMsEvent::SocTrig, &soc_frame);
 
-    // 4. Update internal state
+    // 5. Update internal state
     // The DLL state machine (handle_dll_event) should have moved us to a new state.
     // Based on spec, it's likely WaitPres (DLL_MT1) or WaitAsnd (DLL_MT6)
     // We set our phase to SoCSent so the *next* tick in main.rs triggers advance_cycle_phase
     context.current_phase = CyclePhase::SoCSent;
 
-    // 5. Return the frame to be sent
+    // 6. Return the frame to be sent
     // Increment Isochronous Cycle counter (this is also done by CN)
     context.core.od.increment_counter(
         constants::IDX_DIAG_NMT_TELEGR_COUNT_REC,
@@ -250,7 +251,8 @@ pub(super) fn tick(context: &mut MnContext, current_time_us: u64) -> NodeAction 
         CyclePhase::AwaitingMnAsyncSend => {
             // MN has invited itself via SoA. Check what to send.
             // Priority: NMT Commands > SDO Client > Generic Queue
-            context.current_phase = CyclePhase::Idle; // Consume the phase
+            // we consume the phase here, but we might set it to Idle or keep processing
+            context.current_phase = CyclePhase::Idle; 
 
             if let Some((command_req, target_node_id, command_data)) =
                 context.pending_nmt_commands.pop()

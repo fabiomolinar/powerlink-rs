@@ -32,6 +32,9 @@ const OD_SUBIDX_PDO_COMM_NODEID: u8 = 1;
 const OD_SUBIDX_PDO_COMM_VERSION: u8 = 2;
 const OD_IDX_MN_PREQ_PAYLOAD_LIMIT_LIST: u16 = 0x1F8B;
 const OD_IDX_EPL_VERSION: u16 = 0x1F83;
+// OD 0x1F98/5: NMT_CycleTiming_REC.PrescaledSlot
+const OD_IDX_NMT_CYCLE_TIMING: u16 = 0x1F98; 
+const OD_SUBIDX_PRESCALED_SLOT: u8 = 5;
 
 /// Builds a SoC frame.
 pub(super) fn build_soc_frame(
@@ -40,18 +43,28 @@ pub(super) fn build_soc_frame(
     multiplex_cycle_len: u8,
 ) -> PowerlinkFrame {
     pl_trace!(*context, "Building SoC frame.");
-    // TODO: Get real NetTime from TimeProvider in Step 2
-    let net_time = NetTime {
-        seconds: (context.current_cycle_start_time_us / 1_000_000) as u32,
-        nanoseconds: ((context.current_cycle_start_time_us % 1_000_000) * 1000) as u32,
-    };
-    // TODO: Get real RelativeTime from MnContext in Step 2
-    let relative_time = RelativeTime(0);
+    
+    // 1. Get real NetTime from the TimeProvider (IEEE 1588 / Wall Clock)
+    let net_time = context.time_provider.now_net_time();
 
-    // MC flag is toggled when the *last* multiplexed cycle has *ended*
+    // 2. Get the accumulated RelativeTime for this cycle
+    let relative_time = context.relative_time_accumulator;
+
+    // 3. Calculate Flags
+    // MC flag is set if the multiplex cycle is complete (i.e., we are wrapping around).
+    // The scheduler updates `current_multiplex_cycle` *before* this call, so if we are at 0,
+    // it means we just finished the previous set.
+    // EPSG 301 4.6.1.1.2: "MC: Multiplex Cycle Completed. This flag shall be set to 1 if the
+    // last multiplexed cycle in the isochronous phase has been completed."
+    // Logic: If we are at index 0 (start of new set) AND we have multiplexing enabled.
     let mc_flag = multiplex_cycle_len > 0 && current_multiplex_cycle == 0;
-    // TODO: Implement PS flag logic based on Prescaler (OD 0x1F98/9)
-    let ps_flag = false;
+
+    // PS (Prescaled Slot) flag: Indicates if a prescaled slot is available in this cycle.
+    // EPSG 301 4.6.1.1.2: "PS: Prescaled Slot. This flag shall be set to 1 if a prescaled slot is available."
+    // We check the configuration in OD 0x1F98.
+    // TODO: Implement full Prescaled Slot scheduling logic. For now, we check if it's configured.
+    let ps_flag = context.core.od.read_u32(OD_IDX_NMT_CYCLE_TIMING, OD_SUBIDX_PRESCALED_SLOT).unwrap_or(0) > 0;
+
     let soc_flags = SocFlags {
         mc: mc_flag,
         ps: ps_flag,
@@ -437,10 +450,8 @@ pub(super) fn build_nmt_info_frame(context: &MnContext, service_id: ServiceId) -
 
 /// Helper for NMTPublishTime
 fn build_publish_time_payload(context: &MnContext) -> Vec<u8> {
-    let net_time = NetTime {
-        seconds: (context.current_cycle_start_time_us / 1_000_000) as u32,
-        nanoseconds: ((context.current_cycle_start_time_us % 1_000_000) * 1000) as u32,
-    };
+    // Use the real time provider for the payload as well
+    let net_time = context.time_provider.now_net_time();
     let mut payload = Vec::with_capacity(8);
     payload.extend_from_slice(&net_time.seconds.to_le_bytes());
     payload.extend_from_slice(&net_time.nanoseconds.to_le_bytes());
@@ -460,9 +471,6 @@ fn build_node_state_payload(context: &MnContext) -> Vec<u8> {
 }
 
 /// Generic Helper to build a POWERLINK Node List payload (32 bytes).
-///
-/// Iterates through all tracked nodes and sets the bit if the `filter` predicate returns true.
-/// (Reference: EPSG DS 301, 7.3.1.2.3)
 fn build_node_list_payload<F>(context: &MnContext, filter: F) -> Vec<u8>
 where
     F: Fn(&super::state::CnInfo) -> bool,
@@ -481,27 +489,16 @@ where
         }
     };
 
-    // Check all CNs
     for (node_id, info) in &context.node_info {
         if filter(info) {
             set_bit(node_id.0);
         }
     }
 
-    // Check if MN itself should be included (Node 240)
-    // This is context-dependent, but generally, if the MN is part of the active set, include it.
-    // For EmergNew, MN doesn't have an EN flag in the same way, but could trigger emergency.
-    // For now, we assume MN is active if in a cyclic state.
     let mn_state = context.nmt_state_machine.current_state();
     if mn_state >= NmtState::NmtPreOperational1 {
-        // For ActiveNodes/ConfiguredNodes, usually include MN.
-        // For EmergNew, only if MN has an emergency (not tracked in node_info).
-        // Simplification: Only include MN for "Active/Configured" checks, not status checks.
-        // This is inferred by checking if the filter likely targets status flags (like EN).
-        // A better approach would be to pass an explicit flag, but we can infer from the
-        // state of CNs. Since we don't store MnInfo in node_info, we skip MN for dynamic flags.
         if filter(&super::state::CnInfo {
-            state: CnState::Operational, // Dummy success state
+            state: CnState::Operational, 
             ..Default::default()
         }) {
             set_bit(context.nmt_state_machine.node_id().0);
