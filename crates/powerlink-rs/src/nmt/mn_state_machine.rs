@@ -162,7 +162,17 @@ impl NmtStateMachine for MnNmtStateMachine {
             // --- Operational State Transitions ---
 
             // (NMT_MT6) A critical error (e.g., mandatory CN lost) forces a reset to PreOp1.
-            (NmtState::NmtOperational, NmtEvent::Error) => NmtState::NmtPreOperational1,
+            (NmtState::NmtOperational, NmtEvent::Error) => {
+                // Check Bit 12 of NMT_StartUp_U32
+                // 0b: Return automatically to PreOp1
+                // 1b: Do not return (Stay in Op, let App decide)
+                if (self.startup_flags & (1 << 12)) == 0 {
+                    NmtState::NmtPreOperational1
+                } else {
+                    pl_warn!(*self, "Error occurred in Operational, but NMT_StartUp_U32 Bit 12 prevents auto-reset.");
+                    NmtState::NmtOperational
+                }
+            },
 
             // (NMT_CT12) MN in BasicEthernet detects other POWERLINK traffic
             (NmtState::NmtBasicEthernet, NmtEvent::PowerlinkFrameReceived) => {

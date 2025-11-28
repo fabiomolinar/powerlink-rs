@@ -54,7 +54,8 @@ impl DllCsStateMachine {
         &mut self,
         event: DllCsEvent,
         nmt_state: NmtState,
-        node_id: NodeId
+        node_id: NodeId,
+        expect_preq_this_cycle: bool,
     ) -> Option<Vec<DllError>> {
         debug!(
             "[CN - Node {}] DLL_CS processing event {:?} in state {:?} (NMT state: {:?})",
@@ -125,7 +126,9 @@ impl DllCsStateMachine {
                     // --- (DLL_CT08) ---
                     // Process SoA, if invited, transmit a legal Ethernet frame
                     (DllCsState::WaitPreq, DllCsEvent::Soa) => {
-                        errors.push(DllError::LossOfPreq);
+                        if expect_preq_this_cycle {
+                            errors.push(DllError::LossOfPreq);
+                        }
                         DllCsState::WaitSoc
                     }
                     //  Synchronise on the next SoC, report error DLL_CEV_LOSS_SOC and DLL_CEV_LOSS_SOA
