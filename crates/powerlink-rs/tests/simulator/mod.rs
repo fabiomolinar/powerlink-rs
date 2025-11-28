@@ -8,8 +8,10 @@ pub use interface::SimulatedInterface;
 // Fix E0599: Import trait to use send_frame/receive_frame methods
 use powerlink_rs::NetworkInterface; 
 use powerlink_rs::frame::{deserialize_frame, PowerlinkFrame};
-use powerlink_rs::hal::TimeProvider;
-use powerlink_rs::common::NetTime;
+
+// Imports for State Inspection
+use powerlink_rs::node::{ControlledNode, ManagingNode};
+// use powerlink_rs::nmt::states::NmtState; // Removed unused import
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -28,8 +30,7 @@ pub struct Packet {
 /// A virtual POWERLINK network that manages time and packet delivery.
 pub struct VirtualNetwork {
     /// Current simulation time in microseconds.
-    /// Shared with TimeProviders via Rc<RefCell>.
-    current_time_us: Rc<RefCell<u64>>,
+    current_time_us: u64,
     /// Pending packets to be delivered to nodes.
     /// Map: NodeId (Destination) -> Queue of Packets
     inboxes: HashMap<u8, VecDeque<Packet>>,
@@ -40,16 +41,7 @@ pub struct VirtualNetwork {
 impl VirtualNetwork {
     pub fn new() -> Self {
         Self {
-            current_time_us: Rc::new(RefCell::new(0)),
-            inboxes: HashMap::new(),
-            packet_history: Vec::new(),
-        }
-    }
-    
-    /// Creates a new VirtualNetwork sharing the time with the provided Rc.
-    pub fn new_with_shared_time(time: Rc<RefCell<u64>>) -> Self {
-        Self {
-            current_time_us: time,
+            current_time_us: 0,
             inboxes: HashMap::new(),
             packet_history: Vec::new(),
         }
@@ -57,11 +49,11 @@ impl VirtualNetwork {
 
     /// Advances simulation time.
     pub fn tick(&mut self, duration_us: u64) {
-        *self.current_time_us.borrow_mut() += duration_us;
+        self.current_time_us += duration_us;
     }
 
     pub fn current_time(&self) -> u64 {
-        *self.current_time_us.borrow()
+        self.current_time_us
     }
 
     /// Simulates sending a frame from a source to a destination (or broadcast).
@@ -135,54 +127,52 @@ impl VirtualNetwork {
     }
 }
 
-/// A TimeProvider implementation that syncs with the VirtualNetwork.
-#[derive(Clone)]
-pub struct SimulatedTimeProvider {
-    pub current_time_us: Rc<RefCell<u64>>,
+/// Trait to inspect internal state of a Node for debugging logs.
+pub trait Inspectable {
+    // Removed nmt_state() to resolve collision with Node::nmt_state()
+    fn dll_state_str(&self) -> String;
 }
 
-impl SimulatedTimeProvider {
-    pub fn new(time: Rc<RefCell<u64>>) -> Self {
-        Self { current_time_us: time }
+impl<'a> Inspectable for ControlledNode<'a> {
+    fn dll_state_str(&self) -> String {
+        format!("{:?}", self.context.dll_state_machine.current_state())
     }
 }
 
-impl TimeProvider for SimulatedTimeProvider {
-    fn now_monotonic_us(&self) -> u64 {
-        *self.current_time_us.borrow()
-    }
-
-    fn now_net_time(&self) -> NetTime {
-        NetTime::from_micros(*self.current_time_us.borrow())
-    }
-
-    fn on_soc_received(&self, _received_net_time: NetTime) {
-        // In a simulation, we might just log this, or we might assume perfect sync.
-        // For now, we do nothing as the nodes share the same underlying time source.
+impl<'a> Inspectable for ManagingNode<'a> {
+    fn dll_state_str(&self) -> String {
+        format!("{:?} (Phase: {:?})", 
+            self.context.dll_state_machine.current_state(),
+            self.context.current_phase
+        )
     }
 }
 
 /// Wraps a `Node` (MN or CN) and its `SimulatedInterface` for the test harness.
-pub struct NodeHarness<N: Node> {
+pub struct NodeHarness<N: Node + Inspectable> {
     pub node: N,
     pub interface: Rc<RefCell<SimulatedInterface>>,
     pub node_id: NodeId,
-    /// Stores a copy of every frame sent by this node for verification.
-    pub sent_frames: Vec<PowerlinkFrame>, 
+    /// History of state transitions: (Timestamp, LogMessage)
+    pub state_log: Vec<(u64, String)>, 
 }
 
-impl<N: Node> NodeHarness<N> {
+impl<N: Node + Inspectable> NodeHarness<N> {
     pub fn new(node: N, interface: Rc<RefCell<SimulatedInterface>>, node_id: NodeId) -> Self {
         Self {
             node,
             interface,
             node_id,
-            sent_frames: Vec::new(),
+            state_log: Vec::new(),
         }
     }
 
     /// runs a single cycle of the node logic
     pub fn run_cycle(&mut self, network: &mut VirtualNetwork) {
+        // Capture state before cycle
+        let prev_nmt = self.node.nmt_state(); // Now unambiguous (from Node trait)
+        let prev_dll = self.node.dll_state_str();
+
         // 1. Check if we have a frame waiting in the network for us
         // We peel frames from the network inbox into the interface's internal rx queue
         while let Some(packet) = network.receive(self.node_id.0) {
@@ -197,7 +187,6 @@ impl<N: Node> NodeHarness<N> {
         };
 
         // 2. Run the node cycle
-        // Fix E0061: Handle argument mismatch based on feature flags
         #[cfg(feature = "sdo-udp")]
         let action = if rx_len > 0 {
              self.node.run_cycle(Some(&rx_buffer[..rx_len]), None, network.current_time())
@@ -212,19 +201,23 @@ impl<N: Node> NodeHarness<N> {
              self.node.run_cycle(None, network.current_time())
         };
 
+        // Capture state after cycle
+        let curr_nmt = self.node.nmt_state(); // Now unambiguous
+        let curr_dll = self.node.dll_state_str();
+        let current_time = network.current_time();
+
+        // Log state changes
+        if prev_nmt != curr_nmt || prev_dll != curr_dll {
+            let log_msg = format!(
+                "NMT: {:?} -> {:?} | DLL: {} -> {}",
+                prev_nmt, curr_nmt, prev_dll, curr_dll
+            );
+            self.state_log.push((current_time, log_msg));
+        }
+
         // 3. Handle output actions
         match action {
             NodeAction::SendFrame(frame) => {
-                // Parse the frame to PowerlinkFrame struct for easier test assertions
-                match deserialize_frame(&frame) {
-                    Ok(parsed_frame) => self.sent_frames.push(parsed_frame),
-                    Err(e) => {
-                        // In a test harness, it is useful to know if a node generated garbage.
-                        // We panic here to fail the test immediately.
-                        panic!("Node {} generated an invalid POWERLINK frame: {:?}", self.node_id.0, e);
-                    }
-                }
-
                 // Send via interface (which pushes to network)
                 self.interface.borrow_mut().send_frame(&frame).unwrap();
                 
@@ -234,11 +227,22 @@ impl<N: Node> NodeHarness<N> {
                     network.transmit(Packet {
                         data,
                         src_node_id: self.node_id.0,
-                        transmit_time_us: network.current_time(),
+                        transmit_time_us: current_time,
                     }, None); // None = Broadcast
                 }
             }
             _ => {}
         }
+    }
+
+    pub fn dump_state_log(&self, path: &str) -> std::io::Result<()> {
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+
+        writeln!(writer, "--- Node {} State Transition Log ---", self.node_id)?;
+        for (time, msg) in &self.state_log {
+            writeln!(writer, "[{:08} us] {}", time, msg)?;
+        }
+        Ok(())
     }
 }
