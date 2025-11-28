@@ -1,3 +1,4 @@
+// crates/powerlink-rs/src/frame/cs_state_machine.rs
 use crate::NodeId;
 use crate::frame::error::DllError;
 use crate::nmt::states::NmtState;
@@ -38,7 +39,7 @@ pub enum DllCsEvent {
     /// Corresponds to `DLL_CE_SOC_TIMEOUT`.
     SocTimeout,
 }
-/// Manages the DLL cycle state for a Controlled Node (CN).
+
 pub struct DllCsStateMachine {
     state: DllCsState,
 }
@@ -55,14 +56,14 @@ impl DllCsStateMachine {
         event: DllCsEvent,
         nmt_state: NmtState,
         node_id: NodeId,
-        expect_preq_this_cycle: bool,
+        expect_preq_this_cycle: bool, // NEW: Multiplexing support
     ) -> Option<Vec<DllError>> {
         debug!(
-            "[CN - Node {}] DLL_CS processing event {:?} in state {:?} (NMT state: {:?})",
-            node_id, event, self.state, nmt_state
+            "[CN - Node {}] DLL_CS processing event {:?} in state {:?} (NMT state: {:?}, ExpectPreq: {})",
+            node_id, event, self.state, nmt_state, expect_preq_this_cycle
         );
         let mut errors: Vec<DllError> = Vec::new();
-        // The DLL_CS is active only in specific NMT states.
+        
         match nmt_state {
             NmtState::NmtPreOperational2
             | NmtState::NmtReadyToOperate
@@ -72,6 +73,7 @@ impl DllCsStateMachine {
                     // --- (DLL_CT02) ---
                     // Process the PReq frame and send a PRes frame
                     (DllCsState::WaitPreq, DllCsEvent::Preq) => DllCsState::WaitSoa,
+                    
                     // --- (DLL_CT03) ---
                     // Process SoA, if allowed send an ASnd frame or a non POWERLINK frame
                     (DllCsState::WaitSoa, DllCsEvent::Soa) => DllCsState::WaitSoc,
@@ -87,6 +89,7 @@ impl DllCsStateMachine {
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoc
                     }
+                    
                     // --- (DLL_CT04) ---
                     // Process frame
                     (DllCsState::WaitSoc, DllCsEvent::Asnd) => DllCsState::WaitSoc,
@@ -110,6 +113,7 @@ impl DllCsStateMachine {
                         errors.push(DllError::LossOfSoc);
                         DllCsState::WaitSoc
                     }
+
                     // --- (DLL_CT07) ---
                     // Process PRes frames (cross traffic)
                     (DllCsState::WaitPreq, DllCsEvent::Pres) => DllCsState::WaitPreq,
@@ -123,11 +127,16 @@ impl DllCsStateMachine {
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitPreq
                     }
-                    // --- (DLL_CT08) ---
-                    // Process SoA, if invited, transmit a legal Ethernet frame
+
+                    // --- (DLL_CT08) FIX: Multiplexing Support ---
+                    // If SoA arrives while waiting for PReq, it might be valid if we are multiplexed
+                    // and weren't scheduled this cycle.
                     (DllCsState::WaitPreq, DllCsEvent::Soa) => {
                         if expect_preq_this_cycle {
+                            // Only error if we really expected a PReq
                             errors.push(DllError::LossOfPreq);
+                        } else {
+                             debug!("[CN - Node {}] Received SoA in WaitPreq (Valid for multiplexed)", node_id);
                         }
                         DllCsState::WaitSoc
                     }
@@ -137,12 +146,14 @@ impl DllCsStateMachine {
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoc
                     }
+
                     // --- (DLL_CT09) ---
                     // Synchronise on the SoC, report error DLL_CEV_LOSS_SOA
                     (DllCsState::WaitSoa, DllCsEvent::Soc) => {
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitPreq
                     }
+
                     // --- (DLL_CT10) ---
                     // Process PRes frames (cross traffic)
                     (DllCsState::WaitSoa, DllCsEvent::Pres) => DllCsState::WaitSoa,
@@ -151,6 +162,7 @@ impl DllCsStateMachine {
                         errors.push(DllError::LossOfSoa);
                         DllCsState::WaitSoa
                     }
+
                     // --- (DLL_CT01) ---
                     // A SoC can be received in any state and always resets the cycle to WaitPReq.
                     // Synchronise the start of cycle and generate a SoC trigger to the application
@@ -195,21 +207,52 @@ impl Default for DllCsStateMachine {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
     use alloc::vec;
+
+    #[test]
+    fn test_multiplexed_node_skips_preq_error() {
+        let mut sm = DllCsStateMachine::new();
+        let op_state = NmtState::NmtOperational;
+        
+        // 1. Start Cycle
+        sm.process_event(DllCsEvent::Soc, op_state, NodeId(1), false);
+        assert_eq!(sm.current_state(), DllCsState::WaitPreq);
+
+        // 2. Receive SoA (Skip PReq). expect_preq = false
+        let errors = sm.process_event(DllCsEvent::Soa, op_state, NodeId(1), false);
+        
+        // Should be NO error
+        assert!(errors.is_none());
+        assert_eq!(sm.current_state(), DllCsState::WaitSoc);
+    }
+
+    #[test]
+    fn test_continuous_node_reports_preq_error() {
+        let mut sm = DllCsStateMachine::new();
+        let op_state = NmtState::NmtOperational;
+        
+        // 1. Start Cycle
+        sm.process_event(DllCsEvent::Soc, op_state, NodeId(1), true);
+
+        // 2. Receive SoA (Skip PReq). expect_preq = true
+        let errors = sm.process_event(DllCsEvent::Soa, op_state, NodeId(1), true);
+        
+        // Should be Error
+        assert_eq!(errors, Some(vec![DllError::LossOfPreq]));
+    }
 
     #[test]
     fn test_happy_path() {
         let mut sm = DllCsStateMachine::new();
         let op_state = NmtState::NmtOperational;
         assert_eq!(sm.current_state(), DllCsState::NonCyclic);
-        assert!(sm.process_event(DllCsEvent::Soc, op_state, NodeId(1)).is_none());
+        assert!(sm.process_event(DllCsEvent::Soc, op_state, NodeId(1), true).is_none());
         assert_eq!(sm.current_state(), DllCsState::WaitPreq);
-        assert!(sm.process_event(DllCsEvent::Preq, op_state, NodeId(1)).is_none());
+        assert!(sm.process_event(DllCsEvent::Preq, op_state, NodeId(1), true).is_none());
         assert_eq!(sm.current_state(), DllCsState::WaitSoa);
-        assert!(sm.process_event(DllCsEvent::Soa, op_state, NodeId(1)).is_none());
+        assert!(sm.process_event(DllCsEvent::Soa, op_state, NodeId(1), true).is_none());
         assert_eq!(sm.current_state(), DllCsState::WaitSoc);
     }
 
@@ -217,8 +260,8 @@ mod tests {
     fn test_lost_preq() {
         let mut sm = DllCsStateMachine::new();
         let op_state = NmtState::NmtOperational;
-        sm.process_event(DllCsEvent::Soc, op_state, NodeId(1)); // -> WaitPreq
-        let errors = sm.process_event(DllCsEvent::Soa, op_state, NodeId(1));
+        sm.process_event(DllCsEvent::Soc, op_state, NodeId(1), true); // -> WaitPreq
+        let errors = sm.process_event(DllCsEvent::Soa, op_state, NodeId(1), true);
         assert_eq!(errors, Some(vec![DllError::LossOfPreq]));
         assert_eq!(sm.current_state(), DllCsState::WaitSoc);
     }
@@ -227,10 +270,10 @@ mod tests {
     fn test_lost_soa_and_soc() {
         let mut sm = DllCsStateMachine::new();
         let op_state = NmtState::NmtOperational;
-        sm.process_event(DllCsEvent::Soc, op_state, NodeId(1));
-        sm.process_event(DllCsEvent::Preq, op_state, NodeId(1));
-        sm.process_event(DllCsEvent::Soa, op_state, NodeId(1)); // -> WaitSoc
-        let errors = sm.process_event(DllCsEvent::Preq, op_state, NodeId(1));
+        sm.process_event(DllCsEvent::Soc, op_state, NodeId(1), true);
+        sm.process_event(DllCsEvent::Preq, op_state, NodeId(1), true);
+        sm.process_event(DllCsEvent::Soa, op_state, NodeId(1), true); // -> WaitSoc
+        let errors = sm.process_event(DllCsEvent::Preq, op_state, NodeId(1), true);
         assert_eq!(errors, Some(vec![DllError::LossOfSoc]));
         assert_eq!(sm.current_state(), DllCsState::WaitSoc);
     }
@@ -239,8 +282,8 @@ mod tests {
     fn test_soc_timeout() {
         let mut sm = DllCsStateMachine::new();
         let op_state = NmtState::NmtOperational;
-        sm.process_event(DllCsEvent::Soc, op_state, NodeId(1)); // -> WaitPreq
-        let errors = sm.process_event(DllCsEvent::SocTimeout, op_state, NodeId(1));
+        sm.process_event(DllCsEvent::Soc, op_state, NodeId(1), true); // -> WaitPreq
+        let errors = sm.process_event(DllCsEvent::SocTimeout, op_state, NodeId(1), true);
         assert_eq!(errors, Some(vec![DllError::LossOfSoc, DllError::LossOfSoa]));
         assert_eq!(sm.current_state(), DllCsState::WaitSoc);
     }

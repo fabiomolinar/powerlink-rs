@@ -363,9 +363,14 @@ pub(super) fn process_frame(
     }
 
     let dll_event = frame.dll_cn_event();
+    // TODO: Determine if PReq is expected based on multiplexing configuration.
+    // For now, assume continuous mode (true) unless configured otherwise in OD.
+    // Real implementation needs to track Multiplex Cycle count from SoC PS/MC flags (if supported).
+    let expect_preq = true;
+
     if let Some(errors) = context
         .dll_state_machine
-        .process_event(dll_event, context.nmt_state_machine.current_state(), context.nmt_state_machine.node_id)
+        .process_event(dll_event, context.nmt_state_machine.current_state(), context.nmt_state_machine.node_id, expect_preq)
     {
         for error in errors {
             pl_warn!(*context, " DLL state machine reported error: {:?}", error);

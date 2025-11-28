@@ -21,6 +21,7 @@ pub struct CnNmtStateMachine {
     pub node_id: NodeId,
     pub feature_flags: FeatureFlags,
     pub basic_ethernet_timeout: u32,
+    /// Latch to ensure we only enter ReadyToOperate if enabled by MN
     pub ready_to_operate_enabled: bool,
 }
 
@@ -90,6 +91,10 @@ impl NmtStateMachine for CnNmtStateMachine {
 
     fn set_state(&mut self, new_state: NmtState) {
         self.current_state = new_state;
+        // Reset latch on state change if leaving PreOp2
+        if new_state != NmtState::NmtPreOperational2 {
+            self.ready_to_operate_enabled = false;
+        }
     }
 
     /// Processes an external event and transitions the NMT state accordingly.
@@ -138,28 +143,22 @@ impl NmtStateMachine for CnNmtStateMachine {
             // (NMT_CT4) Receiving a SoC in PreOp1 signals the start of the isochronous phase.
             (NmtState::NmtPreOperational1, NmtEvent::SocReceived) => NmtState::NmtPreOperational2,
 
-            // (NMT_CT5) Handle the Command Latch
+            // (NMT_CT5) The MN enables the next state.
             (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => {
-                pl_debug!(*self, "NMT EnableReadyToOperate received. Waiting for App Config.");
+                pl_debug!(*self, "Received EnableReadyToOperate. Latching enabled flag.");
                 self.ready_to_operate_enabled = true;
-                // Check if we can transition immediately (if app was already ready?)
-                // The spec implies the transition is triggered by the Application Event.
-                // If the App already signaled completion, we might need a way to check that status,
-                // or we assume the App will signal again/check status. 
-                // For safety, we stay in PreOp2. The App should query NMT state or re-trigger.
                 NmtState::NmtPreOperational2
             }
-
-            // (NMT_CT6) Handle Application Event
+            // (NMT_CT6) The application signals it's ready. 
+            // Transition ONLY if enabled by MN previously.
             (NmtState::NmtPreOperational2, NmtEvent::CnConfigurationComplete) => {
                 if self.ready_to_operate_enabled {
                     NmtState::NmtReadyToOperate
                 } else {
-                    pl_debug!(*self, "App Config complete, but NMT EnableReadyToOperate NOT received yet.");
+                    pl_debug!(*self, "App Config complete, but waiting for MN EnableReadyToOperate.");
                     NmtState::NmtPreOperational2
                 }
             }
-
             // (NMT_CT7) The MN commands the CN to start full operation.
             (NmtState::NmtReadyToOperate, NmtEvent::StartNode) => NmtState::NmtOperational,
 
@@ -205,18 +204,12 @@ impl NmtStateMachine for CnNmtStateMachine {
             }
         };
 
-        // Reset the latch if we leave PreOp2? 
-        if old_state == NmtState::NmtPreOperational2 && next_state != NmtState::NmtPreOperational2 {
-             // Spec doesn't explicitly say to clear it, but it's safer for re-entry.
-             self.ready_to_operate_enabled = false;
-        }
-
         if old_state != next_state {
             pl_info!(*self, 
                 "[NMT] State changed from {:?} to {:?}",
                 old_state, next_state
             );
-            self.current_state = next_state;
+            self.set_state(next_state); // Updates current_state and clears latch
             self.update_od_state(od);
         }
 

@@ -2,7 +2,7 @@
 use super::flags::FeatureFlags;
 use super::state_machine::NmtStateMachine;
 use super::states::NmtState;
-use crate::PowerlinkError;
+use crate::{PowerlinkError, node};
 use crate::frame::DllError;
 use crate::log::Loggable;
 use crate::nmt::events::NmtEvent;
@@ -120,7 +120,7 @@ impl NmtStateMachine for MnNmtStateMachine {
                 | NmtEvent::ResetCommunication
                 | NmtEvent::ResetConfiguration
         ) {
-            self.reset(event, od); // Pass OD to reset
+            self.reset(event, od);
             if old_state != self.current_state {
                 self.update_od_state(od);
             }
@@ -161,16 +161,16 @@ impl NmtStateMachine for MnNmtStateMachine {
 
             // --- Operational State Transitions ---
 
-            // (NMT_MT6) A critical error (e.g., mandatory CN lost) forces a reset to PreOp1.
+            // (NMT_MT6) A critical error (e.g., mandatory CN lost).
             (NmtState::NmtOperational, NmtEvent::Error) => {
-                // Check Bit 12 of NMT_StartUp_U32
+                // Check NMT_StartUp_U32 Bit 12 (Spec 7.2.2.1.1)
                 // 0b: Return automatically to PreOp1
-                // 1b: Do not return (Stay in Op, let App decide)
+                // 1b: Do not return
                 if (self.startup_flags & (1 << 12)) == 0 {
-                    NmtState::NmtPreOperational1
+                     NmtState::NmtPreOperational1
                 } else {
-                    pl_warn!(*self, "Error occurred in Operational, but NMT_StartUp_U32 Bit 12 prevents auto-reset.");
-                    NmtState::NmtOperational
+                     pl_warn!(*self, "Error event in Operational, but NMT_StartUp_U32 Bit 12 prevents auto-reset.");
+                     NmtState::NmtOperational
                 }
             },
 
