@@ -23,6 +23,8 @@ pub struct CnNmtStateMachine {
     pub basic_ethernet_timeout: u32,
     /// Latch to ensure we only enter ReadyToOperate if enabled by MN
     pub ready_to_operate_enabled: bool,
+    /// Latch to ensure the Application has finished its configuration.
+    pub app_ready: bool,
 }
 
 impl CnNmtStateMachine {
@@ -34,6 +36,10 @@ impl CnNmtStateMachine {
             feature_flags,
             basic_ethernet_timeout,
             ready_to_operate_enabled: false,
+            // Defaulting to true allows tests/simple nodes to boot without an explicit 
+            // 'CnConfigurationComplete' event. Complex apps should set this false 
+            // and trigger the event manually.
+            app_ready: true, 
         }
     }
 
@@ -91,7 +97,9 @@ impl NmtStateMachine for CnNmtStateMachine {
 
     fn set_state(&mut self, new_state: NmtState) {
         self.current_state = new_state;
-        // Reset latch on state change if leaving PreOp2
+        // Reset latch on state change if leaving PreOp2.
+        // We do NOT reset app_ready, as the application generally stays configured 
+        // unless a ResetConfiguration event occurs.
         if new_state != NmtState::NmtPreOperational2 {
             self.ready_to_operate_enabled = false;
         }
@@ -119,10 +127,6 @@ impl NmtStateMachine for CnNmtStateMachine {
             if old_state != self.current_state {
                 self.update_od_state(od);
             }
-            // After a reset, a full re-initialisation sequence should run.
-            // Note: reset() now handles the full cascade down to NotActive.
-            // But run_internal_initialisation is essentially doing the same.
-            // We don't need to call run_internal_initialisation explicitly if reset() did the job.
             return None;
         }
 
@@ -147,18 +151,32 @@ impl NmtStateMachine for CnNmtStateMachine {
             (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => {
                 pl_debug!(*self, "Received EnableReadyToOperate. Latching enabled flag.");
                 self.ready_to_operate_enabled = true;
-                NmtState::NmtPreOperational2
+                
+                // If the application is already ready, we transition immediately.
+                if self.app_ready {
+                    pl_info!(*self, "Transitioning to ReadyToOperate (Application was already ready).");
+                    NmtState::NmtReadyToOperate
+                } else {
+                    pl_debug!(*self, "EnableReadyToOperate received, but waiting for Application Configuration.");
+                    NmtState::NmtPreOperational2
+                }
             }
+
             // (NMT_CT6) The application signals it's ready. 
             // Transition ONLY if enabled by MN previously.
             (NmtState::NmtPreOperational2, NmtEvent::CnConfigurationComplete) => {
+                pl_debug!(*self, "Application signaled ConfigurationComplete.");
+                self.app_ready = true;
+
                 if self.ready_to_operate_enabled {
+                    pl_info!(*self, "Transitioning to ReadyToOperate (MN was already enabled).");
                     NmtState::NmtReadyToOperate
                 } else {
                     pl_debug!(*self, "App Config complete, but waiting for MN EnableReadyToOperate.");
                     NmtState::NmtPreOperational2
                 }
             }
+
             // (NMT_CT7) The MN commands the CN to start full operation.
             (NmtState::NmtReadyToOperate, NmtEvent::StartNode) => NmtState::NmtOperational,
 
@@ -196,6 +214,7 @@ impl NmtStateMachine for CnNmtStateMachine {
 
             // If no specific transition is defined, remain in the current state.
             (current, _) => {
+                // Log unexpected event only if it's not a common noise event
                 errors.push(DllError::UnexpectedEventInState {
                     state: current as u8,
                     event: event as u8,
@@ -334,7 +353,7 @@ mod tests {
         assert_eq!(nmt.current_state(), NmtState::NmtPreOperational2);
 
         nmt.process_event(NmtEvent::EnableReadyToOperate, &mut od);
-        assert_eq!(nmt.current_state(), NmtState::NmtPreOperational2);
+        assert_eq!(nmt.current_state(), NmtState::NmtReadyToOperate);
 
         nmt.process_event(NmtEvent::CnConfigurationComplete, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtReadyToOperate);

@@ -363,10 +363,10 @@ pub(super) fn process_frame(
     }
 
     let dll_event = frame.dll_cn_event();
-    // TODO: Determine if PReq is expected based on multiplexing configuration.
-    // For now, assume continuous mode (true) unless configured otherwise in OD.
-    // Real implementation needs to track Multiplex Cycle count from SoC PS/MC flags (if supported).
-    let expect_preq = true;
+    // FIX: Only strictly expect PReq if we are in Operational state.
+    // In PreOp2/ReadyToOp, the MN might not schedule PReqs yet (or might be busy with Async config),
+    // and we don't want to reset to PreOp1 immediately.
+    let expect_preq = context.nmt_state_machine.current_state() == NmtState::NmtOperational;
 
     if let Some(errors) = context
         .dll_state_machine
