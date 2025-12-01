@@ -1,4 +1,4 @@
-// crates/powerlink-rs/src/node/mn/scheduler.rs
+// src/node/mn/scheduler.rs
 use super::payload;
 use super::state::{CnInfo, CnState, MnContext};
 use super::validation; // <-- Use the new validation module
@@ -13,7 +13,6 @@ use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use crate::log::{pl_debug, pl_trace, pl_info};
 
 /// Looks up a CN's MAC address from the dynamic ARP cache.
-// ... [get_cn_mac_address unchanged] ...
 /// The cache is populated passively by `IdentResponse` frames.
 pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option<MacAddress> {
     // 1. Derive the IP address from the Node ID.
@@ -35,7 +34,6 @@ pub(super) fn get_cn_mac_address(context: &MnContext, node_id: NodeId) -> Option
 }
 
 /// Determines the highest priority asynchronous action to be taken.
-// ... [determine_next_async_action unchanged] ...
 pub(super) fn determine_next_async_action(
     context: &mut MnContext,
 ) -> (RequestedServiceId, NodeId, bool) {
@@ -230,7 +228,6 @@ pub(super) fn check_bootup_state(context: &mut MnContext) {
 }
 
 /// Finds the next configured CN that has not been identified yet for polling.
-// ... [find_next_node_to_identify unchanged] ...
 pub(super) fn find_next_node_to_identify(context: &mut MnContext) -> Option<NodeId> {
     let start_node_id_val = context.last_ident_poll_node_id.0.wrapping_add(1);
 
@@ -278,7 +275,6 @@ pub(super) fn find_next_node_to_identify(context: &mut MnContext) -> Option<Node
 }
 
 /// Finds the next async-only CN that needs a status poll.
-// ... [find_next_async_only_to_poll unchanged] ...
 pub(super) fn find_next_async_only_to_poll(context: &mut MnContext) -> Option<NodeId> {
     if context.async_only_nodes.is_empty() {
         return None;
@@ -311,7 +307,6 @@ pub(super) fn find_next_async_only_to_poll(context: &mut MnContext) -> Option<No
 }
 
 /// Gets the Node ID of the next isochronous node to poll for the given multiplex cycle.
-// ... [get_next_isochronous_node_to_poll unchanged] ...
 pub(super) fn get_next_isochronous_node_to_poll(
     context: &mut MnContext,
     current_multiplex_cycle: u8,
@@ -333,9 +328,11 @@ pub(super) fn get_next_isochronous_node_to_poll(
                 .node_info
                 .get(&node_id)
                 .map_or(CnState::Unknown, |info| info.state);
-            // Poll nodes from Identified onwards, excluding Missing.
-            // CRITICAL FIX: Explicitly exclude Stopped nodes (EPSG 301, 7.1.4.1.2.5)
-            if state >= CnState::PreOperational && state != CnState::Stopped {
+            
+            // [FIX]: Poll nodes starting from IDENTIFIED. 
+            // The MN must poll identified nodes in PreOp2 to allow them to verify communication 
+            // and transition to ReadyToOperate (Spec 7.4.1.4).
+            if state >= CnState::Identified && state != CnState::Stopped {
                 // Found a valid node to poll in this cycle
                 pl_trace!(*context, 
                     "Polling Node {} (State: {:?}, MuxCycle: {}) in mux cycle {}",
@@ -359,7 +356,6 @@ pub(super) fn get_next_isochronous_node_to_poll(
 }
 
 /// Helper to check if there are more isochronous nodes to poll in the current cycle.
-// ... [has_more_isochronous_nodes unchanged] ...
 pub(super) fn has_more_isochronous_nodes(context: &MnContext, current_multiplex_cycle: u8) -> bool {
     // Check remaining nodes in the list from the current index
     for idx in context.next_isoch_node_idx..context.isochronous_nodes.len() {
@@ -374,8 +370,9 @@ pub(super) fn has_more_isochronous_nodes(context: &MnContext, current_multiplex_
                 .node_info
                 .get(&node_id)
                 .map_or(CnState::Unknown, |info| info.state);
-            // CRITICAL FIX: Explicitly exclude Stopped nodes here too
-            if state >= CnState::PreOperational && state != CnState::Stopped {
+            
+            // [FIX]: Match criteria in get_next_isochronous_node_to_poll
+            if state >= CnState::Identified && state != CnState::Stopped {
                 return true; // Found at least one more node to poll
             }
         }
@@ -384,7 +381,6 @@ pub(super) fn has_more_isochronous_nodes(context: &MnContext, current_multiplex_
 }
 
 /// Schedules a timeout check.
-// ... [schedule_timeout unchanged] ...
 pub(super) fn schedule_timeout(context: &mut MnContext, deadline_us: u64, event: DllMsEvent) {
     pl_trace!(*context, 
         "Scheduling timeout event {:?} for {}us",
