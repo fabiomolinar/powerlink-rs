@@ -10,11 +10,10 @@ use crate::od::{ObjectDictionary, ObjectValue};
 use crate::types::{C_ADR_MN_DEF_NODE_ID, NodeId};
 use alloc::vec::Vec;
 use log::{debug, info};
-use crate::log::{pl_info, pl_warn};
+use crate::log::{pl_info, pl_warn, pl_trace};
 use alloc::string::String;
 use alloc::format;
 
-/// Manages the NMT state for a Managing Node.
 pub struct MnNmtStateMachine {
     pub current_state: NmtState,
     pub node_id: NodeId,
@@ -24,7 +23,6 @@ pub struct MnNmtStateMachine {
 }
 
 impl MnNmtStateMachine {
-    /// Creates a new MN NMT state machine with pre-validated parameters.
     pub fn new(
         node_id: NodeId,
         feature_flags: FeatureFlags,
@@ -40,7 +38,6 @@ impl MnNmtStateMachine {
         }
     }
 
-    /// A fallible constructor that reads its configuration from an Object Dictionary.
     pub fn from_od(od: &ObjectDictionary) -> Result<Self, PowerlinkError> {
         let node_id = NodeId(C_ADR_MN_DEF_NODE_ID);
         debug!("[MN - Node {}] Initializing MN NMT state machine from Object Dictionary.", node_id);
@@ -52,7 +49,6 @@ impl MnNmtStateMachine {
             return Err(PowerlinkError::TypeMismatch);
         };
 
-        // WaitNotActive timeout from OD entry 0x1F89, sub-index 1.
         let wait_not_active_timeout_val =
             od.read(0x1F89, 1).ok_or(PowerlinkError::ObjectNotFound)?;
         let wait_not_active_timeout =
@@ -62,7 +58,6 @@ impl MnNmtStateMachine {
                 return Err(PowerlinkError::TypeMismatch);
             };
 
-        // NMT_StartUp_U32 from OD entry 0x1F80, sub-index 0.
         let startup_flags_val = od.read(0x1F80, 0).ok_or(PowerlinkError::ObjectNotFound)?;
         let startup_flags = if let ObjectValue::Unsigned32(val) = &*startup_flags_val {
             *val
@@ -81,6 +76,17 @@ impl MnNmtStateMachine {
             wait_not_active_timeout,
             startup_flags,
         ))
+    }
+
+    // FIX: Add method to write state to OD using write_internal to bypass RO check
+    fn update_od_state(&self, od: &mut ObjectDictionary) {
+        // NMT_CurrState_U8 (0x1F8C)
+        let val = self.current_state as u8;
+        if let Err(e) = od.write_internal(0x1F8C, 0, ObjectValue::Unsigned8(val), false) {
+            pl_warn!(*self, "Failed to update NMT state in OD (0x1F8C): {:?}", e);
+        } else {
+            pl_trace!(*self, "Updated OD 0x1F8C to state {:?}", self.current_state);
+        }
     }
 }
 
@@ -101,8 +107,6 @@ impl NmtStateMachine for MnNmtStateMachine {
         self.current_state = new_state;
     }
 
-    /// Processes an external event and transitions the NMT state accordingly.
-    /// The logic follows the MN state diagram (Figure 73) from the specification.
     fn process_event(
         &mut self,
         event: NmtEvent,
@@ -121,11 +125,8 @@ impl NmtStateMachine for MnNmtStateMachine {
                 | NmtEvent::ResetConfiguration
         ) {
             self.reset(event, od);
-            if old_state != self.current_state {
-                self.update_od_state(od);
-            }
-            // After a reset, a full re-initialisation sequence should run.
-            // Note: reset() now handles the full cascade down to NotActive.
+            // Ensure OD is updated after reset
+            self.update_od_state(od);
             return None;
         }
 

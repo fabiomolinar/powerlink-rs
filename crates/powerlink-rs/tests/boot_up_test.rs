@@ -1,13 +1,11 @@
 // tests/boot_up_test.rs
 
 // Import the shared simulator module.
-// Rust looks for `tests/simulator/mod.rs` when we declare `mod simulator;` here.
 #[cfg(feature = "std")]
 mod simulator;
 
 #[cfg(feature = "std")]
 mod tests {
-    // Use the local simulator module we declared above
     use super::simulator::{NodeHarness, SimulatedInterface, VirtualNetwork};
     
     use powerlink_rs::{
@@ -91,6 +89,11 @@ mod tests {
         
         // Configure Expected Ident for Node 1 (match CN's default)
         od.write(0x1F84, 1, ObjectValue::Unsigned32(0)).unwrap(); // DeviceType (0=don't check)
+
+        // 0x1F8D sub 1: NMT_PresPayloadLimitList_AU16 for Node 1
+        // The CN sends 36 bytes by default (header + minimal payload).
+        // We set the limit to 256 to be safe.
+        od.write(0x1F8D, 1, ObjectValue::Unsigned16(256)).unwrap();
         
         let node = ManagingNode::new(od, mac, None, time_provider).unwrap();
         let interface = Rc::new(RefCell::new(SimulatedInterface::new(node_id, mac.0)));
@@ -103,13 +106,12 @@ mod tests {
         // 1. Initialize File Logger
         // Create log folder
         let _ = fs::create_dir("tests/boot_up_test");
-        // File::create truncates the file if it exists, satisfying the overwrite requirement.
         let log_file = File::create("tests/boot_up_test/test_boot_up_sequence.log").expect("Could not create log file");
         
         let _ = env_logger::Builder::new()
             .target(env_logger::Target::Pipe(Box::new(log_file)))
             .filter_level(log::LevelFilter::Trace)
-            .format_timestamp_micros() // High precision timing is useful for PLK
+            .format_timestamp_micros()
             .try_init();
 
         // 2. Initialize Resources

@@ -28,7 +28,6 @@ pub struct CnNmtStateMachine {
 }
 
 impl CnNmtStateMachine {
-    /// Creates a new NMT state machine with pre-validated parameters.
     pub fn new(node_id: NodeId, feature_flags: FeatureFlags, basic_ethernet_timeout: u32) -> Self {
         Self {
             current_state: NmtState::NmtGsInitialising,
@@ -40,7 +39,6 @@ impl CnNmtStateMachine {
         }
     }
 
-    /// A fallible constructor that reads its configuration from an Object Dictionary.
     pub fn from_od(od: &ObjectDictionary) -> Result<Self, PowerlinkError> {
         let node_id_val = od.read(0x1F93, 1).ok_or(PowerlinkError::ObjectNotFound)?;
         let node_id = if let ObjectValue::Unsigned8(val) = &*node_id_val {
@@ -74,6 +72,20 @@ impl CnNmtStateMachine {
 
         Ok(Self::new(node_id, feature_flags, basic_ethernet_timeout))
     }
+
+    /// Updates the Object Dictionary with the current NMT state.
+    /// This is critical because frame builders read the state from OD 0x1F8C.
+    fn update_od_state(&self, od: &mut ObjectDictionary) {
+        // NMT_CurrState_U8 (0x1F8C)
+        let val = self.current_state as u8;
+        // [FIX] Use write_internal to bypass RO access check.
+        // 0x1F8C is defined as RO in the spec, so standard write() fails.
+        if let Err(e) = od.write_internal(0x1F8C, 0, ObjectValue::Unsigned8(val), false) {
+            pl_warn!(*self, "Failed to update NMT state in OD (0x1F8C): {:?}", e);
+        } else {
+            pl_trace!(*self, "Updated OD 0x1F8C to state {:?}", self.current_state);
+        }
+    }
 }
 
 impl NmtStateMachine for CnNmtStateMachine {
@@ -92,17 +104,10 @@ impl NmtStateMachine for CnNmtStateMachine {
     fn set_state(&mut self, new_state: NmtState) {
         self.current_state = new_state;
         if new_state != NmtState::NmtPreOperational2 && new_state != NmtState::NmtReadyToOperate {
-            // Reset latch only if we leave the boot-up phase entirely.
-            // If we move PreOp2 <-> ReadyToOp, we might want to keep flags, 
-            // but usually ReadyToOp -> PreOp2 (via Command) requires re-enabling.
-            // For safety, we clear it on any exit from PreOp2 except to ReadyToOp.
-            // But wait, if we are in ReadyToOp, we are "Enabled".
-            // If we drop back to PreOp2 (via EnterPreOperational2 cmd), we usually need a new Enable.
             self.ready_to_operate_enabled = false;
         }
     }
 
-    /// Processes an external event and transitions the NMT state accordingly.
     fn process_event(
         &mut self,
         event: NmtEvent,
@@ -111,7 +116,6 @@ impl NmtStateMachine for CnNmtStateMachine {
         let mut errors: Vec<DllError> = Vec::new();
         let old_state = self.current_state;
 
-        // --- Handle Common Reset Events ---
         if matches!(
             event,
             NmtEvent::Reset
@@ -121,9 +125,8 @@ impl NmtStateMachine for CnNmtStateMachine {
                 | NmtEvent::ResetConfiguration
         ) {
             self.reset(event, od);
-            if old_state != self.current_state {
-                self.update_od_state(od);
-            }
+            // Ensure OD is updated after reset
+            self.update_od_state(od);
             return None;
         }
 
@@ -146,7 +149,7 @@ impl NmtStateMachine for CnNmtStateMachine {
 
             // (NMT_CT5) The MN enables the next state.
             (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => {
-                pl_debug!(*self, "Received EnableReadyToOperate. Latching enabled flag.");
+                pl_debug!(*self, "Received EnableReadyToOperate.");
                 self.ready_to_operate_enabled = true;
                 
                 // If the application is already ready, we transition immediately.
@@ -159,7 +162,6 @@ impl NmtStateMachine for CnNmtStateMachine {
                 }
             }
 
-            // [FIX]: Handle redundant EnableReadyToOperate when already in ReadyToOperate
             (NmtState::NmtReadyToOperate, NmtEvent::EnableReadyToOperate) => {
                 pl_debug!(*self, "Ignored redundant EnableReadyToOperate command (already in state).");
                 NmtState::NmtReadyToOperate
@@ -169,7 +171,6 @@ impl NmtStateMachine for CnNmtStateMachine {
             (NmtState::NmtPreOperational2, NmtEvent::CnConfigurationComplete) => {
                 pl_debug!(*self, "Application signaled ConfigurationComplete.");
                 self.app_ready = true;
-
                 if self.ready_to_operate_enabled {
                     pl_info!(*self, "Transition to ReadyToOperate (MN was already enabled).");
                     NmtState::NmtReadyToOperate
