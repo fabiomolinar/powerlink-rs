@@ -65,7 +65,11 @@ mod tests {
         // Required by IdentResponse
         od.insert(0x1000, default_object_entry(ObjectValue::Unsigned32(0x12345678)));
         
-        // Pass time_provider to ControlledNode::new
+        // Ensure Cycle Length is set to 20ms (matches MN default)
+        od.write(0x1006, 0, ObjectValue::Unsigned32(20000)).unwrap();
+        // Ensure Tolerance is set to 100us
+        od.write(0x1C14, 0, ObjectValue::Unsigned32(100000)).unwrap();
+        
         let node = ControlledNode::new(od, mac, time_provider).unwrap();
         let interface = Rc::new(RefCell::new(SimulatedInterface::new(node_id, mac.0)));
         

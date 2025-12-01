@@ -181,127 +181,158 @@ pub(crate) fn process_tick(context: &mut CnContext, current_time_us: u64) -> Nod
     
     // 2. SoC Timeout Check (Spec 4.7.7.3.1 Loss of SoC)
     if context.soc_timeout_check_active {
-        pl_warn!(*context, 
-            "SoC timeout detected at {}us! Last SoC was at {}us.",
-            current_time_us, context.last_soc_reception_time_us
-        );
-        // Trigger DLL Event
-        if let Some(errors) = context
-            .dll_state_machine
-            .process_event(DllCsEvent::SocTimeout, current_nmt_state, context.nmt_state_machine.node_id, true)
-        {
-            for error in errors {
-                context.core.od.increment_counter(
-                    constants::IDX_DIAG_ERR_STATISTICS_REC,
-                    constants::SUBIDX_DIAG_ERR_STATS_HIST_WRITE,
-                );
-                let (nmt_action, signaled) = context.dll_error_manager.handle_error(error);
-                
-                if signaled {
-                    context.error_status_changed = true;
-                    // Update Error Register (0x1001)
-                    let current_err_reg = context
-                        .core
-                        .od
-                        .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
-                        .unwrap_or(0);
-                    let new_err_reg = current_err_reg | 0b1; // Set Generic Error
-                    if current_err_reg != new_err_reg {
-                        context.core.od.increment_counter(
-                            constants::IDX_DIAG_ERR_STATISTICS_REC,
-                            constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
-                        );
-                    }
-                    let _ = context.core.od.write_internal(
-                        constants::IDX_NMT_ERROR_REGISTER_U8,
-                        0,
-                        crate::od::ObjectValue::Unsigned8(new_err_reg),
-                        false,
-                    );
+        // FIX: Re-calculate the expected timeout duration dynamically.
+        // Reading OD ensures we have the latest NMT_CycleLen and Tolerance.
+        let cycle_time_us = context
+            .core
+            .od
+            .read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0)
+            .unwrap_or(0) as u64; // Default to 0 if missing (safe fallback)
+        
+        let tolerance_ns = context
+            .core
+            .od
+            .read_u32(constants::IDX_DLL_CN_LOSS_OF_SOC_TOL_U32, 0)
+            .unwrap_or(100_000) as u64; // Default 100us
+        
+        let tolerance_us = tolerance_ns / 1000;
+        let timeout_duration_us = cycle_time_us + tolerance_us;
 
-                    // Queue Emergency
-                    let error_entry = ErrorEntry {
-                        entry_type: EntryType {
-                            is_status_entry: false,
-                            send_to_queue: true,
-                            mode: ErrorEntryMode::EventOccurred,
-                            profile: 0x002,
-                        },
-                        error_code: error.to_error_code(),
-                        timestamp: NetTime {
-                            seconds: (current_time_us / 1_000_000) as u32,
-                            nanoseconds: ((current_time_us % 1_000_000) * 1000) as u32,
-                        },
-                        additional_information: match error {
-                            DllError::LossOfPres { node_id }
-                            | DllError::LatePres { node_id }
-                            | DllError::LossOfStatusRes { node_id } => node_id.0 as u64,
-                            _ => 0,
-                        },
-                    };
-                    if context.emergency_queue.len() < context.emergency_queue.capacity() {
-                        context.emergency_queue.push_back(error_entry.clone());
-                        error_history::write_error_to_history(&mut context.core.od, &error_entry);
-                        
-                        pl_trace!(*context, "New error queued: {:?}", error_entry);
-                        // Increment emergency write counter
-                        context.core.od.increment_counter(
-                            constants::IDX_DIAG_ERR_STATISTICS_REC,
-                            constants::SUBIDX_DIAG_ERR_STATS_EMCY_WRITE,
+        let time_since_soc = current_time_us.saturating_sub(context.last_soc_reception_time_us);
+
+        // FIX: Verify if the time elapsed actually exceeds the allowed duration.
+        // This handles cases where a new SoC arrived (updating last_soc_reception_time_us)
+        // but the scheduler failed to update 'next_tick_us', leaving a stale deadline.
+        if time_since_soc > timeout_duration_us {
+            pl_warn!(*context, 
+                "SoC timeout detected at {}us! Last SoC was at {}us. (Delta: {}us > Limit: {}us)",
+                current_time_us, context.last_soc_reception_time_us, time_since_soc, timeout_duration_us
+            );
+            
+            // Trigger DLL Event
+            if let Some(errors) = context
+                .dll_state_machine
+                .process_event(DllCsEvent::SocTimeout, current_nmt_state, context.nmt_state_machine.node_id, true)
+            {
+                for error in errors {
+                    context.core.od.increment_counter(
+                        constants::IDX_DIAG_ERR_STATISTICS_REC,
+                        constants::SUBIDX_DIAG_ERR_STATS_HIST_WRITE,
+                    );
+                    let (nmt_action, signaled) = context.dll_error_manager.handle_error(error);
+                    
+                    if signaled {
+                        context.error_status_changed = true;
+                        // Update Error Register (0x1001)
+                        let current_err_reg = context
+                            .core
+                            .od
+                            .read_u8(constants::IDX_NMT_ERROR_REGISTER_U8, 0)
+                            .unwrap_or(0);
+                        let new_err_reg = current_err_reg | 0b1; // Set Generic Error
+                        if current_err_reg != new_err_reg {
+                            context.core.od.increment_counter(
+                                constants::IDX_DIAG_ERR_STATISTICS_REC,
+                                constants::SUBIDX_DIAG_ERR_STATS_STATIC_ERR_CHG,
+                            );
+                        }
+                        let _ = context.core.od.write_internal(
+                            constants::IDX_NMT_ERROR_REGISTER_U8,
+                            0,
+                            crate::od::ObjectValue::Unsigned8(new_err_reg),
+                            false,
                         );
-                    } else {
-                        pl_warn!(*context, 
-                            "Emergency queue full, dropping error: {:?}",
-                            error_entry
-                        );
-                        // Increment emergency overflow counter
-                        context.core.od.increment_counter(
-                            constants::IDX_DIAG_ERR_STATISTICS_REC,
-                            constants::SUBIDX_DIAG_ERR_STATS_EMCY_OVERFLOW,
-                        );
+
+                        // Queue Emergency
+                        let error_entry = ErrorEntry {
+                            entry_type: EntryType {
+                                is_status_entry: false,
+                                send_to_queue: true,
+                                mode: ErrorEntryMode::EventOccurred,
+                                profile: 0x002,
+                            },
+                            error_code: error.to_error_code(),
+                            timestamp: NetTime {
+                                seconds: (current_time_us / 1_000_000) as u32,
+                                nanoseconds: ((current_time_us % 1_000_000) * 1000) as u32,
+                            },
+                            additional_information: match error {
+                                DllError::LossOfPres { node_id }
+                                | DllError::LatePres { node_id }
+                                | DllError::LossOfStatusRes { node_id } => node_id.0 as u64,
+                                _ => 0,
+                            },
+                        };
+                        if context.emergency_queue.len() < context.emergency_queue.capacity() {
+                            context.emergency_queue.push_back(error_entry.clone());
+                            error_history::write_error_to_history(&mut context.core.od, &error_entry);
+                            
+                            pl_trace!(*context, "New error queued: {:?}", error_entry);
+                            // Increment emergency write counter
+                            context.core.od.increment_counter(
+                                constants::IDX_DIAG_ERR_STATISTICS_REC,
+                                constants::SUBIDX_DIAG_ERR_STATS_EMCY_WRITE,
+                            );
+                        } else {
+                            pl_warn!(*context, 
+                                "Emergency queue full, dropping error: {:?}",
+                                error_entry
+                            );
+                            // Increment emergency overflow counter
+                            context.core.od.increment_counter(
+                                constants::IDX_DIAG_ERR_STATISTICS_REC,
+                                constants::SUBIDX_DIAG_ERR_STATS_EMCY_OVERFLOW,
+                            );
+                        }
+                    }
+                    
+                    // Handle NMT State Transition (ResetCommunication -> PreOp1)
+                    if nmt_action != NmtAction::None {
+                        context
+                            .nmt_state_machine
+                            .process_event(NmtEvent::Error, &mut context.core.od);
+                        context.soc_timeout_check_active = false;
+                        return NodeAction::NoAction;
                     }
                 }
+            }
+        } else {
+            // FIX: Stale deadline detected.
+            // The deadline expired, but a new SoC *was* received recently (time_since_soc < limit).
+            // We should reschedule the check for the correct time instead of erroring.
+            if cycle_time_us > 0 {
+                // Calculate when the NEXT timeout should actually happen relative to the LAST SoC
+                let next_deadline = context.last_soc_reception_time_us + timeout_duration_us;
                 
-                // Handle NMT State Transition (ResetCommunication -> PreOp1)
-                if nmt_action != NmtAction::None {
-                    context
-                        .nmt_state_machine
-                        .process_event(NmtEvent::Error, &mut context.core.od);
-                    context.soc_timeout_check_active = false;
-                    return NodeAction::NoAction;
+                // Safety check: ensure new deadline is in the future to avoid immediate loops
+                if next_deadline > current_time_us {
+                    context.next_tick_us = Some(next_deadline);
+                    pl_trace!(*context, 
+                        "Rescheduling stale SoC timeout check. Last SoC: {}us, New Deadline: {}us", 
+                        context.last_soc_reception_time_us, next_deadline
+                    );
                 }
             }
         }
-        // Reschedule next check if still active (Spec 4.7.7.3.1)
-        if context.soc_timeout_check_active {
-            let cycle_time_opt = context
-                .core
-                .od
-                .read_u32(constants::IDX_NMT_CYCLE_LEN_U32, 0)
-                .map(|v| v as u64);
-            // Tolerance in 0x1C14
-            let tolerance_opt = context
-                .core
-                .od
-                .read_u32(constants::IDX_DLL_CN_LOSS_OF_SOC_TOL_U32, 0)
-                .map(|v| v as u64);
 
-            if let (Some(cycle_time_us), Some(tolerance_ns)) = (cycle_time_opt, tolerance_opt) {
-                if cycle_time_us > 0 {
-                    let cycles_missed = ((current_time_us - context.last_soc_reception_time_us)
-                        / cycle_time_us)
-                        + 1;
-                    let next_expected_soc_time =
-                        context.last_soc_reception_time_us + cycles_missed * cycle_time_us;
-                    let next_deadline = next_expected_soc_time + (tolerance_ns / 1000);
-                    context.next_tick_us = Some(next_deadline);
-                    pl_trace!(*context, 
-                        "SoC timeout occurred, scheduling next check at {}us",
-                        next_deadline
-                    );
-                } else {
-                    context.soc_timeout_check_active = false;
-                }
+        // Reschedule next check if still active (Standard logic)
+        // This block handles the case where we just handled a valid timeout (and stayed in state)
+        // OR if we just recovered from a stale deadline above.
+        if context.soc_timeout_check_active && context.next_tick_us.is_none() {
+            if cycle_time_us > 0 {
+                // Determine how many cycles we might have missed to project the next expected SoC
+                let cycles_missed = ((current_time_us.saturating_sub(context.last_soc_reception_time_us))
+                    / cycle_time_us)
+                    + 1;
+                let next_expected_soc_time =
+                    context.last_soc_reception_time_us + cycles_missed * cycle_time_us;
+                let next_deadline = next_expected_soc_time + tolerance_us;
+                
+                context.next_tick_us = Some(next_deadline);
+                pl_trace!(*context, 
+                    "Scheduling next SoC timeout check at {}us",
+                    next_deadline
+                );
             } else {
                 context.soc_timeout_check_active = false;
             }
