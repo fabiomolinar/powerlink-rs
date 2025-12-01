@@ -11,7 +11,7 @@ use crate::od::{ObjectDictionary, ObjectValue};
 use crate::types::NodeId;
 use alloc::vec::Vec;
 use log::{debug, info};
-use crate::log::{pl_debug, pl_info, pl_trace};
+use crate::log::{pl_debug, pl_info, pl_trace, pl_warn};
 use alloc::string::String;
 use alloc::format;
 
@@ -36,16 +36,12 @@ impl CnNmtStateMachine {
             feature_flags,
             basic_ethernet_timeout,
             ready_to_operate_enabled: false,
-            // Defaulting to true allows tests/simple nodes to boot without an explicit 
-            // 'CnConfigurationComplete' event. Complex apps should set this false 
-            // and trigger the event manually.
             app_ready: true, 
         }
     }
 
     /// A fallible constructor that reads its configuration from an Object Dictionary.
     pub fn from_od(od: &ObjectDictionary) -> Result<Self, PowerlinkError> {
-        // Read Node ID from OD entry 0x1F93, sub-index 1.
         let node_id_val = od.read(0x1F93, 1).ok_or(PowerlinkError::ObjectNotFound)?;
         let node_id = if let ObjectValue::Unsigned8(val) = &*node_id_val {
             NodeId::try_from(*val)?
@@ -55,7 +51,6 @@ impl CnNmtStateMachine {
         
         debug!("[CN - Node {}] Initializing CN NMT state machine from Object Dictionary.", node_id);
 
-        // Read Feature Flags from OD entry 0x1F82, sub-index 0.
         let feature_flags_val = od.read(0x1F82, 0).ok_or(PowerlinkError::ObjectNotFound)?;
         let feature_flags = if let ObjectValue::Unsigned32(val) = &*feature_flags_val {
             FeatureFlags::from_bits_truncate(*val)
@@ -63,7 +58,6 @@ impl CnNmtStateMachine {
             return Err(PowerlinkError::TypeMismatch);
         };
 
-        // Read Basic Ethernet Timeout from OD entry 0x1F99, sub-index 0.
         let basic_ethernet_timeout_val =
             od.read(0x1F99, 0).ok_or(PowerlinkError::ObjectNotFound)?;
         let basic_ethernet_timeout =
@@ -97,10 +91,13 @@ impl NmtStateMachine for CnNmtStateMachine {
 
     fn set_state(&mut self, new_state: NmtState) {
         self.current_state = new_state;
-        // Reset latch on state change if leaving PreOp2.
-        // We do NOT reset app_ready, as the application generally stays configured 
-        // unless a ResetConfiguration event occurs.
-        if new_state != NmtState::NmtPreOperational2 {
+        if new_state != NmtState::NmtPreOperational2 && new_state != NmtState::NmtReadyToOperate {
+            // Reset latch only if we leave the boot-up phase entirely.
+            // If we move PreOp2 <-> ReadyToOp, we might want to keep flags, 
+            // but usually ReadyToOp -> PreOp2 (via Command) requires re-enabling.
+            // For safety, we clear it on any exit from PreOp2 except to ReadyToOp.
+            // But wait, if we are in ReadyToOp, we are "Enabled".
+            // If we drop back to PreOp2 (via EnterPreOperational2 cmd), we usually need a new Enable.
             self.ready_to_operate_enabled = false;
         }
     }
@@ -123,7 +120,7 @@ impl NmtStateMachine for CnNmtStateMachine {
                 | NmtEvent::ResetCommunication
                 | NmtEvent::ResetConfiguration
         ) {
-            self.reset(event, od); // Pass OD to reset
+            self.reset(event, od);
             if old_state != self.current_state {
                 self.update_od_state(od);
             }
@@ -154,27 +151,37 @@ impl NmtStateMachine for CnNmtStateMachine {
                 
                 // If the application is already ready, we transition immediately.
                 if self.app_ready {
-                    pl_info!(*self, "Transitioning to ReadyToOperate (Application was already ready).");
+                    pl_info!(*self, "Transition to ReadyToOperate (App was already ready).");
                     NmtState::NmtReadyToOperate
                 } else {
-                    pl_debug!(*self, "EnableReadyToOperate received, but waiting for Application Configuration.");
+                    pl_debug!(*self, "Waiting for App Configuration.");
                     NmtState::NmtPreOperational2
                 }
             }
 
+            // [FIX]: Handle redundant EnableReadyToOperate when already in ReadyToOperate
+            (NmtState::NmtReadyToOperate, NmtEvent::EnableReadyToOperate) => {
+                pl_debug!(*self, "Ignored redundant EnableReadyToOperate command (already in state).");
+                NmtState::NmtReadyToOperate
+            }
+
             // (NMT_CT6) The application signals it's ready. 
-            // Transition ONLY if enabled by MN previously.
             (NmtState::NmtPreOperational2, NmtEvent::CnConfigurationComplete) => {
                 pl_debug!(*self, "Application signaled ConfigurationComplete.");
                 self.app_ready = true;
 
                 if self.ready_to_operate_enabled {
-                    pl_info!(*self, "Transitioning to ReadyToOperate (MN was already enabled).");
+                    pl_info!(*self, "Transition to ReadyToOperate (MN was already enabled).");
                     NmtState::NmtReadyToOperate
                 } else {
                     pl_debug!(*self, "App Config complete, but waiting for MN EnableReadyToOperate.");
                     NmtState::NmtPreOperational2
                 }
+            }
+            
+            // Allow re-signaling in ReadyToOp (idempotent)
+            (NmtState::NmtReadyToOperate, NmtEvent::CnConfigurationComplete) => {
+                NmtState::NmtReadyToOperate
             }
 
             // (NMT_CT7) The MN commands the CN to start full operation.
@@ -215,6 +222,8 @@ impl NmtStateMachine for CnNmtStateMachine {
             // If no specific transition is defined, remain in the current state.
             (current, _) => {
                 // Log unexpected event only if it's not a common noise event
+                // Only treat it as an error if it's not one of the events we explicitly ignore above
+                pl_warn!(*self, "Unexpected Event {:?} in State {:?}", event, current);
                 errors.push(DllError::UnexpectedEventInState {
                     state: current as u8,
                     event: event as u8,
@@ -228,7 +237,7 @@ impl NmtStateMachine for CnNmtStateMachine {
                 "[NMT] State changed from {:?} to {:?}",
                 old_state, next_state
             );
-            self.set_state(next_state); // Updates current_state and clears latch
+            self.set_state(next_state); 
             self.update_od_state(od);
         }
 
