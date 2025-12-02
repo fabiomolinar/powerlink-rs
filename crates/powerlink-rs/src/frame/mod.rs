@@ -82,7 +82,7 @@ impl PowerlinkFrame {
     pub fn nmt_event(&self) -> Option<NmtEvent> {
         match self {
             PowerlinkFrame::Soc(_) => Some(NmtEvent::SocReceived),
-            PowerlinkFrame::SoA(_) => Some(NmtEvent::SocSoAReceived),
+            PowerlinkFrame::SoA(_) => Some(NmtEvent::SoAReceived),
             // PReq/PRes are part of the cycle, not NMT-level events themselves
             _ => None,
         }

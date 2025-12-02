@@ -138,7 +138,7 @@ impl NmtStateMachine for CnNmtStateMachine {
             // --- CN Boot-up Sequence ---
 
             // (NMT_CT2) A SoC or SoA frame moves the node from NotActive to PreOp1.
-            (NmtState::NmtNotActive, NmtEvent::SocReceived | NmtEvent::SocSoAReceived) => {
+            (NmtState::NmtNotActive, NmtEvent::SocReceived | NmtEvent::SoAReceived) => {
                 NmtState::NmtPreOperational1
             }
             // (NMT_CT3) A timeout in NotActive leads to BasicEthernet mode.
@@ -146,10 +146,6 @@ impl NmtStateMachine for CnNmtStateMachine {
 
             // (NMT_CT4) Receiving a SoC in PreOp1 signals the start of the isochronous phase.
             (NmtState::NmtPreOperational1, NmtEvent::SocReceived) => NmtState::NmtPreOperational2,
-
-            // [Fix] Ignore SocSoAReceived in PreOp1. It may happen if SoA arrives before SoC in some traces, 
-            // but SoC is the required trigger for PreOp2.
-            (NmtState::NmtPreOperational1, NmtEvent::SocSoAReceived) => NmtState::NmtPreOperational1,
 
             // (NMT_CT5) The MN enables the next state.
             (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => {
@@ -374,7 +370,7 @@ mod tests {
         let mut nmt = get_test_nmt();
         nmt.current_state = NmtState::NmtNotActive;
 
-        nmt.process_event(NmtEvent::SocSoAReceived, &mut od);
+        nmt.process_event(NmtEvent::SocReceived, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtPreOperational1);
 
         nmt.process_event(NmtEvent::SocReceived, &mut od);

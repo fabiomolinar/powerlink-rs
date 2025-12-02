@@ -149,8 +149,8 @@ pub enum NmtEvent {
     Error,
 
     // --- Frame Reception Events ---
-    /// Triggered when node received a SoC or SoA frame. (Used by CN NMT_CT2)
-    SocSoAReceived,
+    /// Triggered when node received a SoA frame. (Used by CN NMT_CT2)
+    SoAReceived,
     /// The CN received a SoC frame. (Used by CN NMT_CT4)
     SocReceived,
     /// Any powerlink frame received (Used by CN NMT_CT12).

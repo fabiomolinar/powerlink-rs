@@ -259,7 +259,7 @@ pub(super) fn process_frame(
     let mut nmt_event: Option<NmtEvent> = None;
     match &frame {
         PowerlinkFrame::Soc(_) => nmt_event = Some(NmtEvent::SocReceived),
-        PowerlinkFrame::SoA(_) => nmt_event = Some(NmtEvent::SocSoAReceived),
+        PowerlinkFrame::SoA(_) => nmt_event = Some(NmtEvent::SoAReceived),
         PowerlinkFrame::ASnd(asnd_frame)
             if asnd_frame.destination == context.nmt_state_machine.node_id
                 && asnd_frame.service_id == ServiceId::NmtCommand =>
