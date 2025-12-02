@@ -25,6 +25,7 @@ mod tests {
 
     // --- Mock Storage for OD ---
     struct MockStorage;
+    
     impl ObjectDictionaryStorage for MockStorage {
         fn load(&mut self) -> Result<BTreeMap<(u16, u8), ObjectValue>, PowerlinkError> { Ok(BTreeMap::new()) }
         fn save(&mut self, _p: &BTreeMap<(u16, u8), ObjectValue>) -> Result<(), PowerlinkError> { Ok(()) }
@@ -135,7 +136,13 @@ mod tests {
         let mut mn_reached_operational = false;
         let mut cn_reached_operational = false;
 
+        let mut counter = 0;
+        let counter_limit = 100;
+
         while network.current_time() < max_time {
+            mn_reached_operational = false;
+            cn_reached_operational = false;
+            
             mn.run_cycle(&mut network);
             cn.run_cycle(&mut network);
             
@@ -147,7 +154,10 @@ mod tests {
             }
 
             if mn_reached_operational && cn_reached_operational {
-                break;
+                counter += 1;
+                if counter >= counter_limit {
+                    break;
+                }
             }
 
             network.tick(dt);
