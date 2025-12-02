@@ -91,9 +91,11 @@ mod tests {
         od.write(0x1F84, 1, ObjectValue::Unsigned32(0)).unwrap(); // DeviceType (0=don't check)
 
         // 0x1F8D sub 1: NMT_PresPayloadLimitList_AU16 for Node 1
-        // The CN sends 36 bytes by default (header + minimal payload).
-        // We set the limit to 256 to be safe.
         od.write(0x1F8D, 1, ObjectValue::Unsigned16(256)).unwrap();
+
+        // The simulator tick is 1000us. Default timeout is much smaller (e.g. 25us).
+        // Set to 5000ns (5ms) to ensure we don't timeout before processing the cycle.
+        od.write(0x1F92, 1, ObjectValue::Unsigned32(5000)).unwrap();
         
         let node = ManagingNode::new(od, mac, None, time_provider).unwrap();
         let interface = Rc::new(RefCell::new(SimulatedInterface::new(node_id, mac.0)));
@@ -127,7 +129,6 @@ mod tests {
         let mut mn = create_mn(&time_provider);
 
         // Run simulation loop
-        // We tick in 1ms increments (1000us)
         let dt = 1000; 
         let max_time = 5_000_000; // 5 seconds max
         
@@ -135,11 +136,9 @@ mod tests {
         let mut cn_reached_operational = false;
 
         while network.current_time() < max_time {
-            // Run cycles
             mn.run_cycle(&mut network);
             cn.run_cycle(&mut network);
             
-            // Check states
             if mn.node.nmt_state() == NmtState::NmtOperational {
                 mn_reached_operational = true;
             }

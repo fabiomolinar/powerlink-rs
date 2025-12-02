@@ -1,4 +1,4 @@
-// crates/powerlink-rs/src/nmt/cn_state_machine.rs
+// src/nmt/cn_state_machine.rs
 
 use super::flags::FeatureFlags;
 use super::state_machine::NmtStateMachine;
@@ -147,6 +147,10 @@ impl NmtStateMachine for CnNmtStateMachine {
             // (NMT_CT4) Receiving a SoC in PreOp1 signals the start of the isochronous phase.
             (NmtState::NmtPreOperational1, NmtEvent::SocReceived) => NmtState::NmtPreOperational2,
 
+            // [Fix] Ignore SocSoAReceived in PreOp1. It may happen if SoA arrives before SoC in some traces, 
+            // but SoC is the required trigger for PreOp2.
+            (NmtState::NmtPreOperational1, NmtEvent::SocSoAReceived) => NmtState::NmtPreOperational1,
+
             // (NMT_CT5) The MN enables the next state.
             (NmtState::NmtPreOperational2, NmtEvent::EnableReadyToOperate) => {
                 pl_debug!(*self, "Received EnableReadyToOperate.");
@@ -158,6 +162,20 @@ impl NmtStateMachine for CnNmtStateMachine {
                     NmtState::NmtReadyToOperate
                 } else {
                     pl_debug!(*self, "Waiting for App Configuration.");
+                    NmtState::NmtPreOperational2
+                }
+            }
+            
+            // [Fix] Handle StartNode in PreOp2 for robustness.
+            // Some MN implementations might skip EnableReadyToOperate or it might be missed.
+            (NmtState::NmtPreOperational2, NmtEvent::StartNode) => {
+                pl_warn!(*self, "Received StartNode in PreOp2. Treating as implicit EnableReadyToOperate + StartNode.");
+                self.ready_to_operate_enabled = true;
+                if self.app_ready {
+                    pl_info!(*self, "Transitioning directly to Operational (Implicit ReadyToOperate).");
+                    NmtState::NmtOperational
+                } else {
+                    pl_debug!(*self, "StartNode received, but App not ready. Waiting.");
                     NmtState::NmtPreOperational2
                 }
             }
@@ -371,6 +389,18 @@ mod tests {
         nmt.process_event(NmtEvent::StartNode, &mut od);
         assert_eq!(nmt.current_state(), NmtState::NmtOperational);
         assert_eq!(od.read_u8(0x1F8C, 0), Some(NmtState::NmtOperational as u8));
+    }
+
+    #[test]
+    fn test_boot_up_robustness_start_node_in_preop2() {
+        let mut od = get_test_od();
+        let mut nmt = get_test_nmt();
+        nmt.current_state = NmtState::NmtPreOperational2;
+        nmt.app_ready = true;
+
+        // Directly receiving StartNode in PreOp2 should work now
+        nmt.process_event(NmtEvent::StartNode, &mut od);
+        assert_eq!(nmt.current_state(), NmtState::NmtOperational);
     }
 
     #[test]

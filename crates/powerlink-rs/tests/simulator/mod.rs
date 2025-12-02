@@ -68,9 +68,11 @@ impl VirtualNetwork {
                 .or_insert_with(VecDeque::new)
                 .push_back(packet);
         } else {
-            // Broadcast: Deliver to all known inboxes (simplification for now)
-            for queue in self.inboxes.values_mut() {
-                queue.push_back(packet.clone());
+            // Broadcast: Deliver to all known inboxes EXCEPT the sender
+            for (node_id, queue) in self.inboxes.iter_mut() {
+                if *node_id != packet.src_node_id {
+                    queue.push_back(packet.clone());
+                }
             }
         }
     }
