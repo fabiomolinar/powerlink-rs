@@ -2,7 +2,7 @@
 
 Robust, reliable, and platform-independent Rust implementation of the Ethernet POWERLINK protocol (EPSG DS 301).
 
-**Status:** Active Development (Alpha)
+**Status:** Stopped. Missing testing coverage.
 
 ## Coverage
 
@@ -130,7 +130,7 @@ To aid in debugging these complex integration tests, a dedicated powerlink-rs-mo
   - Status: **Completed**.
 - Phase 7: Configuration files
   - Focus: Implement parsers for the `XML` Device Description (`XDD`) and `XML` Device Configuration (`XDC`) files (defined by EPSG DS-311). This is supported by the `powerlink-rs-xdc` crate.
-  - Status: **In development**.
+  - Status: **Completed**.
 - Phase 8: Debugging and Monitoring (`powerlink-rs-monitor`):
   - Focus: Implement a dedicated `powerlink-rs-monitor` crate. This tool will provide a web-based GUI for real-time diagnostics.
   - Key features:
